@@ -48,14 +48,23 @@ Agent work must use branches under:
 
 `agent/*`
 
+GitHub (`mide-lim/megabrain`) is the development source of truth.
+
+Hermes may use the repository-scoped GitHub App to:
+
+- push work only to `agent/*`;
+- open pull requests from `agent/*`.
+
 Agents must not:
 
-- push to the central repository;
+- push directly to `dev`;
+- push directly to `main`;
 - merge into `dev`;
 - merge into `main`;
-- rebase protected branches.
+- rebase protected branches;
+- use owner-level GitHub credentials.
 
-Commits may be created locally when explicitly requested.
+Commits may be created on `agent/*` as part of the active scoped task.
 
 ## Security Boundaries
 

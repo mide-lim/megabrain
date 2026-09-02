@@ -48,15 +48,20 @@ capacidades de automação.
 
 Hoje:
 
+- o repositório público GitHub `mide-lim/megabrain` é a fonte de verdade de desenvolvimento;
 - Hermes trabalha em branches `agent/*`;
-- o Git central é a fonte de verdade;
-- Hermes não escreve diretamente em produção ou em `dev`;
-- bundle, revisão e integração manual ainda existem;
+- Hermes usa um GitHub App limitado ao repositório para publicar `agent/*` e abrir pull requests;
+- `dev` e `main` são protegidas por rulesets;
+- o GitHub App do Hermes não pode atualizar diretamente nem fazer merge em `dev` ou `main`;
+- integração e promoção acontecem por pull request com ação humana autorizada;
+- o antigo Git central privado e o workspace arquivado permanecem apenas como histórico de transição;
+- bundles estão aposentados do fluxo operacional;
 - CI e staging ainda não existem;
-- produção é operada por humanos.
+- produção continua operada e aprovada por humanos.
 
-Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação atual usa evidência local disponível, inspeção e gates humanos; não deve simular CI, staging ou promoção automática.
-
+Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação atual
+usa evidência local disponível, inspeção, pull requests e gates humanos. A
+existência do GitHub App não concede autoridade de produção, merge ou deploy.
 ## Direção futura
 
-O alvo é criar um caminho de escrita em branches de agentes, CI isolada, evidências, staging, gates baseados em risco e eventual progressão autônoma de trabalho de baixo risco. Essas capacidades são entregas futuras. Não há hoje auto-merge, deploy automático, capacidade de push por Hermes ou promoção autônoma.
+O próximo alvo de Engineering Enablement é adicionar CI isolada, evidências determinísticas, staging quando necessário e gates baseados em risco. Hermes já possui escrita limitada a `agent/*`, mas não há hoje auto-merge, deploy automático ou promoção autônoma para `dev`, `main` ou produção.

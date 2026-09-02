@@ -91,11 +91,14 @@ necessário.
 
 ## D012 — Produção human-gated e agentes sem privilégios
 
-**Status:** aceita
+**Status:** aceita; autoridade Git parcialmente superada por D017
 
 Agentes trabalham em branches `agent/*`, sem sudo, Docker, segredos ou workspace
-de produção. O Git central é fonte de verdade; push, merge, deploy e demais
-ações de produção ficam sob revisão e aprovação humana.
+de produção. O Git central era a fonte de verdade nesta etapa; push, merge,
+deploy e demais ações de produção ficavam sob revisão e aprovação humana.
+
+D017 substitui apenas a definição de source of truth e publicação de branches.
+As restrições de produção e privilégios desta decisão permanecem válidas.
 
 ## D013 — Governança de engenharia orientada a risco e evidência
 
@@ -141,3 +144,21 @@ determinística quando possível; Playwright é a base inicial planejada para
 regressão de navegador. Playwright não está instalado, e ferramentas de agente
 de navegador podem futuramente complementar QA exploratório, mas não são a base
 de regressão do projeto.
+
+## D017 — GitHub público como source of truth de desenvolvimento
+
+**Status:** aceita
+
+O repositório público `mide-lim/megabrain` passa a ser a fonte de verdade de
+desenvolvimento a partir de uma baseline limpa e sanitizada. O histórico Git
+privado anterior é preservado somente como arquivo de transição e não participa
+do fluxo operacional.
+
+Hermes utiliza um GitHub App limitado ao repositório. Essa identidade pode
+publicar branches `agent/*` e abrir pull requests, mas os rulesets de `dev` e
+`main` impedem atualização direta e merge pelo agente. Integração e promoção
+nessas branches permanecem human-gated via pull request.
+
+O transporte por Git bundle deixa de fazer parte do fluxo operacional. Esta
+decisão não concede ao Hermes acesso, merge, deploy ou qualquer autoridade de
+produção.
