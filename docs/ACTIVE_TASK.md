@@ -19,6 +19,14 @@ B2 — Public GitHub Foundation: COMPLETE com a integração deste cutover.
 - B2.3 — Clean Public Baseline + Publication: COMPLETE.
 - B2.4 — GitHub identity, protected branches e source-of-truth cutover: COMPLETE com esta mudança.
 
+B3 — CI Foundation: ACTIVE.
+
+- B3.1 — GitHub Actions CI Foundation: HUMAN_GATE.
+- workflow inicial criado para validação de repositório, Enricher e Web;
+- validação local concluída;
+- execução real dos 3 checks no Pull Request #4 concluída com sucesso;
+- required status checks continuam fora do escopo desta tarefa.
+
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
 
@@ -45,13 +53,15 @@ Engineering Enablement continua separado do roadmap de produto.
 - bundles estão aposentados do fluxo operacional;
 - produção continua human-gated.
 
-## Próxima fase de engenharia
+## Trabalho atual de engenharia
 
-O próximo candidato é a foundation de CI isolada e evidência determinística.
+A primeira foundation de CI isolada concluiu validação local e remota.
 
-CI, staging, Playwright e qualquer progressão automática adicional ainda exigem
-Task Contract, classificação de risco, validação e gates aplicáveis antes de
-serem considerados capacidades disponíveis.
+O Pull Request #4 executou com sucesso os jobs de validação do repositório,
+Enricher e Web. A integração em `dev` permanece sujeita ao gate humano.
+
+Required status checks, staging, Playwright e qualquer progressão automática
+adicional permanecem entregas separadas e exigem seus próprios gates.
 
 ## Restrições permanentes
 
