@@ -1,0 +1,168 @@
+{
+  "name": "MGB-001 - Entrada Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "chatIds": "={{ $json.message.text }}"
+        }
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        48,
+        0
+      ],
+      "id": "__NODE_ID_MGB_001_01__",
+      "name": "Telegram Trigger",
+      "webhookId": "__WEBHOOK_ID_MGB_001_TELEGRAM_TRIGGER__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_001_01__",
+              "leftValue": "={{ $json.message.chat.id }}",
+              "rightValue": "__TELEGRAM_CHAT_ID__",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "__CONDITION_ID_MGB_001_02__",
+              "leftValue": "={{ /https?:\\/\\/(?:www\\.)?instagram\\.com\\/reels?\\/[A-Za-z0-9_-]+/i.test($json.message?.text || '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "__NODE_ID_MGB_001_02__",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW_ID_MGB_010__",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/__WORKFLOW_ID_MGB_010__",
+          "cachedResultName": "MGB-010 — Entrada de Reel"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        416,
+        -16
+      ],
+      "id": "__NODE_ID_MGB_001_03__",
+      "name": "SUB — Chamar Entrada de Reels"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=✅ Os workflows estão se comunicando!\n\nShortcode: {{ $json.shortcode }}\nURL normalizada: {{ $json.original_url }}\nStatus: {{ $json.status }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        848,
+        -272
+      ],
+      "id": "__NODE_ID_MGB_001_04__",
+      "name": "Send a text message",
+      "webhookId": "__WEBHOOK_ID_MGB_001_SEND_A_TEXT_MESSAGE__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "SUB — Chamar Entrada de Reels",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "SUB — Chamar Entrada de Reels": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "__VERSION_ID_MGB_001__",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "__INSTANCE_ID__"
+  },
+  "nodeGroups": [],
+  "id": "__WORKFLOW_ID_MGB_001__",
+  "tags": []
+}

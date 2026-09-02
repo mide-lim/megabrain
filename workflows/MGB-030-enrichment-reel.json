@@ -1,0 +1,262 @@
+{
+  "name": "MGB-030 — Enriquecer Reel",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "__NODE_ID_MGB_030_01__",
+      "name": "SUB — Receber Reel downloaded"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const reelId = Number($json.id ?? $json.reel_id);\nif (!Number.isSafeInteger(reelId) || reelId <= 0) {\n  throw new Error('A positive Reel id is required.');\n}\n\nreturn {\n  reel_id: reelId,\n  pipeline_version: '__PIPELINE_VERSION_SPRINT_3__',\n  contract_version: '__CONTRACT_VERSION__',\n  language_hint: $json.language_hint ?? null,\n  retry_of_attempt_id: $json.retry_of_attempt_id ?? null,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [208, 0],
+      "id": "__NODE_ID_MGB_030_02__",
+      "name": "DATA — Preparar parâmetros"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    r.id AS reel_id,\n    r.shortcode,\n    r.object_key,\n    r.sha256,\n    r.file_size_bytes,\n    $2::TEXT AS pipeline_version,\n    $3::TEXT AS contract_version,\n    $4::TEXT AS language_hint,\n    $5::UUID AS retry_of_attempt_id,\n    EXISTS (\n        SELECT 1\n        FROM app.reel_enrichments AS enrichment\n        WHERE enrichment.reel_id = r.id\n          AND enrichment.source_object_key = r.object_key\n          AND enrichment.source_sha256 = r.sha256\n          AND enrichment.pipeline_version = $2::TEXT\n    ) AS has_applicable_result\nFROM app.reels AS r\nWHERE r.id = $1::BIGINT\n  AND r.status = 'downloaded'\n  AND r.object_key IS NOT NULL\n  AND r.object_key <> ''\n  AND r.sha256 ~ '^[0-9a-f]{64}$'\n  AND r.file_size_bytes > 0\n  AND (\n      $5::UUID IS NULL\n      OR EXISTS (\n          SELECT 1\n          FROM app.reel_enrichment_attempts AS previous_attempt\n          WHERE previous_attempt.attempt_id = $5::UUID\n            AND previous_attempt.reel_id = r.id\n            AND previous_attempt.source_object_key = r.object_key\n            AND previous_attempt.expected_sha256 = r.sha256\n            AND previous_attempt.pipeline_version = $2::TEXT\n            AND previous_attempt.status = 'failed'\n            AND previous_attempt.retryable = TRUE\n      )\n  );",
+        "options": {
+          "queryReplacement": "={{ [$json.reel_id, $json.pipeline_version, $json.contract_version, $json.language_hint, $json.retry_of_attempt_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [432, 0],
+      "id": "__NODE_ID_MGB_030_03__",
+      "name": "DB — Localizar Reel elegível",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_01__",
+              "leftValue": "={{ $json.has_applicable_result }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [640, 0],
+      "id": "__NODE_ID_MGB_030_04__",
+      "name": "IF — Precisa enriquecer?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const uuidV4 = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {\n  const random = Math.floor(Math.random() * 16);\n  const value = character === 'x' ? random : (random & 0x3) | 0x8;\n  return value.toString(16);\n});\n\nreturn { ...$json, attempt_id: uuidV4() };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [848, -80],
+      "id": "__NODE_ID_MGB_030_05__",
+      "name": "DATA — Criar attempt_id"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO app.reel_enrichment_attempts (\n    attempt_id, reel_id, source_object_key, expected_sha256,\n    expected_size_bytes, pipeline_version, contract_version, language_hint,\n    retry_of_attempt_id, status, started_at\n)\nVALUES (\n    $1::UUID, $2::BIGINT, $3, $4, $5::BIGINT, $6, $7, $8,\n    $9::UUID, 'processing', NOW()\n)\nRETURNING\n    attempt_id, reel_id, source_object_key, expected_sha256,\n    expected_size_bytes, pipeline_version, contract_version, language_hint,\n    $10::TEXT AS shortcode;",
+        "options": {
+          "queryReplacement": "={{ [$json.attempt_id, $json.reel_id, $json.object_key, $json.sha256, $json.file_size_bytes, $json.pipeline_version, $json.contract_version, $json.language_hint, $json.retry_of_attempt_id, $json.shortcode] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [1056, -80],
+      "id": "__NODE_ID_MGB_030_06__",
+      "name": "DB — Criar tentativa processing",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "__ENRICHER_SERVICE_URL__",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-MegaBrain-Key",
+              "value": "__MEGABRAIN_INTERNAL_API_KEY__"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.attempt_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { contract_version: $json.contract_version, attempt_id: $json.attempt_id, reel_id: Number($json.reel_id), shortcode: $json.shortcode, object_key: $json.source_object_key, expected_sha256: $json.expected_sha256, expected_size_bytes: Number($json.expected_size_bytes), pipeline_version: $json.pipeline_version, language_hint: $json.language_hint } }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1264, -80],
+      "id": "__NODE_ID_MGB_030_07__",
+      "name": "HTTP — Enricher /v1/enrichments",
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const attempt = $('DB — Criar tentativa processing').item.json;\nconst nonEmpty = (value) => typeof value === 'string' && value.trim() !== '';\nconst positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;\nconst nonNegative = (value) => Number.isFinite(Number(value)) && Number(value) >= 0;\nconst audio = $json.media?.audio;\nconst transcriptionInput = $json.transcription_input;\nconst outcome = $json.transcription?.outcome;\nconst hasValidAudio = audio !== null\n  && nonEmpty(audio?.codec)\n  && positive(audio?.sample_rate_hz)\n  && positive(audio?.channels)\n  && (audio?.duration_seconds === null || audio?.duration_seconds === undefined || nonNegative(audio.duration_seconds));\nconst hasValidTranscriptionInput = transcriptionInput !== null\n  && nonEmpty(transcriptionInput?.format)\n  && positive(transcriptionInput?.sample_rate_hz)\n  && positive(transcriptionInput?.channels)\n  && nonNegative(transcriptionInput?.duration_seconds);\nconst validOutcome = (outcome === 'no_audio'\n  && audio === null\n  && transcriptionInput === null\n  && $json.transcription.transcript_text === null\n  && $json.transcription.transcript_language === null)\n  || (outcome === 'transcribed'\n  && hasValidAudio\n  && hasValidTranscriptionInput\n  && nonEmpty($json.transcription.transcript_text))\n  || (outcome === 'empty_transcript'\n  && hasValidAudio\n  && hasValidTranscriptionInput\n  && $json.transcription.transcript_text === '');\nconst valid = $json.attempt_id === attempt.attempt_id\n  && Number($json.reel_id) === Number(attempt.reel_id)\n  && $json.shortcode === attempt.shortcode\n  && $json.pipeline_version === attempt.pipeline_version\n  && $json.contract_version === attempt.contract_version\n  && $json.source?.object_key === attempt.source_object_key\n  && $json.source?.sha256 === attempt.expected_sha256\n  && Number($json.source?.size_bytes) === Number(attempt.expected_size_bytes)\n  && positive($json.source?.size_bytes)\n  && nonEmpty($json.processor_version)\n  && nonEmpty($json.media?.container_format)\n  && nonNegative($json.media?.duration_seconds)\n  && nonEmpty($json.media?.video?.codec)\n  && positive($json.media?.video?.width)\n  && positive($json.media?.video?.height)\n  && nonEmpty($json.processing?.completed_at)\n  && validOutcome;\n\nif (!valid) {\n  return {\n    attempt_id: attempt.attempt_id,\n    error_code: 'INVALID_ENRICHER_RESPONSE',\n    error_stage: 'orchestration',\n    error_message: 'Enricher response did not match the active attempt contract',\n    retryable: false,\n    valid_response: false,\n  };\n}\n\nreturn { ...$json, valid_response: true };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1472, -160],
+      "id": "__NODE_ID_MGB_030_08__",
+      "name": "DATA — Validar resposta Enricher"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_02__",
+              "leftValue": "={{ $json.valid_response }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1680, -160],
+      "id": "__NODE_ID_MGB_030_09__",
+      "name": "IF — Resposta válida?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH completed_attempt AS (\n    UPDATE app.reel_enrichment_attempts\n    SET\n        status = 'completed',\n        finished_at = NOW(),\n        enricher_version = $2,\n        stt_provider = $3,\n        stt_model = $4,\n        provider_request_id = $5\n    WHERE attempt_id = $1::UUID\n      AND status = 'processing'\n    RETURNING attempt_id\n)\nINSERT INTO app.reel_enrichments (\n    reel_id, source_attempt_id, source_object_key, source_sha256,\n    source_size_bytes, pipeline_version, completed_at,\n    container_format, media_duration_seconds, video_codec, video_width, video_height,\n    audio_present, audio_codec, audio_sample_rate_hz, audio_channels, audio_duration_seconds,\n    transcription_audio_format, transcription_audio_sample_rate_hz,\n    transcription_audio_channels, transcription_audio_duration_seconds,\n    outcome, transcript_text, transcript_language\n)\nSELECT\n    $6::BIGINT, completed_attempt.attempt_id, $7, $8,\n    $9::BIGINT, $10, $11::TIMESTAMPTZ,\n    $12, $13::NUMERIC, $14, $15::INTEGER, $16::INTEGER,\n    $17::BOOLEAN, $18, $19::INTEGER, $20::INTEGER, $21::NUMERIC,\n    $22, $23::INTEGER, $24::INTEGER, $25::NUMERIC,\n    $26, $27, $28\nFROM completed_attempt\nRETURNING id, source_attempt_id, outcome;",
+        "options": {
+          "queryReplacement": "={{ [ $json.attempt_id, $json.processor_version, $json.transcription.engine.provider, $json.transcription.engine.model, $json.transcription.engine.request_id, $json.reel_id, $json.source.object_key, $json.source.sha256, $json.source.size_bytes, $json.pipeline_version, $json.processing.completed_at, $json.media.container_format, $json.media.duration_seconds, $json.media.video.codec, $json.media.video.width, $json.media.video.height, $json.media.audio !== null, $json.media.audio?.codec ?? null, $json.media.audio?.sample_rate_hz ?? null, $json.media.audio?.channels ?? null, $json.media.audio?.duration_seconds ?? null, $json.transcription_input?.format ?? null, $json.transcription_input?.sample_rate_hz ?? null, $json.transcription_input?.channels ?? null, $json.transcription_input?.duration_seconds ?? null, $json.transcription.outcome, $json.transcription.transcript_text, $json.transcription.transcript_language ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [1888, -240],
+      "id": "__NODE_ID_MGB_030_10__",
+      "name": "DB — Persistir resultado e concluir tentativa",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const attempt = $('DB — Criar tentativa processing').item.json;\nconst parse = (value) => {\n  let parsed = value;\n  for (let depth = 0; depth < 3 && typeof parsed === 'string'; depth += 1) {\n    try {\n      parsed = JSON.parse(parsed);\n      continue;\n    } catch {}\n\n    const separator = parsed.indexOf(' - ');\n    if (separator === -1) break;\n    parsed = parsed.slice(separator + 3);\n  }\n  return parsed;\n};\nconst candidates = [\n  $json,\n  $json.body,\n  $json.error?.body,\n  $json.error?.message,\n  $json.error?.response?.body,\n  $json.error?.response?.data,\n].map(parse);\nconst envelope = candidates.find((value) => value && typeof value === 'object'\n  && typeof value.error_code === 'string'\n  && typeof value.stage === 'string'\n  && typeof value.message === 'string'\n  && typeof value.retryable === 'boolean');\n\nif (envelope && (envelope.attempt_id === null || envelope.attempt_id === attempt.attempt_id)) {\n  return {\n    attempt_id: attempt.attempt_id,\n    error_code: envelope.error_code,\n    error_stage: envelope.stage,\n    error_message: envelope.message,\n    retryable: envelope.retryable,\n  };\n}\n\nreturn {\n  attempt_id: attempt.attempt_id,\n  error_code: 'RESULT_UNKNOWN',\n  error_stage: 'orchestration',\n  error_message: 'Enricher request failed without a valid correlated error envelope',\n  retryable: true,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1472, 48],
+      "id": "__NODE_ID_MGB_030_11__",
+      "name": "DATA — Normalizar falha Enricher"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE app.reel_enrichment_attempts\nSET\n    status = 'failed',\n    finished_at = NOW(),\n    error_code = $2,\n    error_stage = $3,\n    error_message = $4,\n    retryable = $5::BOOLEAN\nWHERE attempt_id = $1::UUID\n  AND status = 'processing'\nRETURNING attempt_id, status, error_code, error_stage, retryable;",
+        "options": {
+          "queryReplacement": "={{ [$json.attempt_id, $json.error_code, $json.error_stage, $json.error_message, $json.retryable] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [1888, 16],
+      "id": "__NODE_ID_MGB_030_12__",
+      "name": "DB — Registrar falha da tentativa",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "SUB — Receber Reel downloaded": { "main": [[{ "node": "DATA — Preparar parâmetros", "type": "main", "index": 0 }]] },
+    "DATA — Preparar parâmetros": { "main": [[{ "node": "DB — Localizar Reel elegível", "type": "main", "index": 0 }]] },
+    "DB — Localizar Reel elegível": { "main": [[{ "node": "IF — Precisa enriquecer?", "type": "main", "index": 0 }]] },
+    "IF — Precisa enriquecer?": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }], []] },
+    "DATA — Criar attempt_id": { "main": [[{ "node": "DB — Criar tentativa processing", "type": "main", "index": 0 }]] },
+    "DB — Criar tentativa processing": { "main": [[{ "node": "HTTP — Enricher /v1/enrichments", "type": "main", "index": 0 }]] },
+    "HTTP — Enricher /v1/enrichments": { "main": [[{ "node": "DATA — Validar resposta Enricher", "type": "main", "index": 0 }], [{ "node": "DATA — Normalizar falha Enricher", "type": "main", "index": 0 }]] },
+    "DATA — Validar resposta Enricher": { "main": [[{ "node": "IF — Resposta válida?", "type": "main", "index": 0 }]] },
+    "IF — Resposta válida?": { "main": [[{ "node": "DB — Persistir resultado e concluir tentativa", "type": "main", "index": 0 }], [{ "node": "DB — Registrar falha da tentativa", "type": "main", "index": 0 }]] },
+    "DATA — Normalizar falha Enricher": { "main": [[{ "node": "DB — Registrar falha da tentativa", "type": "main", "index": 0 }]] },
+    "DB — Persistir resultado e concluir tentativa": { "main": [[]] },
+    "DB — Registrar falha da tentativa": { "main": [[]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "__VERSION_ID_MGB_030__",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "__INSTANCE_ID__"
+  },
+  "nodeGroups": [],
+  "id": "__WORKFLOW_ID_MGB_030__",
+  "tags": []
+}

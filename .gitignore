@@ -1,0 +1,58 @@
+# Secrets
+.env
+.env.*
+!.env.example
+infra/.env
+!infra/.env.example
+
+# Private keys and local service-account credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*-service-account.json
+service-account-*.json
+service_account*.json
+.credentials/
+credentials.local/
+infra/credentials/
+
+# Persistent production data
+infra/data/
+
+# Local backup, dump, and runtime-export artifacts
+infra/backups/
+infra/dumps/
+infra/exports/
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.sql.bz2
+
+# Logs
+*.log
+*.journal
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Browser and test artifacts
+playwright-report/
+test-results/
+blob-report/
+test-artifacts/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

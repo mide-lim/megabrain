@@ -1,0 +1,309 @@
+{
+  "name": "MGB-020 — Download de Reel",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_01__",
+      "name": "SUB — Receber solicitação"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE app.reels\nSET\n    status = 'downloading',\n    download_started_at = NOW(),\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_02__",
+      "name": "DB — Marcar downloading",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "=⏳ Reel registrado. Iniciando download...  ID: {{ $json.id }} Shortcode: {{ $json.shortcode }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_03__",
+      "name": "TG — Download iniciado",
+      "webhookId": "__WEBHOOK_ID_MGB_020_TG_DOWNLOAD_INICIADO__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "__DOWNLOADER_SERVICE_URL__",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  item_id: Number(\n    $('DB — Marcar downloading').item.json.id\n  ),\n  shortcode:\n    $('DB — Marcar downloading').item.json.shortcode,\n  url:\n    $('DB — Marcar downloading').item.json.original_url,\n  telegram_chat_id: Number(\n    $('DB — Marcar downloading').item.json.telegram_chat_id\n  )\n} }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_04__",
+      "name": "HTTP — Worker Downloader",
+      "notesInFlow": false,
+      "retryOnFail": false,
+      "executeOnce": false,
+      "alwaysOutputData": false,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__CREDENTIAL_ID_HTTP_HEADER_AUTH__",
+          "name": "__CREDENTIAL_NAME_HTTP_HEADER_AUTH__"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE app.reels\nSET\n    status = 'downloaded',\n\n    title = $2,\n    creator = $3,\n    caption = $4,\n    duration_seconds = $5::NUMERIC,\n\n    filename = $6,\n    mime_type = $7,\n    file_size_bytes = $8::BIGINT,\n    sha256 = $9,\n\n    storage_provider = $10,\n    storage_bucket = $11,\n    object_key = $12,\n\n    downloaded_at = $13::TIMESTAMPTZ,\n\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    id AS reel_id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    filename,\n    file_size_bytes,\n    storage_bucket,\n    object_key,\n    downloaded_at;",
+        "options": {
+          "queryReplacement": "={{ [   $json.item_id,   $json.title ?? null,   $json.creator ?? null,   $json.caption ?? null,   $json.duration_seconds ?? null,   $json.filename,   $json.mime_type,   $json.file_size_bytes,   $json.sha256,   $json.storage_provider,   $json.storage_bucket,   $json.object_key,   $json.downloaded_at ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        832,
+        -48
+      ],
+      "id": "__NODE_ID_MGB_020_05__",
+      "name": "DB — Marcar downloaded",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "=✅ Download concluído!  ID: {{ $json.id }} Status: {{ $json.status }} Arquivo: {{ $json.object_key }} Tamanho: {{ (Number($json.file_size_bytes) / 1048576).toFixed(2) }} MB",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        -48
+      ],
+      "id": "__NODE_ID_MGB_020_06__",
+      "name": "Send a text message",
+      "webhookId": "__WEBHOOK_ID_MGB_020_SEND_A_TEXT_MESSAGE__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "=❌ Não foi possível baixar o Reel.  ID: {{ $json.id }} Status: {{ $json.status }} Tentativas: {{ $json.retry_count }}  Reenvie o mesmo link para tentar novamente.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1040,
+        96
+      ],
+      "id": "__NODE_ID_MGB_020_07__",
+      "name": "TG — Falha no download",
+      "webhookId": "__WEBHOOK_ID_MGB_020_TG_FALHA_NO_DOWNLOAD__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE app.reels\nSET\n    status = 'download_failed',\n    error_message = $2,\n    retry_count = retry_count + 1,\n    last_error_at = NOW(),\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    error_message,\n    retry_count;",
+        "options": {
+          "queryReplacement": "={{ [   $('DB — Marcar downloading').item.json.id,   $json.error_message     || $json.error?.message     || $json.message     || 'Falha inesperada no downloader' ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        832,
+        96
+      ],
+      "id": "__NODE_ID_MGB_020_08__",
+      "name": "DB — Registrar falha",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW_ID_MGB_030__",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/__WORKFLOW_ID_MGB_030__",
+          "cachedResultName": "MGB-030 — Enriquecer Reel"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1132,
+        132
+      ],
+      "id": "__NODE_ID_MGB_020_09__",
+      "name": "SUB — Enriquecer Reel"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "SUB — Receber solicitação": {
+      "main": [
+        [
+          {
+            "node": "DB — Marcar downloading",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Marcar downloading": {
+      "main": [
+        [
+          {
+            "node": "TG — Download iniciado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TG — Download iniciado": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Worker Downloader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Worker Downloader": {
+      "main": [
+        [
+          {
+            "node": "DB — Marcar downloaded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB — Registrar falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Marcar downloaded": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "SUB — Enriquecer Reel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Registrar falha": {
+      "main": [
+        [
+          {
+            "node": "TG — Falha no download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "__VERSION_ID_MGB_020__",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "__INSTANCE_ID__"
+  },
+  "nodeGroups": [],
+  "id": "__WORKFLOW_ID_MGB_020__",
+  "tags": []
+}

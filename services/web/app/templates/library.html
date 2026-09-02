@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MegaBrain Library</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/library.css') }}">
+  </head>
+  <body>
+    <header class="page-header">
+      <p class="eyebrow">MegaBrain</p>
+      <h1>Reel Library</h1>
+      <p class="subtitle">Captured ideas, ready to revisit.</p>
+    </header>
+
+    <main>
+      <form class="search-form" method="get" action="/" role="search">
+        <label for="library-search">Search creator, caption, transcript, or category</label>
+        <div>
+          <input id="library-search" name="q" type="search" value="{{ q }}" placeholder="Search the library">
+          <button type="submit">Search</button>
+          {% if q %}<a href="/">Clear</a>{% endif %}
+        </div>
+      </form>
+
+      {% if error %}
+        <section class="message" aria-live="polite">
+          <h2>Library temporarily unavailable</h2>
+          <p>We could not load your reels. Please try again shortly.</p>
+        </section>
+      {% elif reels %}
+        <section class="reel-grid" aria-label="Reels">
+          {% for reel in reels %}
+            <article class="reel-card">
+              <div class="card-topline">
+                {% if reel.creator %}<span class="creator">{{ reel.creator }}</span>{% endif %}
+                {% if reel.status %}<span class="status">{{ reel.status | replace('_', ' ') }}</span>{% endif %}
+              </div>
+              <p class="reel-id">Reel ID: {{ reel.id }}</p>
+              <h2><a class="reel-link" href="/reels/{{ reel.id }}">{% if reel.shortcode %}{{ reel.shortcode }}{% else %}Reel {{ reel.id }}{% endif %}</a></h2>
+              {% if reel.caption %}
+                <p class="caption">{{ reel.caption | truncate(220, True, '…') }}</p>
+              {% else %}
+                <p class="caption placeholder">No caption available.</p>
+              {% endif %}
+              {% if reel.categories %}
+                <ul class="category-tags" aria-label="Categories">
+                  {% for category in reel.categories %}<li>{{ category }}</li>{% endfor %}
+                </ul>
+              {% endif %}
+              {% if reel.received_at or reel.downloaded_at %}
+                <dl class="dates">
+                  {% if reel.received_at %}
+                    <div><dt>Received</dt><dd>{{ reel.received_at.strftime('%Y-%m-%d') }}</dd></div>
+                  {% endif %}
+                  {% if reel.downloaded_at %}
+                    <div><dt>Downloaded</dt><dd>{{ reel.downloaded_at.strftime('%Y-%m-%d') }}</dd></div>
+                  {% endif %}
+                </dl>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </section>
+
+        <nav class="pagination" aria-label="Library pages">
+          {% if page > 1 %}<a href="/?page={{ page - 1 }}{% if q %}&amp;q={{ q | urlencode }}{% endif %}">Previous</a>{% endif %}
+          <span>Page {{ page }}</span>
+          {% if has_next %}<a href="/?page={{ page + 1 }}{% if q %}&amp;q={{ q | urlencode }}{% endif %}">Next</a>{% endif %}
+        </nav>
+      {% elif q %}
+        <section class="message">
+          <h2>No reels found</h2>
+          <p>No reels match “{{ q }}”. Try another search or clear the search.</p>
+        </section>
+      {% else %}
+        <section class="message">
+          <h2>Your library is empty</h2>
+          <p>Captured reels will appear here.</p>
+        </section>
+      {% endif %}
+    </main>
+  </body>
+</html>

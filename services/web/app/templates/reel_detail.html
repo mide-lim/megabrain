@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reel Detail · MegaBrain</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/library.css') }}">
+  </head>
+  <body>
+    <header class="page-header detail-header">
+      <a class="back-link" href="/">← Back to Library</a>
+      <p class="eyebrow">MegaBrain</p>
+      {% if reel %}
+        <h1>{{ reel.title or reel.shortcode or ('Reel ' ~ reel.id) }}</h1>
+        {% if reel.creator %}<p class="subtitle">{{ reel.creator }}</p>{% endif %}
+      {% else %}
+        <h1>Reel Detail</h1>
+      {% endif %}
+    </header>
+
+    <main>
+      {% if missing %}
+        <section class="message"><h2>Reel not found</h2><p>This Reel does not exist in the library.</p></section>
+      {% elif error %}
+        <section class="message"><h2>Reel temporarily unavailable</h2><p>We could not load this Reel. Please try again shortly.</p></section>
+      {% else %}
+        {% if video_url %}
+          <video class="reel-video" controls preload="metadata" src="{{ video_url }}"></video>
+        {% else %}
+          <section class="message compact"><p>Video temporarily unavailable.</p></section>
+        {% endif %}
+
+        <section class="detail-panel">
+          <h2>Metadata</h2>
+          <dl class="metadata">
+            <div><dt>Status</dt><dd>{{ reel.status or 'Unavailable' }}</dd></div>
+            {% if reel.shortcode %}<div><dt>Shortcode</dt><dd>{{ reel.shortcode }}</dd></div>{% endif %}
+            {% if duration is not none %}<div><dt>Duration</dt><dd>{{ duration }} seconds</dd></div>{% endif %}
+            {% if reel.received_at %}<div><dt>Received</dt><dd>{{ reel.received_at.strftime('%Y-%m-%d') }}</dd></div>{% endif %}
+            {% if reel.downloaded_at %}<div><dt>Downloaded</dt><dd>{{ reel.downloaded_at.strftime('%Y-%m-%d') }}</dd></div>{% endif %}
+            {% if reel.filename %}<div><dt>File</dt><dd>{{ reel.filename }}</dd></div>{% endif %}
+            {% if reel.mime_type %}<div><dt>Type</dt><dd>{{ reel.mime_type }}</dd></div>{% endif %}
+            {% if reel.file_size_bytes is not none %}<div><dt>Size</dt><dd>{{ reel.file_size_bytes }} bytes</dd></div>{% endif %}
+          </dl>
+          {% if reel.original_url %}<p><a href="{{ reel.original_url }}" rel="noopener noreferrer">Open original Reel</a></p>{% endif %}
+        </section>
+
+        <section class="detail-panel">
+          <h2>Original caption</h2>
+          {% if reel.caption %}<p class="long-text">{{ reel.caption }}</p>{% else %}<p class="placeholder">No caption available.</p>{% endif %}
+        </section>
+
+        <section class="detail-panel">
+          <h2>Transcript</h2>
+          {% if transcript %}<p class="long-text">{{ transcript }}</p>{% else %}<p class="placeholder">Transcript unavailable.</p>{% endif %}
+          {% if transcript and reel.transcript_language %}<p class="supporting">Language: {{ reel.transcript_language }}</p>{% endif %}
+        </section>
+
+        <section class="detail-panel">
+          <h2>Categories</h2>
+          {% if curation_error == 'empty-name' %}
+            <p class="form-error" role="alert">Category name cannot be empty.</p>
+          {% elif curation_error %}
+            <p class="form-error" role="alert">Categories could not be updated. Please try again.</p>
+          {% endif %}
+          {% if assigned_categories %}
+            <ul class="assigned-categories">
+              {% for category in assigned_categories %}
+                <li>
+                  <span class="category-tag">{{ category.name }}</span>
+                  <form method="post" action="/reels/{{ reel.id }}/categories/{{ category.id }}/remove">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit">Remove</button>
+                  </form>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="placeholder">No categories assigned.</p>
+          {% endif %}
+
+          {% if available_categories %}
+            <form class="category-form" method="post" action="/reels/{{ reel.id }}/categories">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label for="category-id">Add an existing category</label>
+              <select id="category-id" name="category_id" required>
+                {% for category in available_categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}
+              </select>
+              <button type="submit">Add category</button>
+            </form>
+          {% endif %}
+
+          <form class="category-form" method="post" action="/reels/{{ reel.id }}/categories/new">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label for="category-name">Create a category</label>
+            <input id="category-name" name="name" type="text" required>
+            <button type="submit">Create and add</button>
+          </form>
+        </section>
+      {% endif %}
+    </main>
+  </body>
+</html>
