@@ -21,7 +21,7 @@ B2 — Public GitHub Foundation: COMPLETE com a integração deste cutover.
 
 B3 — CI Foundation: ACTIVE.
 
-- B3.1 — GitHub Actions CI Foundation: HUMAN_GATE.
+- B3.1 — GitHub Actions CI Foundation: COMPLETE.
 - workflow inicial criado para validação de repositório, Enricher e Web;
 - validação local concluída;
 - execução real dos 3 checks no Pull Request #4 concluída com sucesso;
@@ -58,7 +58,9 @@ Engineering Enablement continua separado do roadmap de produto.
 A primeira foundation de CI isolada concluiu validação local e remota.
 
 O Pull Request #4 executou com sucesso os jobs de validação do repositório,
-Enricher e Web. A integração em `dev` permanece sujeita ao gate humano.
+Enricher e Web e foi integrado em `dev` após aprovação humana.
+
+B3.1 está concluído. Required status checks permanecem uma entrega separada.
 
 Required status checks, staging, Playwright e qualquer progressão automática
 adicional permanecem entregas separadas e exigem seus próprios gates.

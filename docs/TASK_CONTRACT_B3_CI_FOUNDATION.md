@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: HUMAN_GATE
+- Status: PROMOTED
 - Risk Level: GREEN
 
 ## Objective
@@ -192,5 +192,7 @@ A validação local e remota foi concluída.
 O caminho de falha não foi injetado deliberadamente nesta tarefa; required status
 checks continuam fora do escopo e serão tratados separadamente.
 
-A tarefa está em `HUMAN_GATE`, aguardando decisão humana sobre a integração em
-`dev`.
+A tarefa foi `PROMOTED` após aprovação humana e integração do Pull Request #4
+em `dev`.
+
+Commit integrado em `dev`: `0fb776aed90a86add4c26d491116d14132b206dc`.
