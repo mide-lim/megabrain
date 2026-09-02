@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: VALIDATING
+- Status: HUMAN_GATE
 - Risk Level: GREEN
 
 ## Objective
@@ -176,5 +176,21 @@ Evidência local coletada:
 - Web: 42 testes aprovados;
 - `git diff --check` aprovado.
 
-A execução real do GitHub Actions em Pull Request ainda está pendente.
-A tarefa permanece em `VALIDATING` até essa evidência existir.
+Evidência remota coletada no Pull Request #4:
+
+- workflow `CI` executado com sucesso;
+- `Repository validation`: success;
+- `Web tests`: success — 42 testes aprovados;
+- `Enricher tests`: success — 58 testes aprovados;
+- runner GitHub-hosted;
+- `GITHUB_TOKEN` efetivo com `Contents: read`;
+- actions externas executadas pelos SHAs pinados;
+- checkout executado com `persist-credentials: false`.
+
+A validação local e remota foi concluída.
+
+O caminho de falha não foi injetado deliberadamente nesta tarefa; required status
+checks continuam fora do escopo e serão tratados separadamente.
+
+A tarefa está em `HUMAN_GATE`, aguardando decisão humana sobre a integração em
+`dev`.

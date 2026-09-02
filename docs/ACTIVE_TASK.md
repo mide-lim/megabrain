@@ -21,10 +21,10 @@ B2 — Public GitHub Foundation: COMPLETE com a integração deste cutover.
 
 B3 — CI Foundation: ACTIVE.
 
-- B3.1 — GitHub Actions CI Foundation: VALIDATING.
+- B3.1 — GitHub Actions CI Foundation: HUMAN_GATE.
 - workflow inicial criado para validação de repositório, Enricher e Web;
 - validação local concluída;
-- execução real dos checks em Pull Request ainda pendente;
+- execução real dos 3 checks no Pull Request #4 concluída com sucesso;
 - required status checks continuam fora do escopo desta tarefa.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
@@ -55,10 +55,10 @@ Engineering Enablement continua separado do roadmap de produto.
 
 ## Trabalho atual de engenharia
 
-A primeira foundation de CI isolada está em validação.
+A primeira foundation de CI isolada concluiu validação local e remota.
 
-Ela ainda não é considerada uma capacidade concluída até que o GitHub Actions
-execute os checks com sucesso em um Pull Request real.
+O Pull Request #4 executou com sucesso os jobs de validação do repositório,
+Enricher e Web. A integração em `dev` permanece sujeita ao gate humano.
 
 Required status checks, staging, Playwright e qualquer progressão automática
 adicional permanecem entregas separadas e exigem seus próprios gates.
