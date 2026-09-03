@@ -57,7 +57,8 @@ merge, deployment, or production action.
 - A client-side branch allowlist is not proof of a provider-enforced general
   Git write-prefix ACL. The self-test did not and must not test writes to
   protected refs, tags, or other branches.
-- A reusable local helper/skill has not been implemented or locally tested.
+- The reusable local helper/skill was installed and passed hermetic
+  no-credential validation, but its first real-App execution has not run.
 - B4.2 has not defined or approved an autonomous pull-request lifecycle.
 
 ## Problem and Constraints

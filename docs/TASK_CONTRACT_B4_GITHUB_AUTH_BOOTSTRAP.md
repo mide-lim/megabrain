@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: IMPLEMENTATION_AUTHORIZED / OPERATIONAL_TEST_PENDING
+- Status: IMPLEMENTATION_COMPLETE / OPERATIONAL_TEST_PENDING
 - Risk Level: YELLOW approved on 2026-09-03 for local helper installation and
   hermetic no-credential validation; the first real-App execution remains a
   separate operational gate.
@@ -187,3 +187,10 @@ This documentation checkpoint records the approved local implementation scope
 before installation. No Git write, GitHub configuration change, or production
 action is authorized; the first real-App helper probe remains pending a separate
 operational gate.
+
+The approved local installation subsequently completed with static compilation
+and hermetic tests only. The tests used mocked signing, HTTP, and Git execution
+to cover success, cleanup, origin rejection, permission and `administration`
+rejection, repository scope, Git failure, revocation failure, key mode, and the
+operational-gate refusal. No real credential, JWT, installation token, network
+request, Git write, configuration change, or production action occurred.

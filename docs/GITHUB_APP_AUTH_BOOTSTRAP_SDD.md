@@ -187,6 +187,15 @@ Before an operational test of the newly implemented helper:
 CI/staging are N/A because this component resides outside the repository and
 must not inject a real credential into repository CI.
 
+## Implementation Record
+
+The approved local installation completed without a real-App execution. Static
+compilation and hermetic tests covered the fixed success lifecycle, unexpected
+origin, divergent permissions, `administration` presence, repository-scope
+rejection, key-mode rejection, Git failure, revocation failure, cleanup, and
+the explicit operational-gate refusal. No JWT, installation token, real private
+key, real App ID, real installation ID, network request, or Git write was used.
+
 ## Rollback / Recovery
 
 Rollback is deletion of the newly installed profile-local skill and helper after

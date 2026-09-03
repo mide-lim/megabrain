@@ -36,13 +36,15 @@ B3 — CI Foundation: COMPLETE.
 
 B4 — Hermes Autonomy Foundation: ACTIVE.
 
-- B4.1 — GitHub Auth Bootstrap: `IMPLEMENTATION_AUTHORIZED / OPERATIONAL_TEST_PENDING`.
+- B4.1 — GitHub Auth Bootstrap: `IMPLEMENTATION_COMPLETE / OPERATIONAL_TEST_PENDING`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
 - self-test operacional somente leitura da GitHub App concluído com sucesso;
 - nenhuma permissão, ruleset, bypass, merge, deploy, produção ou escrita Git
   foi alterada;
 - o gate Yellow autorizou somente a instalação local para `megabrain-hermes` e
   validações herméticas sem credencial real;
+- a capability local reutilizável foi instalada e passou validação estática e
+  testes herméticos de sucesso, erro e cleanup, sem emitir JWT ou token;
 - o primeiro teste da nova capability que gere JWT ou installation token continua
   sujeito a autorização operacional separada.
 
