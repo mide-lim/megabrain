@@ -56,12 +56,16 @@ Hoje:
 - integração e promoção acontecem por pull request com ação humana autorizada;
 - o antigo Git central privado e o workspace arquivado permanecem apenas como histórico de transição;
 - bundles estão aposentados do fluxo operacional;
-- CI e staging ainda não existem;
+- CI isolada existe para Pull Requests destinados a `dev` e `main`; staging ainda não existe;
 - produção continua operada e aprovada por humanos.
 
 Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação atual
-usa evidência local disponível, inspeção, pull requests e gates humanos. A
+usa CI disponível, evidência local, inspeção, pull requests e gates humanos. A
 existência do GitHub App não concede autoridade de produção, merge ou deploy.
 ## Direção futura
 
-O próximo alvo de Engineering Enablement é adicionar CI isolada, evidências determinísticas, staging quando necessário e gates baseados em risco. Hermes já possui escrita limitada a `agent/*`, mas não há hoje auto-merge, deploy automático ou promoção autônoma para `dev`, `main` ou produção.
+A CI isolada e as primeiras evidências determinísticas já existem. O próximo alvo
+de Engineering Enablement é adicionar staging quando necessário e evoluir os
+gates baseados em risco. Hermes já possui escrita limitada a `agent/*`, mas não
+há hoje auto-merge, deploy automático ou promoção autônoma para `dev`, `main` ou
+produção.
