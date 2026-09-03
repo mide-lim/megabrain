@@ -36,19 +36,24 @@ B3 — CI Foundation: COMPLETE.
 
 B4 — Hermes Autonomy Foundation: ACTIVE.
 
-- B4.1 — GitHub Auth Bootstrap: `OPERATIONAL_PROBE_PASSED / STOPPED`.
+- B4.1 — GitHub Auth Bootstrap: `COMPLETE / HUMAN GATE FINAL`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
-- self-test operacional somente leitura da GitHub App concluído com sucesso;
-- nenhuma permissão, ruleset, bypass, merge, deploy, produção ou escrita Git
-  foi alterada;
-- o gate Yellow autorizou somente a instalação local para `megabrain-hermes` e
-  validações herméticas sem credencial real;
-- a capability local reutilizável foi instalada e passou validação estática e
-  testes herméticos de sucesso, erro e cleanup, sem emitir JWT ou token;
-- uma única execução real autorizada de `probe-read-dev` passou com escopo,
-  permissões, ausência de `administration`, Git, revogação e cleanup validados;
-- a verificação pós-operação confirmou ambiente-pai, `/tmp`, processos e
-  configuração Git sem resíduos; nenhuma nova operação autenticada é autorizada.
+- fonte canônica versionada em `skills/megabrain-github-app-auth/`; a instalação
+  em `~/.hermes/skills/megabrain/megabrain-github-app-auth` é somente artefato
+  derivado, reconstruído pelo instalador sem ler/copiá-la como fonte;
+- a instalação e reinstalação herméticas em destino temporário limpo passaram:
+  12 testes validaram bytes SHA-256, modo executável `0700`, conjunto exato de
+  artefatos e ausência de `.env`, `.pem` e `.key`, sem credencial, JWT, token,
+  rede ou operação autenticada;
+- a capability contém somente `probe-read-dev` de leitura; B4.2, escrita Git,
+  push, PR, merge, ruleset, bypass, deploy e produção continuam excluídos;
+- `--operational-gate-approved` é um guardrail de processo e não um limite de
+  segurança técnico; toda operação autenticada futura ainda exige autorização
+  humana nova e explícita;
+- self-test operacional somente leitura da GitHub App concluído historicamente
+  com sucesso; nenhuma nova operação autenticada é autorizada.
+- a entrega canônica permanece parada para revisão e decisão humana de merge do
+  Pull Request para `dev`; não há auto-merge.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.

@@ -24,7 +24,8 @@ future B4.2 PR lifecycle without implementing it now.
 
 ### In
 
-- a Hermes-profile-local skill and narrow helper, outside this repository;
+- a repository-versioned canonical skill and narrow helper, installed only as a
+  derived Hermes-profile-local artifact;
 - in-memory RS256 JWT generation with lifetime below ten minutes;
 - installation-token minting restricted to `megabrain`;
 - effective-permission and repository-scope validation;
@@ -47,10 +48,10 @@ future B4.2 PR lifecycle without implementing it now.
 No product application component is affected. The planned local component has
 three bounded layers:
 
-1. `megabrain-github-app-auth` skill: usage boundaries, supported operations,
-   evidence schema, and incident/rollback procedure.
-2. `github_app_auth.py` helper: owns validation, JWT signing, REST calls, Git
-   subprocess construction, revocation, cleanup, and redaction.
+1. versioned `skills/megabrain-github-app-auth/` source: usage boundaries,
+   supported operations, tests, installer, and incident/rollback procedure.
+2. derived `github_app_auth.py` helper: owns validation, JWT signing, REST
+   calls, Git subprocess construction, revocation, cleanup, and redaction.
 3. Existing local App key: read only for the `openssl` signing subprocess; it is
    never copied or serialized by the helper.
 
@@ -184,8 +185,9 @@ Before an operational test of the newly implemented helper:
 4. Only with fresh explicit authorization, run `probe-read-dev` once against
    the real App, then retain only its sanitized result.
 
-CI/staging are N/A because this component resides outside the repository and
-must not inject a real credential into repository CI.
+CI/staging are N/A because the canonical source must not inject a real
+credential into repository CI; its profile-local installation is derived only
+by the documented installer.
 
 ## Implementation Record
 

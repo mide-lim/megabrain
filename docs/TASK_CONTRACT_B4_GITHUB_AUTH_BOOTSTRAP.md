@@ -2,10 +2,11 @@
 
 ## Status
 
-- Status: OPERATIONAL_PROBE_PASSED / STOPPED
-- Risk Level: YELLOW approved on 2026-09-03 for local helper installation,
-  hermetic no-credential validation, and one separately authorized real-App
-  probe; no further authenticated operation is authorized.
+- Status: COMPLETE / HUMAN GATE FINAL
+- Risk Level: YELLOW approved on 2026-09-03 for repository-side canonicalization,
+  derived local helper installation/reinstallation, hermetic no-credential
+  validation, and one separately authorized historical real-App probe; no
+  further authenticated operation is authorized.
 
 ## Objective
 
@@ -30,8 +31,11 @@ is a prerequisite for B4.2 Autonomous PR Lifecycle, but B4.2 is not included.
 
 ### In
 
-- document and approve a profile-local helper/skill architecture;
-- install the helper and skill only in the local profile of `megabrain-hermes`;
+- document and approve the versioned canonical source under
+  `skills/megabrain-github-app-auth/` and a derived profile-local installation;
+- reconstruct or reinstall only `SKILL.md` and `scripts/github_app_auth.py` at
+  `~/.hermes/skills/megabrain/megabrain-github-app-auth` from repository source,
+  without reading, copying, or versioning credentials or Hermes configuration;
 - generate JWTs only in memory with RS256 and sub-ten-minute lifetime;
 - mint a repository-restricted installation token only per operation;
 - observe effective permissions and installation repository scope;
@@ -45,8 +49,8 @@ is a prerequisite for B4.2 Autonomous PR Lifecycle, but B4.2 is not included.
 - changing GitHub App permissions, installation, repository settings, rulesets,
   bypass, Administration, or workflows;
 - persistent JWTs, tokens, keys, PATs, SSH credentials, or credential helpers;
-- repository write, branch publication, tag creation, pull-request creation,
-  merge, deploy, production access, or production secrets;
+- Git write, branch publication, tag creation, pull-request creation, merge,
+  deploy, production access, or production secrets by the B4.1 helper;
 - B4.2 and all autonomous PR lifecycle behavior.
 - the first execution of the new helper that generates a JWT or installation
   token.
@@ -76,11 +80,13 @@ is a prerequisite for B4.2 Autonomous PR Lifecycle, but B4.2 is not included.
 
 ## Architecture / Technical Plan
 
-Implement the SDD design as a profile-local skill and small Python helper. It
-will use the existing key only as signer input, make fixed GitHub API calls for
-mint/scope/revoke, and execute only the fixed B4.1 `git ls-remote` probe through
-a temporary askpass helper. A later B4.2 contract must define any agent-branch
-write operation separately.
+Implement the SDD design as a repository-versioned canonical skill and small
+Python helper under `skills/megabrain-github-app-auth/`. Its installer creates a
+derived profile-local artifact from that source only; it never reads or copies a
+profile installation. The helper uses the existing key only as signer input,
+makes fixed GitHub API calls for mint/scope/revoke, and executes only the fixed
+B4.1 `git ls-remote` probe through a temporary askpass helper. A later B4.2
+contract must define any agent-branch write operation separately.
 
 ## UX Specification Reference
 
@@ -109,20 +115,21 @@ write boundary. This remains an explicit B4.2 validation question.
 
 ## Expected Files / Components
 
-- `docs/GITHUB_APP_AUTH_BOOTSTRAP_DISCOVERY.md`
-- `docs/GITHUB_APP_AUTH_BOOTSTRAP_SDD.md`
-- `docs/TASK_CONTRACT_B4_GITHUB_AUTH_BOOTSTRAP.md`
-- `docs/ACTIVE_TASK.md`
-- profile-local skill and helper outside the repository, installed only under
-  the approved local `megabrain-hermes` environment
+- `skills/megabrain-github-app-auth/SKILL.md`
+- `skills/megabrain-github-app-auth/scripts/github_app_auth.py`
+- `skills/megabrain-github-app-auth/scripts/install_skill.py`
+- `skills/megabrain-github-app-auth/tests/test_github_app_auth.py`
+- derived profile-local `~/.hermes/skills/megabrain/megabrain-github-app-auth`
+  installation containing only the skill document and executable helper
 
 ## Required Tests
 
-- hermetic unit tests for every success/failure cleanup path;
+- hermetic unit tests for every success/failure cleanup path, including origin,
+  permission, repository-scope, key-mode, Git, revocation, and gate rejection;
+- a hermetic clean-install and reinstall test that compares source/destination
+  SHA-256 bytes and modes and asserts only the two derived artifacts exist;
 - output and temporary-directory redaction assertions;
-- profile-local file-mode inspection;
-- a separately authorized, single real-App `probe-read-dev` test of the newly
-  implemented helper.
+- no authenticated test is required or authorized for canonicalization.
 
 ## Required Evidence
 
@@ -157,9 +164,15 @@ allow the short-lived token to expire without storing it.
 2. Operational gate: approved for and completed as one real-App test of the
    newly installed helper; no further authenticated operation is authorized.
 3. B4.2 gate: define and approve any Git write or PR behavior independently.
+4. Final delivery gate: a human reviews the canonical-source Pull Request and
+   decides whether to merge it into `dev`; no automated merge is permitted.
 
 No gate in this contract authorizes Administration, rulesets, bypass, merge,
 deployment, production, PAT, owner-level SSH, or persistent credentials.
+
+Publication and review of this canonical-source delivery use the already
+approved repository GitHub workflow for `agent/*`; they are not B4.1 helper
+operations and do not extend the helper's read-only interface or authorize B4.2.
 
 ## Dependencies
 
@@ -203,3 +216,13 @@ process, capability temporary file, local credential helper, local `core.askpass
 or local `http.extraheader`. It made no Git write, push, pull request, merge,
 ruleset, bypass, App change, deployment, or production action. No further
 authenticated operation is authorized.
+
+Canonical source reproducibility is complete: the versioned
+`skills/megabrain-github-app-auth/` source reconstructed and re-reconstructed a
+fresh temporary derived destination using only repository files. The hermetic
+unit suite passed 12 tests, including byte-for-byte SHA-256 source/destination
+comparison, `0700` executable helper verification, exact derived-artifact-set
+verification, and absence of `.env`, `.pem`, and `.key` artifact names. It used
+mocked signing, HTTP, and Git and supplied no credential, JWT, token, network,
+or authenticated probe. The default installer target remains a derived artifact
+at `~/.hermes/skills/megabrain/megabrain-github-app-auth`.

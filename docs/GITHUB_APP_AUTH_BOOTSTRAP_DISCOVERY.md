@@ -113,18 +113,19 @@ Rejected for B4.1. It adds installation, configuration, and another persistence
 surface without solving the precise lifecycle requirement. `gh` is not currently
 available in the workspace.
 
-### 4. Hermes-profile-local skill backed by a narrow helper
+### 4. Versioned canonical skill backed by a narrow helper
 
-Recommended. A local skill documents one audited procedure, while a small
-helper uses Python standard library, `openssl`, and `git`, which are already
-available. The key remains at its pre-existing local protected location and is
-never copied into the repository, a skill, or environment file.
+Recommended. A versioned repository source documents one audited procedure and
+reconstructs a profile-local derived artifact, while a small helper uses Python
+standard library, `openssl`, and `git`, which are already available. The key
+remains at its pre-existing local protected location and is never copied into
+the repository, a skill, or environment file.
 
 ## Recommended Architecture
 
-Create a profile-local `megabrain-github-app-auth` skill with a companion helper
-outside the repository. Its public interface must be narrow, not a generic
-shell or GitHub API proxy.
+Create the canonical `skills/megabrain-github-app-auth/` source and reconstruct
+the profile-local `megabrain-github-app-auth` installation from it. Its public
+interface must be narrow, not a generic shell or GitHub API proxy.
 
 1. Validate the exact HTTPS `origin` before minting a token.
 2. Check that the existing key is a regular file with no group/other access.
@@ -156,9 +157,10 @@ not grant those capabilities.
 - Revocation depends on GitHub API availability. The helper must report a
   revocation failure without revealing token material and must never persist the
   token for retry.
-- A profile-local helper is intentionally not versioned with product code. Its
-  implementation and operational validation therefore require a narrow,
-  explicit Yellow gate and a documented rollback.
+- The credential-handling helper is versioned only as sanitized source code;
+  its profile-local installation remains a derived artifact. Its implementation
+  and operational validation therefore require a narrow, explicit Yellow gate
+  and a documented rollback.
 
 ## Recommendation
 
