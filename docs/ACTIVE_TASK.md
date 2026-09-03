@@ -34,6 +34,18 @@ B3 — CI Foundation: COMPLETE.
 - gate humano de merge e isolamento do Hermes preservados;
 - rollback documentado, independente e sujeito a gate humano.
 
+B4 — Hermes Autonomy Foundation: ACTIVE.
+
+- B4.1 — GitHub Auth Bootstrap: `IMPLEMENTATION_AUTHORIZED / OPERATIONAL_TEST_PENDING`.
+- checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
+- self-test operacional somente leitura da GitHub App concluído com sucesso;
+- nenhuma permissão, ruleset, bypass, merge, deploy, produção ou escrita Git
+  foi alterada;
+- o gate Yellow autorizou somente a instalação local para `megabrain-hermes` e
+  validações herméticas sem credencial real;
+- o primeiro teste da nova capability que gere JWT ou installation token continua
+  sujeito a autorização operacional separada.
+
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
 
