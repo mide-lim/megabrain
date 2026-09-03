@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: SPEC_READY
+- Status: PROMOTED
 - Overall Execution Risk: RED
 - Documentation Risk: GREEN
 
@@ -39,8 +39,8 @@ Os Pull Requests destinados a `dev` e `main` executam atualmente:
 
 Os checks já foram validados em execuções reais.
 
-Entretanto, eles ainda não constituem uma barreira independente obrigatória
-antes do merge.
+O ruleset independente `require-ci` torna esses checks obrigatórios antes da
+integração em `dev` e `main`.
 
 Os rulesets atuais:
 
@@ -53,7 +53,7 @@ B3.2 separa a proteção de CI da proteção de fluxo.
 
 ## Target State
 
-Existirão três rulesets com responsabilidades independentes:
+Existem três rulesets com responsabilidades independentes:
 
 ### protect-dev
 
@@ -65,7 +65,7 @@ Permanece responsável pela proteção de fluxo de `main`.
 
 ### require-ci
 
-Novo ruleset responsável exclusivamente pelos required status checks.
+Ruleset ativo responsável exclusivamente pelos required status checks.
 
 Targets:
 
@@ -307,7 +307,23 @@ Registrar:
 - resultado do strict mode;
 - disponibilidade do rollback.
 
-Somente então B3.2 poderá ser marcado como COMPLETE / PROMOTED.
+B3.2 foi marcado como COMPLETE / PROMOTED após o registro desta evidência.
+
+## Closeout Evidence
+
+- `require-ci` (ID `22210670`) está ativo para `refs/heads/dev` e
+  `refs/heads/main`;
+- os contexts `Repository validation`, `Enricher tests` e `Web tests` estão
+  vinculados ao GitHub Actions integration ID `15368`;
+- `strict_required_status_checks_policy = true` foi comprovada: checks verdes
+  sobre a base anterior do PR #7 resultaram em estado `BEHIND` depois que `dev`
+  avançou, e uma nova CI contra a base atual foi exigida e aprovada;
+- o PR #7 permaneceu sem merge automático e foi integrado somente por ação
+  humana;
+- `protect-dev` e `protect-main` permaneceram inalterados;
+- Hermes permaneceu sem autoridade administrativa, de merge ou de produção;
+- rollback continua disponível mediante ação humana explícita que altere somente
+  `require-ci` de `active` para `disabled`.
 
 ## Required Evidence
 
@@ -339,7 +355,7 @@ Somente então B3.2 poderá ser marcado como COMPLETE / PROMOTED.
 
 ## Acceptance Criteria
 
-B3.2 somente poderá ser considerado concluído quando:
+B3.2 foi concluído; os critérios abaixo foram verificados:
 
 - Discovery estiver integrado;
 - SDD estiver integrado;
@@ -427,7 +443,7 @@ Não usar como rollback:
 
 ## Definition of Done
 
-B3.2 estará DONE quando:
+B3.2 está DONE:
 
 - documentação estiver integrada em `dev`;
 - ruleset estiver configurado conforme especificação;
@@ -441,15 +457,8 @@ B3.2 estará DONE quando:
 
 ## Current Execution Boundary
 
-Neste momento a tarefa permanece em `SPEC_READY`.
-
-A criação deste Task Contract não autoriza:
-
-- criação de ruleset;
-- ativação de ruleset;
-- alteração de branch protection;
-- mudança de permissões;
-- merge;
-- deploy.
-
-Qualquer transição para execução administrativa exige gate humano separado.
+B3.2 está `COMPLETE / PROMOTED`. Nenhuma permissão foi alterada e Hermes
+continua autorizado somente a publicar `agent/*`, abrir Pull Requests e coletar
+evidência. Qualquer alteração futura de ruleset, incluindo rollback, continua
+dependente de gate humano explícito. Merge, deploy e produção permanecem fora da
+autoridade do Hermes.
