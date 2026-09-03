@@ -24,8 +24,15 @@ B3 — CI Foundation: ACTIVE.
 - B3.1 — GitHub Actions CI Foundation: COMPLETE.
 - workflow inicial criado para validação de repositório, Enricher e Web;
 - validação local concluída;
-- execução real dos 3 checks no Pull Request #4 concluída com sucesso;
-- required status checks continuam fora do escopo desta tarefa.
+- execução real dos 3 checks no Pull Request #4 concluída com sucesso.
+
+- B3.2 — Required Status Checks: SPEC_READY.
+- Discovery concluído;
+- SDD concluído;
+- Task Contract preparado;
+- arquitetura `require-ci` definida;
+- nenhuma configuração de ruleset foi alterada;
+- execução administrativa permanece sujeita aos gates humanos definidos.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
@@ -60,10 +67,14 @@ A primeira foundation de CI isolada concluiu validação local e remota.
 O Pull Request #4 executou com sucesso os jobs de validação do repositório,
 Enricher e Web e foi integrado em `dev` após aprovação humana.
 
-B3.1 está concluído. Required status checks permanecem uma entrega separada.
+B3.1 está concluído.
 
-Required status checks, staging, Playwright e qualquer progressão automática
-adicional permanecem entregas separadas e exigem seus próprios gates.
+B3.2 — Required Status Checks está em `SPEC_READY`. Discovery, SDD e Task
+Contract foram preparados. A implementação ainda não foi iniciada e nenhuma
+configuração de ruleset foi alterada.
+
+Staging, Playwright e qualquer progressão automática adicional permanecem
+entregas separadas e exigem seus próprios gates.
 
 ## Restrições permanentes
 
