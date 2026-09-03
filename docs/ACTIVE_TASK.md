@@ -19,20 +19,20 @@ B2 — Public GitHub Foundation: COMPLETE com a integração deste cutover.
 - B2.3 — Clean Public Baseline + Publication: COMPLETE.
 - B2.4 — GitHub identity, protected branches e source-of-truth cutover: COMPLETE com esta mudança.
 
-B3 — CI Foundation: ACTIVE.
+B3 — CI Foundation: COMPLETE.
 
 - B3.1 — GitHub Actions CI Foundation: COMPLETE.
 - workflow inicial criado para validação de repositório, Enricher e Web;
 - validação local concluída;
 - execução real dos 3 checks no Pull Request #4 concluída com sucesso.
 
-- B3.2 — Required Status Checks: SPEC_READY.
-- Discovery concluído;
-- SDD concluído;
-- Task Contract preparado;
-- arquitetura `require-ci` definida;
-- nenhuma configuração de ruleset foi alterada;
-- execução administrativa permanece sujeita aos gates humanos definidos.
+- B3.2 — Required Status Checks: COMPLETE / PROMOTED.
+- ruleset independente `require-ci` ativo para `dev` e `main`;
+- `Repository validation`, `Enricher tests` e `Web tests` obrigatórios;
+- checks vinculados ao GitHub Actions integration ID `15368`;
+- strict policy comprovada com Pull Request real;
+- gate humano de merge e isolamento do Hermes preservados;
+- rollback documentado, independente e sujeito a gate humano.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
@@ -69,9 +69,12 @@ Enricher e Web e foi integrado em `dev` após aprovação humana.
 
 B3.1 está concluído.
 
-B3.2 — Required Status Checks está em `SPEC_READY`. Discovery, SDD e Task
-Contract foram preparados. A implementação ainda não foi iniciada e nenhuma
-configuração de ruleset foi alterada.
+B3.2 — Required Status Checks está `COMPLETE / PROMOTED`. O ruleset
+`require-ci` está ativo para `dev` e `main`; os três checks da CI são
+obrigatórios, vinculados ao GitHub Actions integration ID `15368`, e a política
+strict foi comprovada por Pull Request real. O gate humano de merge e a ausência
+de autoridade administrativa, de merge e de produção para Hermes foram
+preservados.
 
 Staging, Playwright e qualquer progressão automática adicional permanecem
 entregas separadas e exigem seus próprios gates.

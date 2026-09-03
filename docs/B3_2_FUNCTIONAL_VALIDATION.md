@@ -2,12 +2,11 @@
 
 ## Status
 
-VALIDATION_IN_PROGRESS
+COMPLETE / PROMOTED
 
 ## Objective
 
-Registrar o protocolo de validação funcional do ruleset `require-ci` antes da
-integração de uma mudança em `dev`.
+Registrar a evidência de validação funcional e strict do ruleset `require-ci`.
 
 ## Configuration Under Test
 
@@ -43,9 +42,37 @@ A validação deve coletar evidência de que:
 5. o Pull Request não é integrado automaticamente;
 6. Hermes não executa merge nem altera rulesets.
 
-## Strict Validation Boundary
+## Functional Validation Result
 
-A validação strict exige uma execução de CI baseada em uma versão anterior de
-`dev`, seguida do avanço controlado dessa branch por uma ação humana
-independente. Esse teste não deve criar commits artificiais em `dev` e só será
-executado depois de um plano específico e de gate humano aplicável.
+O Pull Request controlado #7 foi aberto de
+`agent/b3-2-functional-validation` para `dev`. Enquanto `Enricher tests`
+estava em execução, o Pull Request permaneceu bloqueado; `Repository
+validation` e `Web tests` já estavam aprovados. Os três checks foram emitidos
+pelo GitHub Actions integration ID `15368` e concluíram com sucesso.
+
+Com o rollup de checks em sucesso, a restrição de CI foi satisfeita sem merge
+automático. Hermes não executou merge nem recebeu autoridade administrativa,
+de merge ou de produção.
+
+## Strict Validation Result
+
+Após a integração humana do PR #8 em `dev`, os checks verdes anteriores do PR
+#7 permaneceram no head antigo `132ec5c…`, mas o PR passou ao estado `BEHIND`.
+Isso comprovou que a política strict não aceita a evidência de CI baseada na
+base anterior.
+
+A branch do PR #7 foi rebased com segurança sobre `dev` em
+`c04d1ac6c68a32fac51d50f8515619cf3b1d7a2b` e publicada com
+`--force-with-lease`. O novo head `6e7cf77847935669580eb8fa186dd7083b801d4c`
+recebeu três novos checks, todos concluídos com sucesso pelo GitHub Actions
+integration ID `15368`. O rollup voltou a `SUCCESS` apenas contra a base atual.
+
+O PR #7 foi integrado em `dev` por ação humana, no commit
+`576845c8299e38150d8dea72bd383b3a60b9c5d0`.
+
+## Rollback Availability
+
+O rollback permanece disponível somente por ação humana explícita: alterar
+`require-ci` de `active` para `disabled`, verificar a configuração por API e
+confirmar que `protect-dev` e `protect-main` permanecem ativos. Não foi
+necessário executar rollback, e Hermes não possui autorização para fazê-lo.

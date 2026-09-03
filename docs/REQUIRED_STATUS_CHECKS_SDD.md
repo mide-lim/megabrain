@@ -2,7 +2,7 @@
 
 ## Status
 
-SPEC_READY
+PROMOTED
 
 ## Objective
 
@@ -18,7 +18,7 @@ Este SDD implementa as decisões registradas em:
 
 ## Current Architecture
 
-Rulesets existentes:
+Rulesets de fluxo existentes:
 
 - `protect-dev`
 - `protect-main`
@@ -31,11 +31,11 @@ Eles continuam responsáveis por proteção de fluxo:
 - bloqueio de force push / non-fast-forward;
 - gate humano existente.
 
-Eles não serão modificados por B3.2.
+Eles não foram modificados por B3.2.
 
 ## Target Architecture
 
-Será criado um terceiro ruleset independente:
+Foi criado um terceiro ruleset independente:
 
 `require-ci`
 
@@ -88,11 +88,22 @@ Responsável exclusivamente por:
 - aceitar somente checks emitidos pelo GitHub Actions;
 - exigir validação contra a versão atual da branch alvo.
 
-Nenhum bypass será configurado neste ruleset.
+Nenhum bypass foi configurado neste ruleset, conforme revisão administrativa
+externa e Task Contract.
 
-## Planned REST Representation
+## Execution Result
 
-Representação técnica esperada:
+O `require-ci` foi criado inicialmente desabilitado e ativado somente após gate
+humano administrativo. A API confirmou os targets, os três checks, o GitHub
+Actions integration ID `15368` e a strict policy. Um Pull Request controlado
+comprovou o bloqueio com checks pendentes e o sucesso dos três checks. A
+validação strict comprovou que checks verdes contra uma base anterior deixam de
+satisfazer a regra depois que `dev` avança e que uma nova CI contra a base atual
+é exigida.
+
+## Initial REST Representation
+
+Representação técnica usada para a criação inicial desabilitada:
 
 ```json
 {
