@@ -77,16 +77,21 @@ reports only a symbolic failure code and cleanup state.
 
 ### Supported B4.1 operation
 
-`probe-read-dev` is the only initial operation. It executes exactly:
+`probe-read-dev` is the only initial operation. It validates the configured
+`origin`, then executes the fixed probe from a new empty temporary directory:
 
 ```text
-git -c credential.helper= ls-remote --heads origin refs/heads/dev
+git -C <empty-temp-dir> \
+  -c remote.origin.url=https://github.com/mide-lim/megabrain.git \
+  -c credential.helper= ls-remote --heads origin refs/heads/dev
 ```
 
 It validates the configured `origin` before minting a token and rejects any
-origin other than the fixed HTTPS repository. Git receives only `PATH`, `HOME`,
-`GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, and the ephemeral token variable. The
-parent process environment is not modified.
+origin other than the fixed HTTPS repository. The Git child uses only a small
+explicit environment: `PATH`, `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, the
+ephemeral token variable, and Git configuration isolation that disables global
+and system configuration and prevents repository discovery outside the empty
+temporary directory. The parent process environment is not modified.
 
 ### Result contract
 
