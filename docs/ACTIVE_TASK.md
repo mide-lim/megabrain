@@ -36,7 +36,7 @@ B3 — CI Foundation: COMPLETE.
 
 B4 — Hermes Autonomy Foundation: ACTIVE.
 
-- B4.1 — GitHub Auth Bootstrap: `IMPLEMENTATION_COMPLETE / OPERATIONAL_TEST_PENDING`.
+- B4.1 — GitHub Auth Bootstrap: `OPERATIONAL_PROBE_PASSED / STOPPED`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
 - self-test operacional somente leitura da GitHub App concluído com sucesso;
 - nenhuma permissão, ruleset, bypass, merge, deploy, produção ou escrita Git
@@ -45,8 +45,10 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   validações herméticas sem credencial real;
 - a capability local reutilizável foi instalada e passou validação estática e
   testes herméticos de sucesso, erro e cleanup, sem emitir JWT ou token;
-- o primeiro teste da nova capability que gere JWT ou installation token continua
-  sujeito a autorização operacional separada.
+- uma única execução real autorizada de `probe-read-dev` passou com escopo,
+  permissões, ausência de `administration`, Git, revogação e cleanup validados;
+- a verificação pós-operação confirmou ambiente-pai, `/tmp`, processos e
+  configuração Git sem resíduos; nenhuma nova operação autenticada é autorizada.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.

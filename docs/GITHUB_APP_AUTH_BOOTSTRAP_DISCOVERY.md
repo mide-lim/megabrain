@@ -2,10 +2,9 @@
 
 ## Status
 
-DISCOVERY COMPLETE — Yellow gate approved on 2026-09-03 for Hermes-local
-installation and hermetic validation without a real credential. The first test
-of the new capability that generates a JWT or installation token remains
-unapproved and must stop for a separate operational gate.
+DISCOVERY COMPLETE — the 2026-09-03 Yellow authorization completed local
+installation, hermetic validation, and one real `probe-read-dev` execution.
+No further authenticated operation is authorized.
 
 ## Objective
 
@@ -52,13 +51,26 @@ The controlled B4.1 self-test completed in this session with sanitized output:
 The test performed no Git write, API configuration change, ruleset operation,
 merge, deployment, or production action.
 
+### Proven by the authorized local capability probe
+
+The newly installed helper executed one authorized `probe-read-dev` operation
+with a sanitized success result: exact origin validation, exact permission map,
+absence of `administration`, exact repository scope, fixed read-only `dev`
+probe, token revocation, and temporary-askpass cleanup all passed.
+
+After the operation, the parent sensitive-environment residue count, active
+helper-process count, local credential-helper count, local `core.askpass` count,
+and local `http.extraheader` count were zero; no capability temporary file
+remained in `/tmp`. No secret material, key path, App identifier, JWT, token,
+header, raw API response, or Git output was retained as evidence.
+
 ### Not yet proven
 
 - A client-side branch allowlist is not proof of a provider-enforced general
   Git write-prefix ACL. The self-test did not and must not test writes to
   protected refs, tags, or other branches.
-- The reusable local helper/skill was installed and passed hermetic
-  no-credential validation, but its first real-App execution has not run.
+- The reusable local helper/skill passed one real-App execution, but no
+  additional authenticated behavior is authorized or proven.
 - B4.2 has not defined or approved an autonomous pull-request lifecycle.
 
 ## Problem and Constraints

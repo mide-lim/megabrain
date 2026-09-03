@@ -2,10 +2,10 @@
 
 ## Status
 
-- Status: IMPLEMENTATION_COMPLETE / OPERATIONAL_TEST_PENDING
-- Risk Level: YELLOW approved on 2026-09-03 for local helper installation and
-  hermetic no-credential validation; the first real-App execution remains a
-  separate operational gate.
+- Status: OPERATIONAL_PROBE_PASSED / STOPPED
+- Risk Level: YELLOW approved on 2026-09-03 for local helper installation,
+  hermetic no-credential validation, and one separately authorized real-App
+  probe; no further authenticated operation is authorized.
 
 ## Objective
 
@@ -154,8 +154,8 @@ allow the short-lived token to expire without storing it.
 
 1. Yellow gate: approved on 2026-09-03 for installation of the profile-local
    helper/skill and hermetic no-credential validation only.
-2. Operational gate: separately authorize one real-App test of the newly
-   installed helper, because it mints a new installation token.
+2. Operational gate: approved for and completed as one real-App test of the
+   newly installed helper; no further authenticated operation is authorized.
 3. B4.2 gate: define and approve any Git write or PR behavior independently.
 
 No gate in this contract authorizes Administration, rulesets, bypass, merge,
@@ -194,3 +194,12 @@ to cover success, cleanup, origin rejection, permission and `administration`
 rejection, repository scope, Git failure, revocation failure, key mode, and the
 operational-gate refusal. No real credential, JWT, installation token, network
 request, Git write, configuration change, or production action occurred.
+
+The separately authorized real `probe-read-dev` then passed with only
+sanitized evidence: expected origin, scope, permissions and absence of
+`administration`; read-only `dev` probe; token revocation; and askpass cleanup.
+Post-operation checks found no sensitive parent-environment residue, helper
+process, capability temporary file, local credential helper, local `core.askpass`,
+or local `http.extraheader`. It made no Git write, push, pull request, merge,
+ruleset, bypass, App change, deployment, or production action. No further
+authenticated operation is authorized.

@@ -189,12 +189,20 @@ must not inject a real credential into repository CI.
 
 ## Implementation Record
 
-The approved local installation completed without a real-App execution. Static
-compilation and hermetic tests covered the fixed success lifecycle, unexpected
-origin, divergent permissions, `administration` presence, repository-scope
-rejection, key-mode rejection, Git failure, revocation failure, cleanup, and
-the explicit operational-gate refusal. No JWT, installation token, real private
-key, real App ID, real installation ID, network request, or Git write was used.
+The approved local installation first completed with static compilation and
+hermetic tests covering the fixed success lifecycle, unexpected origin,
+divergent permissions, `administration` presence, repository-scope rejection,
+key-mode rejection, Git failure, revocation failure, cleanup, and the explicit
+operational-gate refusal.
+
+One separately authorized real `probe-read-dev` execution then completed with a
+sanitized success result: origin, exact scope, exact permissions, absence of
+`administration`, fixed read-only Git probe, revocation, and askpass cleanup all
+passed. Post-operation checks found zero sensitive parent-environment residues,
+zero active helper processes, no capability temporary file in `/tmp`, and zero
+local Git credential-helper, `core.askpass`, and `http.extraheader` entries. No
+Git write, App change, rule change, deployment, or production action occurred.
+No further authenticated execution is authorized.
 
 ## Rollback / Recovery
 
