@@ -61,8 +61,9 @@ Execution flow:
 validated fixed HTTPS origin
   -> key type/mode precheck
   -> in-memory JWT (RS256, <10 min)
-  -> installation token limited to megabrain
-  -> permission + repository-scope assertion
+  -> App-JWT installation-baseline assertion (expected map; no administration)
+  -> downscoped installation token limited to megabrain and contents: read
+  -> read-only token-permission + repository-scope assertion
   -> 0700 temporary GIT_ASKPASS
   -> fixed read-only Git probe
   -> DELETE /installation/token
@@ -101,7 +102,8 @@ The helper may emit JSON containing only non-sensitive status fields:
 - operation status and symbolic failure code;
 - origin-validation result;
 - repository-scope result;
-- non-secret permission map and explicit `administration` absence;
+- installation-baseline and probe-token permission validation results, with
+  explicit `administration` absence and no probe-token write permission;
 - Git-probe result;
 - revocation HTTP status class/result;
 - temporary-helper cleanup result.
@@ -125,9 +127,15 @@ runtime is read or modified.
 
 ## Security and Operational Impact
 
-- Maintain least privilege: reject any non-absent `administration` permission
-  and unexpected installation repository scope before Git runs.
-- Use an installation-token request restricted to the expected repository.
+- Maintain least privilege: with the App JWT, read the existing installation's
+  baseline map and reject any non-absent `administration` permission before
+  token minting. Do not infer that baseline from a downscoped token response.
+- Use an installation-token request restricted to the expected repository with
+  only `contents: read`; require its resulting map to contain `contents: read`
+  and no permission other than optional `metadata: read`, with no write
+  permission.
+- Use that read-only token to assert the expected repository scope before Git
+  runs.
 - Create the askpass file at mode `0700`, using a randomized system temporary
   name; remove it in `finally`.
 - Disable interactive prompts and configured credential helpers for the Git
@@ -157,8 +165,9 @@ N/A. This is a non-interactive local operational capability.
 - The helper refuses unexpected origin URLs before minting a token.
 - JWT and token are created only in process memory and are absent from all
   output and persistent files.
-- Effective permissions and repository scope are checked before Git runs, and
-  any `administration` permission blocks the operation.
+- The installation baseline is checked with the App JWT before token minting;
+  any `administration` permission blocks the operation. The probe token is
+  checked before Git runs and any write or unexpected permission blocks it.
 - The temporary askpass helper is mode `0700` and is removed after both success
   and injected failure paths.
 - The Git probe succeeds only with `GIT_ASKPASS`, non-interactive prompting, and
@@ -193,9 +202,9 @@ by the documented installer.
 
 The approved local installation first completed with static compilation and
 hermetic tests covering the fixed success lifecycle, unexpected origin,
-divergent permissions, `administration` presence, repository-scope rejection,
-key-mode rejection, Git failure, revocation failure, cleanup, and the explicit
-operational-gate refusal.
+installation-baseline divergence and `administration` presence, probe-token
+write rejection, repository-scope rejection, key-mode rejection, Git failure,
+revocation failure, cleanup, and the explicit operational-gate refusal.
 
 One separately authorized real `probe-read-dev` execution then completed with a
 sanitized success result: origin, exact scope, exact permissions, absence of
@@ -217,9 +226,10 @@ persist it or attempt a broader credential workaround.
 
 ## Technical Risks
 
-- A token has effective write permissions even though B4.1 never uses them.
-  Mitigation: one fixed read-only operation, no arbitrary command interface,
-  exact remote validation, and future B4.2 gates.
+- A B4.1 probe token could accidentally inherit write permissions from the
+  installation baseline. Mitigation: validate the baseline separately with the
+  App JWT, request only `contents: read`, and reject any probe-token write or
+  unexpected permission before the fixed read-only Git operation.
 - An exception can occur after minting. Mitigation: single cleanup path with
   best-effort revocation and guaranteed temporary-file removal.
 - GitHub API availability can prevent revocation. Mitigation: fail closed,

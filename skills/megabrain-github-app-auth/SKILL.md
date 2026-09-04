@@ -1,7 +1,7 @@
 ---
 name: megabrain-github-app-auth
 description: "Use when an explicitly authorized B4.1 read-only GitHub App probe is required."
-version: 1.0.0
+version: 1.1.0
 ---
 
 # MegaBrain GitHub App Auth Bootstrap
@@ -15,11 +15,15 @@ probe-read-dev
 ```
 
 It validates the fixed HTTPS origin `https://github.com/mide-lim/megabrain.git`,
-uses an App JWT and installation token only in process memory, validates the
-expected installation permissions and the exact `mide-lim/megabrain` scope, and
-runs only `git ls-remote --heads origin refs/heads/dev` from an isolated empty
-temporary directory. It then revokes the token and removes the temporary
-askpass helper.
+uses an App JWT and installation token only in process memory, and separates
+the installation baseline from the probe token. With the App JWT it validates
+the expected installation permission map and the absence of `administration`.
+It then requests a repository-restricted probe token with only `contents: read`,
+requires its resulting map to contain only `contents: read` and, when GitHub
+returns it, `metadata: read`, validates the exact `mide-lim/megabrain` scope,
+and runs only
+`git ls-remote --heads origin refs/heads/dev` from an isolated empty temporary
+directory. It then revokes the token and removes the temporary askpass helper.
 
 B4.1 is read-only. It has no Git write, push, branch, tag, pull-request, merge,
 ruleset, bypass, administration, deployment, production, PAT, SSH, or arbitrary

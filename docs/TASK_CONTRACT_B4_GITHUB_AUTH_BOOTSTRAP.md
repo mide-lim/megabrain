@@ -37,8 +37,12 @@ is a prerequisite for B4.2 Autonomous PR Lifecycle, but B4.2 is not included.
   `~/.hermes/skills/megabrain/megabrain-github-app-auth` from repository source,
   without reading, copying, or versioning credentials or Hermes configuration;
 - generate JWTs only in memory with RS256 and sub-ten-minute lifetime;
-- mint a repository-restricted installation token only per operation;
-- observe effective permissions and installation repository scope;
+- validate the expected baseline permission map of the existing installation
+  with the App JWT, including absence of `administration`;
+- mint a repository-restricted installation token only per operation with the
+  minimum B4.1 permission request, `contents: read`;
+- require the probe token to contain only `contents: read` and, if returned by
+  GitHub, `metadata: read`, then observe its installation repository scope;
 - provide a fixed read-only probe for `refs/heads/dev` through temporary
   `GIT_ASKPASS`;
 - revoke the token and remove temporary state on every path;
@@ -64,8 +68,10 @@ is a prerequisite for B4.2 Autonomous PR Lifecycle, but B4.2 is not included.
   command, URL, ref, or API-path interface.
 - The helper validates exact HTTPS origin and restricted key file mode before
   minting a token.
-- The helper checks the effective permission map and rejects `administration` or
-  unexpected installation scope before Git runs.
+- The helper checks the expected installation baseline through the App JWT and
+  rejects `administration` before token minting. It then rejects a probe token
+  with any write or unexpected permission, and rejects unexpected installation
+  scope before Git runs.
 - Generated JWT/token, key material, authorization headers, askpass path/content,
   raw errors, and traces never reach output, logs, repository files, or
   persistent profile configuration.
@@ -105,13 +111,16 @@ N/A.
 
 The task handles an existing GitHub App private key and ephemeral installation
 tokens, so it is Yellow despite no intended GitHub write. It preserves least
-privilege by repository-restricting the token request, requiring exact scope and
-no `administration`, refusing unexpected remotes, isolating credentials to the
-Git subprocess, revoking tokens, and sanitizing every result.
+privilege by validating the installation baseline and absence of
+`administration` with the App JWT, repository-restricting the probe-token
+request to `contents: read`, rejecting any probe-token write permission,
+requiring exact scope, refusing unexpected remotes, isolating credentials to
+the Git subprocess, revoking tokens, and sanitizing every result.
 
-The observed `contents: write` and `workflows: write` permissions do not
-authorize B4.1 writes and do not prove a general provider-enforced `agent/*`
-write boundary. This remains an explicit B4.2 validation question.
+The App installation baseline may contain write permissions for separately
+authorized repository workflows, but B4.1 neither requests nor accepts them in
+its probe token. This does not prove a general provider-enforced `agent/*`
+write boundary; that remains an explicit B4.2 validation question.
 
 ## Expected Files / Components
 
@@ -194,7 +203,10 @@ JWT and installation token in memory, observed only the expected repository,
 observed no `administration`, authenticated one `git ls-remote` of `dev` through
 temporary askpass, received HTTP 204 on token revocation, removed the helper,
 and left the parent authentication environment clean. It did not test Git
-writes or prove provider-side ref-prefix enforcement.
+writes or prove provider-side ref-prefix enforcement. A later local security
+correction separates verification of that historical installation baseline from
+the downscoped B4.1 probe token; no new authenticated execution is authorized
+by this correction.
 
 This documentation checkpoint records the approved local implementation scope
 before installation. No Git write, GitHub configuration change, or production

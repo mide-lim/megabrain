@@ -39,15 +39,25 @@ class GithubAppAuthTests(unittest.TestCase):
         }
 
     def api_success(self, method, path, authorization, payload=None):
+        if method == "GET" and path == "/app/installations/456":
+            self.assertEqual(authorization, "Bearer JWT_FIXTURE")
+            self.assertIsNone(payload)
+            return 200, {"permissions": AUTH.EXPECTED_INSTALLATION_PERMISSIONS}
         if method == "POST":
             self.assertEqual(path, "/app/installations/456/access_tokens")
-            self.assertEqual(payload, {"repositories": ["megabrain"], "permissions": AUTH.EXPECTED_PERMISSIONS})
-            return 201, {"token": "TOKEN_FIXTURE", "permissions": AUTH.EXPECTED_PERMISSIONS}
-        if method == "GET":
+            self.assertEqual(authorization, "Bearer JWT_FIXTURE")
+            self.assertEqual(
+                payload,
+                {"repositories": ["megabrain"], "permissions": AUTH.PROBE_TOKEN_REQUEST_PERMISSIONS},
+            )
+            return 201, {"token": "TOKEN_FIXTURE", "permissions": AUTH.PROBE_TOKEN_PERMISSIONS_WITH_METADATA}
+        if method == "GET" and path == "/installation/repositories":
+            self.assertEqual(authorization, "token TOKEN_FIXTURE")
             return 200, {"total_count": 1, "repositories": [{"full_name": AUTH.EXPECTED_REPOSITORY}]}
         if method == "DELETE":
+            self.assertEqual(authorization, "token TOKEN_FIXTURE")
             return 204, {}
-        self.fail(f"unexpected request {method}")
+        self.fail(f"unexpected request {method} {path}")
 
     def successful_patches(self, git_result=True, api=None):
         return (
@@ -65,7 +75,9 @@ class GithubAppAuthTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertIsNone(result["failure_code"])
         self.assertTrue(result["origin_valid"])
-        self.assertTrue(result["permissions_valid"])
+        self.assertTrue(result["installation_permissions_valid"])
+        self.assertTrue(result["probe_token_permissions_valid"])
+        self.assertTrue(all(level == "read" for level in AUTH.PROBE_TOKEN_PERMISSIONS_WITH_METADATA.values()))
         self.assertTrue(result["scope_valid"])
         self.assertTrue(result["git_probe"])
         self.assertEqual(result["revocation"], "ok")
@@ -74,6 +86,24 @@ class GithubAppAuthTests(unittest.TestCase):
         self.assertNotIn("TOKEN_FIXTURE", encoded)
         self.assertNotIn("JWT_FIXTURE", encoded)
         self.assertNotIn(self.environment["MEGABRAIN_GITHUB_APP_KEY_PATH"], encoded)
+
+    def test_contents_read_is_sufficient_when_metadata_is_not_returned(self) -> None:
+        def api(method, path, authorization, payload=None):
+            if method == "GET" and path == "/app/installations/456":
+                return 200, {"permissions": AUTH.EXPECTED_INSTALLATION_PERMISSIONS}
+            if method == "POST":
+                return 201, {"token": "TOKEN_FIXTURE", "permissions": {"contents": "read"}}
+            if method == "GET" and path == "/installation/repositories":
+                return 200, {"total_count": 1, "repositories": [{"full_name": AUTH.EXPECTED_REPOSITORY}]}
+            if method == "DELETE":
+                return 204, {}
+            self.fail("unexpected request")
+
+        patches = self.successful_patches(api=api)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["probe_token_permissions_valid"])
 
     def test_origin_rejection_happens_before_signing(self) -> None:
         with mock.patch.object(AUTH, "configured_origin", return_value="https://example.invalid/repo.git"), mock.patch.object(
@@ -84,26 +114,12 @@ class GithubAppAuthTests(unittest.TestCase):
         self.assertEqual(result["failure_code"], "origin_rejected")
         self.assertEqual(result["revocation"], "not_attempted")
 
-    def test_permission_rejection_revokes_minted_token(self) -> None:
+    def test_probe_token_write_rejection_revokes_minted_token(self) -> None:
         def api(method, path, authorization, payload=None):
+            if method == "GET" and path == "/app/installations/456":
+                return 200, {"permissions": AUTH.EXPECTED_INSTALLATION_PERMISSIONS}
             if method == "POST":
-                return 201, {"token": "TOKEN_FIXTURE", "permissions": {"contents": "read"}}
-            if method == "DELETE":
-                return 204, {}
-            self.fail("scope must not be requested")
-
-        patches = self.successful_patches(api=api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
-            result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
-        self.assertEqual(result["failure_code"], "permissions_rejected")
-        self.assertIs(result["permissions_valid"], False)
-        self.assertEqual(result["revocation"], "ok")
-        self.assertIsNone(result["askpass_cleanup"])
-
-    def test_administration_permission_is_rejected_and_revoked(self) -> None:
-        def api(method, path, authorization, payload=None):
-            if method == "POST":
-                permissions = dict(AUTH.EXPECTED_PERMISSIONS, administration="read")
+                permissions = dict(AUTH.PROBE_TOKEN_PERMISSIONS_WITH_METADATA, contents="write")
                 return 201, {"token": "TOKEN_FIXTURE", "permissions": permissions}
             if method == "DELETE":
                 return 204, {}
@@ -112,15 +128,34 @@ class GithubAppAuthTests(unittest.TestCase):
         patches = self.successful_patches(api=api)
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
-        self.assertEqual(result["failure_code"], "permissions_rejected")
-        self.assertIs(result["permissions_valid"], False)
+        self.assertEqual(result["failure_code"], "probe_token_permissions_rejected")
+        self.assertTrue(result["installation_permissions_valid"])
+        self.assertIs(result["probe_token_permissions_valid"], False)
         self.assertEqual(result["revocation"], "ok")
+        self.assertIsNone(result["askpass_cleanup"])
+
+    def test_administration_in_installation_baseline_is_rejected_before_token_minting(self) -> None:
+        def api(method, path, authorization, payload=None):
+            if method == "GET" and path == "/app/installations/456":
+                permissions = dict(AUTH.EXPECTED_INSTALLATION_PERMISSIONS, administration="read")
+                return 200, {"permissions": permissions}
+            self.fail("token must not be minted")
+
+        patches = self.successful_patches(api=api)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
+        self.assertEqual(result["failure_code"], "installation_permissions_rejected")
+        self.assertIs(result["installation_permissions_valid"], False)
+        self.assertIsNone(result["probe_token_permissions_valid"])
+        self.assertEqual(result["revocation"], "not_attempted")
 
     def test_scope_rejection_revokes_minted_token(self) -> None:
         def api(method, path, authorization, payload=None):
+            if method == "GET" and path == "/app/installations/456":
+                return 200, {"permissions": AUTH.EXPECTED_INSTALLATION_PERMISSIONS}
             if method == "POST":
-                return 201, {"token": "TOKEN_FIXTURE", "permissions": AUTH.EXPECTED_PERMISSIONS}
-            if method == "GET":
+                return 201, {"token": "TOKEN_FIXTURE", "permissions": AUTH.PROBE_TOKEN_PERMISSIONS_WITH_METADATA}
+            if method == "GET" and path == "/installation/repositories":
                 return 200, {"total_count": 2, "repositories": []}
             if method == "DELETE":
                 return 204, {}
@@ -130,7 +165,8 @@ class GithubAppAuthTests(unittest.TestCase):
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
         self.assertEqual(result["failure_code"], "scope_rejected")
-        self.assertTrue(result["permissions_valid"])
+        self.assertTrue(result["installation_permissions_valid"])
+        self.assertTrue(result["probe_token_permissions_valid"])
         self.assertIs(result["scope_valid"], False)
         self.assertEqual(result["revocation"], "ok")
 

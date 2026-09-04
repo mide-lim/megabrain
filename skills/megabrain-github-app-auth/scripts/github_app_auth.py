@@ -22,7 +22,7 @@ from typing import Any, Mapping
 
 EXPECTED_ORIGIN = "https://github.com/mide-lim/megabrain.git"
 EXPECTED_REPOSITORY = "mide-lim/megabrain"
-EXPECTED_PERMISSIONS = {
+EXPECTED_INSTALLATION_PERMISSIONS = {
     "actions": "read",
     "contents": "write",
     "metadata": "read",
@@ -30,6 +30,11 @@ EXPECTED_PERMISSIONS = {
     "statuses": "read",
     "workflows": "write",
 }
+# The App installation baseline is intentionally broader than B4.1 needs.
+# The probe asks GitHub to downscope the ephemeral installation token to this
+# one capability required for authenticated `git ls-remote`.
+PROBE_TOKEN_REQUEST_PERMISSIONS = {"contents": "read"}
+PROBE_TOKEN_PERMISSIONS_WITH_METADATA = {"contents": "read", "metadata": "read"}
 API_ROOT = "https://api.github.com"
 OPERATION = "probe-read-dev"
 
@@ -131,11 +136,21 @@ def request_json(
         raise SafeFailure("api_request_failed") from exc
 
 
-def _valid_permissions(value: Any) -> bool:
+def _valid_installation_permissions(value: Any) -> bool:
     return (
         isinstance(value, dict)
         and "administration" not in value
-        and value == EXPECTED_PERMISSIONS
+        and value == EXPECTED_INSTALLATION_PERMISSIONS
+    )
+
+
+def _valid_probe_token_permissions(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and "administration" not in value
+        and value.get("contents") == "read"
+        and set(value).issubset({"contents", "metadata"})
+        and all(permission == "read" for permission in value.values())
     )
 
 
@@ -214,7 +229,8 @@ def _base_result() -> dict[str, Any]:
         "status": "failed",
         "failure_code": None,
         "origin_valid": False,
-        "permissions_valid": None,
+        "installation_permissions_valid": None,
+        "probe_token_permissions_valid": None,
         "scope_valid": None,
         "git_probe": None,
         "revocation": "not_attempted",
@@ -247,21 +263,28 @@ def run_operation(
         result["origin_valid"] = True
         validate_key_path(key_path)
         jwt = make_jwt(app_id, key_path)
+        baseline_status, baseline_body = request_json(
+            "GET", f"/app/installations/{installation_id}", f"Bearer {jwt}"
+        )
+        if baseline_status != 200 or not _valid_installation_permissions(baseline_body.get("permissions")):
+            result["installation_permissions_valid"] = False
+            raise SafeFailure("installation_permissions_rejected")
+        result["installation_permissions_valid"] = True
         mint_status, mint_body = request_json(
             "POST",
             f"/app/installations/{installation_id}/access_tokens",
             f"Bearer {jwt}",
-            {"repositories": ["megabrain"], "permissions": EXPECTED_PERMISSIONS},
+            {"repositories": ["megabrain"], "permissions": PROBE_TOKEN_REQUEST_PERMISSIONS},
         )
         jwt = ""
         token_value = mint_body.get("token") if mint_status == 201 else None
         if not isinstance(token_value, str) or not token_value:
             raise SafeFailure("token_mint_failed")
         token = token_value
-        if not _valid_permissions(mint_body.get("permissions")):
-            result["permissions_valid"] = False
-            raise SafeFailure("permissions_rejected")
-        result["permissions_valid"] = True
+        if not _valid_probe_token_permissions(mint_body.get("permissions")):
+            result["probe_token_permissions_valid"] = False
+            raise SafeFailure("probe_token_permissions_rejected")
+        result["probe_token_permissions_valid"] = True
         scope_status, scope_body = request_json("GET", "/installation/repositories", f"token {token}")
         if scope_status != 200 or not _valid_scope(scope_body):
             result["scope_valid"] = False
