@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
@@ -242,6 +243,36 @@ class Lifecycle:
     def _state_path(self) -> Path:
         return self.state_root / self.lifecycle_id / "state.json"
 
+    @contextmanager
+    def _publish_reservation(self):
+        directory = self._state_path().parent
+        lock_path = directory / "publish.lock"
+        self._safe_existing(self.state_root)
+        if directory.is_symlink() or not directory.is_dir() or stat.S_IMODE(directory.stat().st_mode) & 0o077:
+            raise StopNeedsHuman("state_directory_unsafe")
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+        except FileExistsError as exc:
+            raise StopNeedsHuman("publish_reservation_locked") from exc
+        except OSError as exc:
+            raise StopNeedsHuman("publish_reservation_rejected") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        try:
+            yield
+        finally:
+            try:
+                lock_stat = os.lstat(lock_path)
+                if not stat.S_ISREG(lock_stat.st_mode) or stat.S_IMODE(lock_stat.st_mode) & 0o077:
+                    raise OSError
+                os.unlink(lock_path)
+            except OSError as exc:
+                raise StopNeedsHuman("publish_reservation_cleanup_failed") from exc
+
     def _write_state(self, state: dict[str, Any], *, exclusive: bool = False) -> None:
         directory = self._state_path().parent
         self._safe_existing(self.state_root)
@@ -251,19 +282,49 @@ class Lifecycle:
         target = self._state_path()
         if target.is_symlink():
             raise StopNeedsHuman("state_symlink_rejected")
-        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | (os.O_EXCL if exclusive else os.O_TRUNC)
+        payload = json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if exclusive:
+            try:
+                descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError as exc:
+                raise StopNeedsHuman("lifecycle_already_locked") from exc
+            try:
+                os.fchmod(descriptor, 0o600)
+                os.write(descriptor, payload)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            return
+        descriptor: int | None = None
+        temporary_path: str | None = None
         try:
-            descriptor = os.open(target, flags, 0o600)
-        except FileExistsError as exc:
-            raise StopNeedsHuman("lifecycle_already_locked") from exc
-        try:
-            # State is not a contract.  Preserve the locked contract fingerprint
-            # verbatim; canonical_json intentionally excludes that field only
-            # when deriving a contract fingerprint.
-            os.write(descriptor, json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+            descriptor, temporary_path = tempfile.mkstemp(prefix=".state-", dir=directory)
             os.fchmod(descriptor, 0o600)
-        finally:
+            os.write(descriptor, payload)
+            os.fsync(descriptor)
             os.close(descriptor)
+            descriptor = None
+            if target.is_symlink():
+                raise StopNeedsHuman("state_symlink_rejected")
+            os.replace(temporary_path, target)
+            temporary_path = None
+            directory_descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        except (OSError, StopNeedsHuman) as exc:
+            if isinstance(exc, StopNeedsHuman):
+                raise
+            raise StopNeedsHuman("state_write_rejected") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
 
     def _state(self) -> dict[str, Any]:
         target = self._state_path()
@@ -308,6 +369,48 @@ class Lifecycle:
     def _denied(path: str) -> bool:
         return any(fnmatch.fnmatchcase(path, pattern) for pattern in DENIED_PATHS)
 
+    def _validate_path(self, path: str, contract: Mapping[str, Any], failure_code: str) -> None:
+        local = self.root / path
+        if (not _safe_relative(path) or self._denied(path) or local.is_symlink()
+                or not any(fnmatch.fnmatchcase(path, allowed) for allowed in contract["allowed_paths"])):
+            raise StopNeedsHuman(failure_code)
+
+    def _validate_committed_tree_mode(self, head: str, path: str) -> None:
+        entry = self._git("ls-tree", "-z", head, "--", path).rstrip("\0")
+        try:
+            metadata, returned_path = entry.split("\t", 1)
+            mode, object_type, object_id = metadata.split(" ")
+        except ValueError as exc:
+            raise StopNeedsHuman("committed_path_rejected") from exc
+        if (returned_path != path or mode not in {"100644", "100755"}
+                or object_type != "blob" or not SHA_RE.fullmatch(object_id)):
+            raise StopNeedsHuman("committed_path_rejected")
+
+    def _validate_committed_paths(self, contract: Mapping[str, Any], base: Any, head: str) -> None:
+        if not isinstance(base, str) or not SHA_RE.fullmatch(base):
+            raise StopNeedsHuman("published_head_missing")
+        # A correction must extend the previously validated publication; rewrites
+        # would make the path range ambiguous and are rejected before any push.
+        self._git("merge-base", "--is-ancestor", base, head)
+        output = self._git("diff", "--name-status", "-z", "--find-renames=100%", "--find-copies=100%", "--find-copies-harder", base, head)
+        records = output.split("\0")
+        if records[-1] != "":
+            raise StopNeedsHuman("committed_path_rejected")
+        index = 0
+        while index < len(records) - 1:
+            status = records[index]
+            index += 1
+            if status != "M" or index >= len(records) - 1:
+                # Additions are rejected too: Git cannot reliably distinguish an
+                # allowlisted new file from a modified copy in every history.
+                # Rename, copy, delete, type-change, merge-unmerged, and any
+                # unfamiliar status are all fail-closed in v1.
+                raise StopNeedsHuman("committed_path_rejected")
+            path = records[index]
+            self._validate_path(path, contract, "committed_path_rejected")
+            self._validate_committed_tree_mode(head, path)
+            index += 1
+
     def _validate_checkout(self, contract: Mapping[str, Any]) -> str:
         if self._git("symbolic-ref", "--short", "HEAD") != contract["branch"]:
             raise StopNeedsHuman("local_branch_rejected")
@@ -329,6 +432,19 @@ class Lifecycle:
             raise StopNeedsHuman("api_unavailable")
         return _parse_response(self.request(method, path, payload))
 
+    def _correction_count(self, contract: Mapping[str, Any], state: Mapping[str, Any]) -> int:
+        count = state.get("corrections")
+        maximum = contract.get("max_corrections")
+        if type(count) is not int or type(maximum) is not int or count < 0 or count > maximum:
+            raise StopNeedsHuman("correction_state_rejected")
+        return count
+
+    def _validate_remote_head(self, contract: Mapping[str, Any], sha: str) -> None:
+        ref = f"refs/heads/{contract['branch']}"
+        remote = self._git("ls-remote", "origin", ref).split()
+        if len(remote) != 2 or remote[0] != sha or remote[1] != ref:
+            raise StopNeedsHuman("remote_head_drift")
+
     def _validate_pr(self, pr: Mapping[str, Any], contract: Mapping[str, Any], sha: str) -> None:
         head, base = pr.get("head"), pr.get("base")
         if (not isinstance(pr, Mapping) or pr.get("state") != "open" or not isinstance(head, Mapping) or not isinstance(base, Mapping)
@@ -341,14 +457,29 @@ class Lifecycle:
         head = self._validate_checkout(contract)
         if head != contract["head_sha_initial"]:
             raise StopNeedsHuman("initial_head_mismatch")
-        self._write_state({"lifecycle_id": self.lifecycle_id, "fingerprint": contract_fingerprint, "head_sha": head, "ci_sha": None}, exclusive=True)
+        self._write_state({"lifecycle_id": self.lifecycle_id, "fingerprint": contract_fingerprint, "head_sha": head, "ci_sha": None, "corrections": 0}, exclusive=True)
         return {"state": "PREFLIGHT_OK", "head_sha": head, "fingerprint": contract_fingerprint}
 
     def publish_head(self) -> dict[str, str]:
         _require_live_operations_enabled()
+        with self._publish_reservation():
+            return self._publish_head_locked()
+
+    def _publish_head_locked(self) -> dict[str, str]:
         contract, state = self._guard()
         head = self._validate_checkout(contract)
-        # Fresh contract verification immediately precedes the only Git mutation.
+        previous_head = state.get("head_sha")
+        self._validate_committed_paths(contract, previous_head, head)
+        corrections = self._correction_count(contract, state)
+        if head != previous_head:
+            if corrections >= contract["max_corrections"]:
+                raise StopNeedsHuman("correction_budget_exhausted")
+            # Reserve the correction before a network mutation.  A failed push
+            # consumes the approval budget rather than allowing silent retries.
+            state["corrections"] = corrections + 1
+            self._write_state(state)
+        # Fresh contract and committed-range verification immediately precede the
+        # only Git mutation.
         self._guard()
         ref = f"refs/heads/{contract['branch']}"
         self._git("push", "origin", f"HEAD:{ref}")
@@ -365,26 +496,47 @@ class Lifecycle:
         sha = self._validate_checkout(contract)
         if state.get("head_sha") != sha:
             raise StopNeedsHuman("publish_required")
-        # Deliberately do not filter base server-side: a same-head PR to any
-        # other base is still a conflicting PR for this execution and must stop.
-        path = f"/repos/{REPOSITORY}/pulls?state=open&head=mide-lim:{contract['branch']}"
-        prs = self._api("GET", path)
-        if not isinstance(prs, list) or len(prs) > 1:
-            raise StopNeedsHuman("pr_count_rejected")
+        # Read the exact branch ref immediately before either reusing an existing
+        # PR or creating one.  API head metadata alone is not a ref readback.
+        self._validate_remote_head(contract, sha)
         marker = f"B4.2-Contract-Fingerprint: {state['fingerprint']}"
-        if prs:
-            pr = prs[0]
+        stored_number = state.get("pr_number")
+        if stored_number is not None:
+            if not isinstance(stored_number, int):
+                raise StopNeedsHuman("pr_number_rejected")
+            pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{stored_number}")
+            self._validate_remote_head(contract, sha)
             if not isinstance(pr, Mapping):
                 raise StopNeedsHuman("pr_drift_rejected")
+            if pr.get("state") == "closed" or pr.get("merged") is True:
+                raise StopNeedsHuman("pr_terminal_state")
             if marker not in str(pr.get("body", "")):
                 raise StopNeedsHuman("pr_fingerprint_rejected")
             self._validate_pr(pr, contract, sha)
         else:
-            self._guard()
-            pr = self._api("POST", f"/repos/{REPOSITORY}/pulls", {"title": contract["pr_title"], "head": contract["branch"], "base": "dev", "body": f"{contract['pr_body']}\n\n{marker}"})
-            if not isinstance(pr, Mapping):
-                raise StopNeedsHuman("pr_drift_rejected")
-            self._validate_pr(pr, contract, sha)
+            # Deliberately do not filter base server-side: a same-head PR to any
+            # other base is still a conflicting PR for this execution and must stop.
+            path = f"/repos/{REPOSITORY}/pulls?state=all&head=mide-lim:{contract['branch']}"
+            prs = self._api("GET", path)
+            self._validate_remote_head(contract, sha)
+            if not isinstance(prs, list) or len(prs) > 1:
+                raise StopNeedsHuman("pr_count_rejected")
+            if prs:
+                pr = prs[0]
+                if not isinstance(pr, Mapping):
+                    raise StopNeedsHuman("pr_drift_rejected")
+                if pr.get("state") == "closed" or pr.get("merged") is True:
+                    raise StopNeedsHuman("pr_terminal_state")
+                if marker not in str(pr.get("body", "")):
+                    raise StopNeedsHuman("pr_fingerprint_rejected")
+                self._validate_pr(pr, contract, sha)
+            else:
+                self._guard()
+                self._validate_remote_head(contract, sha)
+                pr = self._api("POST", f"/repos/{REPOSITORY}/pulls", {"title": contract["pr_title"], "head": contract["branch"], "base": "dev", "body": f"{contract['pr_body']}\n\n{marker}"})
+                if not isinstance(pr, Mapping):
+                    raise StopNeedsHuman("pr_drift_rejected")
+                self._validate_pr(pr, contract, sha)
         if not isinstance(pr.get("number"), int):
             raise StopNeedsHuman("pr_number_rejected")
         state["pr_number"] = pr["number"]
@@ -424,7 +576,9 @@ class Lifecycle:
         self._guard()
         self._git("merge", "--no-ff", "--no-edit", "origin/dev")
         head = self._validate_checkout(contract)
-        state.update({"head_sha": head, "ci_sha": None})
+        # Keep head_sha as the last published ref.  The merged local commit must
+        # remain in the next publish range for committed-path enforcement.
+        state["ci_sha"] = None
         self._write_state(state)
         return {"state": "REFRESHED", "head_sha": head}
 

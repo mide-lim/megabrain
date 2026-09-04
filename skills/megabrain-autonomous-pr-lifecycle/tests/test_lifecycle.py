@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -45,12 +46,16 @@ def contract(lifecycle_id="life-1", **changes):
 
 
 class Harness:
-    def __init__(self, root: Path, state: Path, data: dict, *, changed=(), branch=None, head=SHA):
+    def __init__(self, root: Path, state: Path, data: dict, *, changed=(), committed=(), branch=None, head=SHA):
         self.root, self.state, self.data = root, state, data
         self.commands = []
+        self.requests = []
         self.changed = list(changed)
+        self.committed = list(committed)
         self.branch = branch or data["branch"]
         self.head = head
+        self.remote_sha = SHA
+        self.tree_modes = {}
         path = root / "contracts/b4.2"
         path.mkdir(parents=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
@@ -69,13 +74,22 @@ class Harness:
         if args == ("remote", "get-url", "origin"): return L.ORIGIN_URL
         if args == ("rev-parse", "HEAD"): return self.head
         if args == ("status", "--porcelain=v1", "--untracked-files=all"): return "\n".join(" M " + path for path in self.changed)
-        if args[:1] == ("push",): return ""
-        if args[:1] == ("ls-remote",): return f"{SHA}\t{args[-1]}"
+        if args[:3] == ("diff", "--name-status", "-z"):
+            return "".join(f"{status}\0{path}\0" for status, path in self.committed)
+        if args[:2] == ("merge-base", "--is-ancestor"): return ""
+        if args[:2] == ("ls-tree", "-z"):
+            path = args[-1]
+            return f"{self.tree_modes.get(path, '100644')} blob {'d' * 40}\t{path}\0"
+        if args[:1] == ("push",):
+            self.remote_sha = self.head
+            return ""
+        if args[:1] == ("ls-remote",): return f"{self.remote_sha}\t{args[-1]}"
         if args[:1] in (("fetch",), ("merge",)): return ""
         raise AssertionError(command)
 
     def request(self, method, path, payload=None):
-        if path.endswith("/pulls?state=open&head=mide-lim:" + self.data["branch"]):
+        self.requests.append((method, path, payload))
+        if path.endswith("/pulls?state=all&head=mide-lim:" + self.data["branch"]):
             return (200, [self.pr])
         if path.endswith("/pulls/7"):
             return (200, self.pr)
@@ -134,6 +148,69 @@ class LifecycleTests(unittest.TestCase):
         path = self.root / "contracts/b4.2/life-1.json"; altered = contract(pr_title="changed"); path.write_text(json.dumps(altered), encoding="utf-8")
         with self.assertRaisesRegex(L.StopNeedsHuman, "contract_fingerprint_divergent"): self.h.lifecycle().publish_head()
 
+    def test_clean_committed_workflow_change_stops_publish(self):
+        h = Harness(self.root / "clean-workflow", self.state / "clean-workflow", contract(), committed=[("M", ".github/workflows/ci.yml")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_skill_change_stops_publish(self):
+        h = Harness(self.root / "clean-skill", self.state / "clean-skill", contract(), committed=[("M", "skills/example/SKILL.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_allowed_path_publishes(self):
+        h = Harness(self.root / "clean-allowed", self.state / "clean-allowed", contract(allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        self.assertEqual(h.lifecycle().publish_head()["head_sha"], "b" * 40)
+
+    def test_clean_committed_rename_stops_publish(self):
+        h = Harness(self.root / "clean-rename", self.state / "clean-rename", contract(), committed=[("R100", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_delete_stops_publish(self):
+        h = Harness(self.root / "clean-delete", self.state / "clean-delete", contract(), committed=[("D", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_addition_stops_publish_to_prevent_undetected_copy(self):
+        h = Harness(self.root / "clean-add", self.state / "clean-add", contract(allowed_paths=["docs/EVIDENCE.md"]), committed=[("A", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_copy_below_full_similarity_stops_publish(self):
+        h = Harness(self.root / "clean-copy-partial", self.state / "clean-copy-partial", contract(), committed=[("C099", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_symlink_stops_publish_by_tree_mode(self):
+        h = Harness(self.root / "clean-symlink", self.state / "clean-symlink", contract(allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        h.tree_modes["docs/EVIDENCE.md"] = "120000"
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_copy_stops_publish(self):
+        h = Harness(self.root / "clean-copy", self.state / "clean-copy", contract(), committed=[("C100", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
     def test_control_plane_and_capability_paths_are_denied(self):
         for path in ("skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py", "skills/megabrain-github-app-auth/scripts/github_app_auth.py", "skills/another-capability/SKILL.md", ".github/workflows/ci.yml", "AGENTS.md", "docs/RISK_POLICY.md", "docs/DEFINITION_OF_DONE.md", "docs/TASK_CONTRACT_X.md", "docs/DEVELOPMENT_WORKFLOW.md"):
             h = Harness(self.root / hashlib.sha1(path.encode()).hexdigest(), self.state / hashlib.sha1(path.encode()).hexdigest(), contract(), changed=[path])
@@ -162,6 +239,120 @@ class LifecycleTests(unittest.TestCase):
         h = Harness(self.root / "initial", self.state / "initial", contract(), head="b" * 40)
         with self.assertRaisesRegex(L.StopNeedsHuman, "initial_head_mismatch"):
             h.lifecycle().preflight()
+
+    def test_remote_head_drift_stops_before_ensure_pr_mutation(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        self.h.remote_sha = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            life.ensure_pr()
+        self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
+
+    def test_remote_head_drift_during_pr_reuse_stops_before_acceptance(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        original_request = self.h.request
+        def drift_after_lookup(method, path, payload=None):
+            response = original_request(method, path, payload)
+            if "pulls?" in path:
+                self.h.remote_sha = "b" * 40
+            return response
+        self.h.request = drift_after_lookup
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            self.h.lifecycle().ensure_pr()
+
+    def test_max_corrections_zero_stops_changed_head_before_push(self):
+        h = Harness(self.root / "budget-zero", self.state / "budget-zero", contract(max_corrections=0, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
+            h.lifecycle().publish_head()
+        self.assertFalse(any(command[1:2] == ["push"] for command in h.commands))
+
+    def test_existing_publish_reservation_stops_second_correction_before_push(self):
+        h = Harness(self.root / "budget-locked", self.state / "budget-locked", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        (h.state / "life-1/publish.lock").write_text("reserved", encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            h.lifecycle().publish_head()
+        self.assertFalse(any(command[1:2] == ["push"] for command in h.commands))
+
+    def test_publish_reservation_serializes_concurrent_corrections(self):
+        h = Harness(self.root / "budget-concurrent", self.state / "budget-concurrent", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        entered = threading.Event()
+        release = threading.Event()
+        result = []
+        original_runner = h.runner
+        def blocking_runner(command, cwd):
+            if command[1:2] == ["push"]:
+                entered.set()
+                self.assertTrue(release.wait(timeout=2))
+            return original_runner(command, cwd)
+        first = L.Lifecycle(h.root, "life-1", state_root=h.state, runner=blocking_runner, request=h.request)
+        thread = threading.Thread(target=lambda: result.append(first.publish_head()))
+        thread.start()
+        self.assertTrue(entered.wait(timeout=2))
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            h.lifecycle().publish_head()
+        release.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result[0]["state"], "PUBLISHED")
+
+    def test_correction_budget_allows_exact_limit_and_persists_count(self):
+        h = Harness(self.root / "budget-exact", self.state / "budget-exact", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        self.assertEqual(h.lifecycle().publish_head()["state"], "PUBLISHED")
+        state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["corrections"], 1)
+
+    def test_correction_budget_stops_above_limit(self):
+        h = Harness(self.root / "budget-over", self.state / "budget-over", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        h.lifecycle().publish_head()
+        h.head = "c" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
+            h.lifecycle().publish_head()
+
+    def test_closed_prior_pr_without_state_stops_second_creation(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        self.h.pr["state"] = "closed"
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_terminal_state"):
+            life.ensure_pr()
+        self.assertTrue(any("pulls?state=all" in path for _, path, _ in self.h.requests))
+        self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
+
+    def test_previously_closed_pr_stops_without_second_creation(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        life.ensure_pr()
+        self.h.pr["state"] = "closed"
+        self.h.requests.clear()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_terminal_state"):
+            life.ensure_pr()
+        self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
+
+    def test_previously_merged_pr_stops_without_second_creation(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        life.ensure_pr()
+        self.h.pr["state"] = "closed"
+        self.h.pr["merged"] = True
+        self.h.requests.clear()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_terminal_state"):
+            life.ensure_pr()
+        self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
 
     def test_second_pr_base_drift_remote_head_and_old_green_ci_stop(self):
         self.preflight(); life = self.h.lifecycle(); life.publish_head()
@@ -192,6 +383,15 @@ class LifecycleTests(unittest.TestCase):
             if command[1:2] == ["merge"]: raise L.StopNeedsHuman("git_command_rejected")
             return h.runner(command, cwd)
         with self.assertRaisesRegex(L.StopNeedsHuman, "git_command_rejected"): L.Lifecycle(h.root, "life-1", state_root=h.state, runner=conflict, request=h.request).refresh_from_dev()
+
+    def test_refresh_keeps_last_published_head_for_next_publish_range(self):
+        h = Harness(self.root / "refresh-range", self.state / "refresh-range", contract(allow_safe_refresh=True))
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        h.lifecycle().refresh_from_dev()
+        state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["head_sha"], SHA)
+        self.assertIsNone(state["ci_sha"])
 
     def test_token_profiles_reject_read_write_scope_or_administration(self):
         valid = {"permissions": {"pull_requests":"read", "actions":"read", "statuses":"read", "metadata":"read"}, "repository": L.REPOSITORY, "administration": False}
