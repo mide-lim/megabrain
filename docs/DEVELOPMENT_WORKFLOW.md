@@ -64,10 +64,11 @@ usa CI disponível, evidência local, inspeção, pull requests e gates humanos.
 existência do GitHub App não concede autoridade de produção, merge ou deploy.
 ## Direção futura
 
-A CI isolada e as primeiras evidências determinísticas já existem. O próximo alvo
-de Engineering Enablement é B4.2 Autonomous PR Lifecycle, em Discovery/SDD/Task
-Contract. B4.1 está `COMPLETE / PROMOTED` e fornece somente autenticação GitHub
-App read-only comprovada; não habilita escrita nova. A proposta B4.2 mantém a
-concessão no Task Contract aprovado, sem auto-merge, deploy automático ou
-promoção autônoma para `dev`, `main` ou produção. A validação local de `agent/*`
-é defesa em profundidade e não ACL provider-enforced.
+A CI isolada e as primeiras evidências determinísticas já existem. B4.2
+Autonomous PR Lifecycle está `IMPLEMENTED / HUMAN_GATE`: a capability local foi
+validada hermeticamente e instalada como artefato derivado, mas nenhuma operação
+GitHub autenticada foi executada. B4.1 está `COMPLETE / PROMOTED` e fornece
+somente autenticação GitHub App read-only comprovada; não habilita escrita nova.
+B4.2 mantém a concessão no Task Contract aprovado, sem auto-merge, deploy
+automático ou promoção autônoma para `dev`, `main` ou produção. A validação local
+de `agent/*` é defesa em profundidade e não ACL provider-enforced.

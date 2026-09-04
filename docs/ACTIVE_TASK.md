@@ -59,14 +59,19 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   capability permanece limitada à sua única operação read-only e não autoriza
   nenhuma nova operação autenticada.
 
-- B4.2 — Autonomous PR Lifecycle: `ACTIVE` (Discovery, SDD e Task Contract
-  inicial versionados; capability de escrita ainda não aprovada).
-- objetivo proposto: após aprovação de Task Contract, operar autonomamente o
-  ciclo controlado `agent/* -> push -> PR para dev -> CI -> correção -> READY`;
-  merge continua exclusivamente humano;
-- nenhuma capability de escrita autenticada foi criada, instalada, habilitada
-  ou executada nesta etapa; o primeiro passo Yellow de escrita permanece
-  bloqueado por gate humano;
+- B4.2 — Autonomous PR Lifecycle: `IMPLEMENTED / HUMAN_GATE`.
+- fonte canônica versionada em `skills/megabrain-autonomous-pr-lifecycle/`; a
+  instalação em `~/.hermes/skills/megabrain/megabrain-autonomous-pr-lifecycle`
+  é derivada, reconstruída atomicamente do conjunto exato de artefatos;
+- os 13 testes herméticos passaram sem JWT, installation token, rede, push ou
+  mutação de PR. Eles exercitam fingerprint imutável, denylist de control plane,
+  paths/symlinks, branch/ref segura, PR/CI drift, permissões e cleanup;
+- a primeira operação autenticada (inclusive leitura), publish, PR, observação
+  CI, refresh e correção continuam bloqueados por gate humano separado. Merge
+  em `dev` é exclusivamente humano;
+- `agent/*` é defesa local em profundidade, não ACL provider-enforced: um token
+  `contents: write` ainda pode ter capacidade provider-side maior em refs não
+  protegidas do que a interface fechada expõe;
 - `.github/workflows/**`, rulesets, bypass, Administration, permissões/instalação
   App, produção, deploy e progressão para `main` continuam fora do escopo.
 

@@ -2,7 +2,10 @@
 
 ## Status
 
-DISCOVERY COMPLETE — documentação Green. Nenhuma capability autenticada de escrita foi criada, instalada ou habilitada.
+DISCOVERY COMPLETE — decisão revisada e aprovação Yellow de implementação local
+registradas. A capability canônica foi instalada e validada apenas de modo
+hermético; nenhuma operação autenticada, JWT, token, push ou mutação de PR foi
+executada.
 
 ## Objetivo
 

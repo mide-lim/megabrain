@@ -2,9 +2,11 @@
 
 ## Status
 
-- Status: DRAFT / ACTIVE DISCOVERY — não aprovado para implementação ou operação autenticada de escrita.
-- Risk Level: YELLOW para qualquer implementação/instalação de capability de escrita; documentação atual é GREEN.
-- Stop condition: parar antes de criar, instalar, habilitar ou executar o primeiro caminho autenticado de escrita.
+- Status: IMPLEMENTED / HUMAN_GATE — implementação local, instalação derivada e
+  testes herméticos aprovados; nenhuma operação autenticada é autorizada.
+- Risk Level: YELLOW para a capability e para cada operação autenticada futura.
+- Stop condition: parar antes de JWT real, installation token real, push, criação
+  ou mutação de PR, ou qualquer operação GitHub autenticada.
 
 ## Objective
 

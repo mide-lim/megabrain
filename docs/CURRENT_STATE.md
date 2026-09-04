@@ -50,9 +50,10 @@ concluída com sucesso.
   reproduzível de autenticação GitHub App comprovou somente o probe read-only
   de `dev`, com token efêmero, revogação e cleanup. Ela não autoriza escrita,
   PR, merge ou mudanças administrativas.
-- B4.2 — Autonomous PR Lifecycle está `ACTIVE` em Discovery/SDD/Task Contract.
-  Nenhuma capability autenticada de escrita foi criada ou habilitada; merge em
-  `dev` permanece human-gated.
+- B4.2 — Autonomous PR Lifecycle está `IMPLEMENTED / HUMAN_GATE`: a fonte
+  canônica e a instalação derivada passaram testes herméticos sem credenciais,
+  rede, push ou mutação de PR. A primeira operação autenticada continua
+  bloqueada; merge em `dev` permanece human-gated.
 
 ### Downloader
 
