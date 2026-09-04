@@ -182,8 +182,31 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
             h.lifecycle().publish_head()
 
-    def test_clean_committed_addition_stops_publish_to_prevent_undetected_copy(self):
+    def test_clean_committed_allowed_addition_publishes(self):
         h = Harness(self.root / "clean-add", self.state / "clean-add", contract(allowed_paths=["docs/EVIDENCE.md"]), committed=[("A", "docs/EVIDENCE.md")])
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        self.assertEqual(h.lifecycle().publish_head()["head_sha"], "b" * 40)
+
+    def test_clean_committed_workflow_addition_stops_publish(self):
+        h = Harness(
+            self.root / "clean-workflow-add",
+            self.state / "clean-workflow-add",
+            contract(allowed_paths=[".github/workflows/ci.yml"]),
+            committed=[("A", ".github/workflows/ci.yml")],
+        )
+        h.lifecycle().preflight()
+        h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
+            h.lifecycle().publish_head()
+
+    def test_clean_committed_skill_addition_stops_publish(self):
+        h = Harness(
+            self.root / "clean-skill-add",
+            self.state / "clean-skill-add",
+            contract(allowed_paths=["skills/example/SKILL.md"]),
+            committed=[("A", "skills/example/SKILL.md")],
+        )
         h.lifecycle().preflight()
         h.head = "b" * 40
         with self.assertRaisesRegex(L.StopNeedsHuman, "committed_path_rejected"):
@@ -263,13 +286,23 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             self.h.lifecycle().ensure_pr()
 
-    def test_max_corrections_zero_stops_changed_head_before_push(self):
+    def test_max_corrections_zero_allows_initial_publish_then_stops_first_fix(self):
         h = Harness(self.root / "budget-zero", self.state / "budget-zero", contract(max_corrections=0, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
         h.lifecycle().preflight()
+
         h.head = "b" * 40
+        self.assertEqual(h.lifecycle().publish_head()["state"], "PUBLISHED")
+
+        state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["corrections"], 0)
+        self.assertTrue(state["published_once"])
+
+        h.head = "c" * 40
         with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
             h.lifecycle().publish_head()
-        self.assertFalse(any(command[1:2] == ["push"] for command in h.commands))
+
+        pushes = [command for command in h.commands if command[1:2] == ["push"]]
+        self.assertEqual(len(pushes), 1)
 
     def test_existing_publish_reservation_stops_second_correction_before_push(self):
         h = Harness(self.root / "budget-locked", self.state / "budget-locked", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
@@ -307,18 +340,50 @@ class LifecycleTests(unittest.TestCase):
     def test_correction_budget_allows_exact_limit_and_persists_count(self):
         h = Harness(self.root / "budget-exact", self.state / "budget-exact", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
         h.lifecycle().preflight()
+
         h.head = "b" * 40
         self.assertEqual(h.lifecycle().publish_head()["state"], "PUBLISHED")
+
+        state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["corrections"], 0)
+        self.assertTrue(state["published_once"])
+
+        h.head = "c" * 40
+        self.assertEqual(h.lifecycle().publish_head()["state"], "PUBLISHED")
+
         state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
         self.assertEqual(state["corrections"], 1)
 
     def test_correction_budget_stops_above_limit(self):
         h = Harness(self.root / "budget-over", self.state / "budget-over", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
         h.lifecycle().preflight()
+
+        # Initial implementation publish: does not consume correction budget.
         h.head = "b" * 40
         h.lifecycle().publish_head()
+
+        # First correction: allowed.
         h.head = "c" * 40
+        h.lifecycle().publish_head()
+
+        # Second correction: exceeds max_corrections=1.
+        h.head = "d" * 40
         with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
+            h.lifecycle().publish_head()
+
+        pushes = [command for command in h.commands if command[1:2] == ["push"]]
+        self.assertEqual(len(pushes), 2)
+
+    def test_missing_publication_state_fails_closed(self):
+        h = Harness(self.root / "publication-state", self.state / "publication-state", contract())
+        h.lifecycle().preflight()
+
+        state_path = h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.pop("published_once")
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publication_state_rejected"):
             h.lifecycle().publish_head()
 
     def test_closed_prior_pr_without_state_stops_second_creation(self):

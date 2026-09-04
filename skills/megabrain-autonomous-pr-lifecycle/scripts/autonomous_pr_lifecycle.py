@@ -226,8 +226,8 @@ class Lifecycle:
             raise StopNeedsHuman("contract_sha_rejected")
         if not isinstance(data["allowed_paths"], list) or not all(isinstance(p, str) and _safe_relative(p) for p in data["allowed_paths"]):
             raise StopNeedsHuman("contract_paths_rejected")
-        if not isinstance(data["expected_ci_jobs"], list) or not data["expected_ci_jobs"] or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"]) or not all(isinstance(j, str) and j for j in data["expected_ci_jobs"]):
-            raise StopNeedsHuman("contract_jobs_rejected")
+        if not isinstance(data["expected_ci_jobs"], list) or not data["expected_ci_jobs"] or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"]) or not all(isinstance(j, str) and j for j in data["expected_ci_jobs"]):                 raise StopNeedsHuman("contract_jobs_rejected")
+
         if type(data["allow_safe_refresh"]) is not bool or type(data["max_corrections"]) is not int or not 0 <= data["max_corrections"] <= 10:
             raise StopNeedsHuman("contract_types_rejected")
         if not all(isinstance(data[key], str) and data[key].strip() for key in ("poll_deadline_utc", "owner_human", "approval_reference", "pr_title", "pr_body")):
@@ -400,11 +400,10 @@ class Lifecycle:
         while index < len(records) - 1:
             status = records[index]
             index += 1
-            if status != "M" or index >= len(records) - 1:
-                # Additions are rejected too: Git cannot reliably distinguish an
-                # allowlisted new file from a modified copy in every history.
+            if status not in {"A", "M"} or index >= len(records) - 1:
+                # v1 allows only regular-file additions and modifications.
                 # Rename, copy, delete, type-change, merge-unmerged, and any
-                # unfamiliar status are all fail-closed in v1.
+                # unfamiliar status remain fail-closed.
                 raise StopNeedsHuman("committed_path_rejected")
             path = records[index]
             self._validate_path(path, contract, "committed_path_rejected")
@@ -457,7 +456,14 @@ class Lifecycle:
         head = self._validate_checkout(contract)
         if head != contract["head_sha_initial"]:
             raise StopNeedsHuman("initial_head_mismatch")
-        self._write_state({"lifecycle_id": self.lifecycle_id, "fingerprint": contract_fingerprint, "head_sha": head, "ci_sha": None, "corrections": 0}, exclusive=True)
+        self._write_state({
+            "lifecycle_id": self.lifecycle_id,
+            "fingerprint": contract_fingerprint,
+            "head_sha": head,
+            "ci_sha": None,
+            "corrections": 0,
+            "published_once": False,
+        }, exclusive=True)
         return {"state": "PREFLIGHT_OK", "head_sha": head, "fingerprint": contract_fingerprint}
 
     def publish_head(self) -> dict[str, str]:
@@ -471,7 +477,13 @@ class Lifecycle:
         previous_head = state.get("head_sha")
         self._validate_committed_paths(contract, previous_head, head)
         corrections = self._correction_count(contract, state)
-        if head != previous_head:
+        published_once = state.get("published_once")
+        if type(published_once) is not bool:
+            raise StopNeedsHuman("publication_state_rejected")
+
+        # The first meaningful implementation publish is not a correction.
+        # Only subsequent changed HEADs consume the correction budget.
+        if head != previous_head and published_once:
             if corrections >= contract["max_corrections"]:
                 raise StopNeedsHuman("correction_budget_exhausted")
             # Reserve the correction before a network mutation.  A failed push
@@ -486,7 +498,11 @@ class Lifecycle:
         remote = self._git("ls-remote", "origin", ref).split()
         if len(remote) < 2 or remote[0] != head or remote[1] != ref:
             raise StopNeedsHuman("remote_head_mismatch")
-        state.update({"head_sha": head, "ci_sha": None})
+        state.update({
+            "head_sha": head,
+            "ci_sha": None,
+            "published_once": published_once or head != previous_head,
+        })
         self._write_state(state)
         return {"state": "PUBLISHED", "head_sha": head}
 
@@ -554,6 +570,7 @@ class Lifecycle:
         self._validate_pr(pr, contract, sha)
         runs = self._api("GET", f"/repos/{REPOSITORY}/actions/runs?event=pull_request&head_sha={sha}")
         candidates = [run for run in runs.get("workflow_runs", []) if isinstance(run, Mapping) and run.get("head_sha") == sha and isinstance(run.get("pull_requests"), list) and number in [entry.get("number") for entry in run["pull_requests"] if isinstance(entry, Mapping)]] if isinstance(runs, Mapping) else []
+
         if len(candidates) != 1:
             raise StopNeedsHuman("workflow_run_ambiguous")
         run = candidates[0]
