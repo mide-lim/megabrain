@@ -229,10 +229,29 @@ or local `http.extraheader`. It made no Git write, push, pull request, merge,
 ruleset, bypass, App change, deployment, or production action. No further
 authenticated operation is authorized.
 
+## Final corrected-capability live downscope evidence
+
+After a new explicit one-time authorization, the corrected and installed B4.1
+capability completed its sole `probe-read-dev` operation successfully. The App
+JWT installation-baseline validation passed; the repository-restricted probe
+token requested only `contents: read`. GitHub provider-validated the returned
+probe-token permission map as read-only, with no write or `administration`;
+the exclusive `mide-lim/megabrain` scope and read-only `refs/heads/dev` Git
+probe were also accepted. The token was revoked successfully and temporary
+askpass cleanup succeeded.
+
+The post-probe checks found zero transient token/askpass environment residues,
+zero capability temporary artifacts under `/tmp`, zero active helper or askpass
+processes, and no local, global, or system `credential.helper`, `core.askpass`,
+or `http.extraheader` configuration. The working tree was clean before this
+local evidence update. No Git write, push, pull request, merge, ruleset,
+bypass, App change, deploy, or production action occurred. This is the final
+authorized authenticated operation; no remote publication was performed.
+
 Canonical source reproducibility is complete: the versioned
 `skills/megabrain-github-app-auth/` source reconstructed and re-reconstructed a
 fresh temporary derived destination using only repository files. The hermetic
-unit suite passed 12 tests, including byte-for-byte SHA-256 source/destination
+unit suite passed 13 tests, including byte-for-byte SHA-256 source/destination
 comparison, `0700` executable helper verification, exact derived-artifact-set
 verification, and absence of `.env`, `.pem`, and `.key` artifact names. It used
 mocked signing, HTTP, and Git and supplied no credential, JWT, token, network,

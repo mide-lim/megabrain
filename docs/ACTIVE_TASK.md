@@ -50,8 +50,11 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
 - `--operational-gate-approved` é um guardrail de processo e não um limite de
   segurança técnico; toda operação autenticada futura ainda exige autorização
   humana nova e explícita;
-- self-test operacional somente leitura da GitHub App concluído historicamente
-  com sucesso; nenhuma nova operação autenticada é autorizada.
+- probe final da capability corrigida e instalada, explicitamente reautorizado,
+  passou: GitHub provider-validou token read-only restrito a `contents: read`,
+  sem write ou `administration`; escopo exclusivo `mide-lim/megabrain`; leitura
+  de `refs/heads/dev`; revogação e cleanup confirmados. Não há nova operação
+  autenticada autorizada.
 - a entrega canônica permanece parada para revisão e decisão humana de merge do
   Pull Request para `dev`; não há auto-merge.
 
