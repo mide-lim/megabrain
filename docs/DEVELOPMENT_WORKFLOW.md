@@ -65,7 +65,9 @@ existência do GitHub App não concede autoridade de produção, merge ou deploy
 ## Direção futura
 
 A CI isolada e as primeiras evidências determinísticas já existem. O próximo alvo
-de Engineering Enablement é adicionar staging quando necessário e evoluir os
-gates baseados em risco. Hermes já possui escrita limitada a `agent/*`, mas não
-há hoje auto-merge, deploy automático ou promoção autônoma para `dev`, `main` ou
-produção.
+de Engineering Enablement é B4.2 Autonomous PR Lifecycle, em Discovery/SDD/Task
+Contract. B4.1 está `COMPLETE / PROMOTED` e fornece somente autenticação GitHub
+App read-only comprovada; não habilita escrita nova. A proposta B4.2 mantém a
+concessão no Task Contract aprovado, sem auto-merge, deploy automático ou
+promoção autônoma para `dev`, `main` ou produção. A validação local de `agent/*`
+é defesa em profundidade e não ACL provider-enforced.

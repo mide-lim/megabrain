@@ -36,7 +36,7 @@ B3 — CI Foundation: COMPLETE.
 
 B4 — Hermes Autonomy Foundation: ACTIVE.
 
-- B4.1 — GitHub Auth Bootstrap: `COMPLETE / HUMAN GATE FINAL`.
+- B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
 - fonte canônica versionada em `skills/megabrain-github-app-auth/`; a instalação
   em `~/.hermes/skills/megabrain/megabrain-github-app-auth` é somente artefato
@@ -55,8 +55,20 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   sem write ou `administration`; escopo exclusivo `mide-lim/megabrain`; leitura
   de `refs/heads/dev`; revogação e cleanup confirmados. Não há nova operação
   autenticada autorizada.
-- a entrega canônica permanece parada para revisão e decisão humana de merge do
-  Pull Request para `dev`; não há auto-merge.
+- Pull Request #10 integrado manualmente em `dev`; B4.1 está promovida. A
+  capability permanece limitada à sua única operação read-only e não autoriza
+  nenhuma nova operação autenticada.
+
+- B4.2 — Autonomous PR Lifecycle: `ACTIVE` (Discovery, SDD e Task Contract
+  inicial versionados; capability de escrita ainda não aprovada).
+- objetivo proposto: após aprovação de Task Contract, operar autonomamente o
+  ciclo controlado `agent/* -> push -> PR para dev -> CI -> correção -> READY`;
+  merge continua exclusivamente humano;
+- nenhuma capability de escrita autenticada foi criada, instalada, habilitada
+  ou executada nesta etapa; o primeiro passo Yellow de escrita permanece
+  bloqueado por gate humano;
+- `.github/workflows/**`, rulesets, bypass, Administration, permissões/instalação
+  App, produção, deploy e progressão para `main` continuam fora do escopo.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.

@@ -44,6 +44,16 @@ concluída com sucesso.
 
 ## Limitações e dívida conhecida
 
+### Engineering Enablement
+
+- B4.1 — GitHub Auth Bootstrap está `COMPLETE / PROMOTED`: a capability
+  reproduzível de autenticação GitHub App comprovou somente o probe read-only
+  de `dev`, com token efêmero, revogação e cleanup. Ela não autoriza escrita,
+  PR, merge ou mudanças administrativas.
+- B4.2 — Autonomous PR Lifecycle está `ACTIVE` em Discovery/SDD/Task Contract.
+  Nenhuma capability autenticada de escrita foi criada ou habilitada; merge em
+  `dev` permanece human-gated.
+
 ### Downloader
 
 - O tratamento de respostas HTTP 200 com `success:false` precisa de hardening.
