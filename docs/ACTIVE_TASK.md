@@ -36,7 +36,7 @@ B3 — CI Foundation: COMPLETE.
 
 B4 — Hermes Autonomy Foundation: ACTIVE.
 
-- B4.1 — GitHub Auth Bootstrap: `COMPLETE / HUMAN GATE FINAL`.
+- B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
 - fonte canônica versionada em `skills/megabrain-github-app-auth/`; a instalação
   em `~/.hermes/skills/megabrain/megabrain-github-app-auth` é somente artefato
@@ -55,8 +55,25 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   sem write ou `administration`; escopo exclusivo `mide-lim/megabrain`; leitura
   de `refs/heads/dev`; revogação e cleanup confirmados. Não há nova operação
   autenticada autorizada.
-- a entrega canônica permanece parada para revisão e decisão humana de merge do
-  Pull Request para `dev`; não há auto-merge.
+- Pull Request #10 integrado manualmente em `dev`; B4.1 está promovida. A
+  capability permanece limitada à sua única operação read-only e não autoriza
+  nenhuma nova operação autenticada.
+
+- B4.2 — Autonomous PR Lifecycle: `IMPLEMENTED / HUMAN_GATE`.
+- fonte canônica versionada em `skills/megabrain-autonomous-pr-lifecycle/`; a
+  instalação em `~/.hermes/skills/megabrain/megabrain-autonomous-pr-lifecycle`
+  é derivada, reconstruída atomicamente do conjunto exato de artefatos;
+- os 13 testes herméticos passaram sem JWT, installation token, rede, push ou
+  mutação de PR. Eles exercitam fingerprint imutável, denylist de control plane,
+  paths/symlinks, branch/ref segura, PR/CI drift, permissões e cleanup;
+- a primeira operação autenticada (inclusive leitura), publish, PR, observação
+  CI, refresh e correção continuam bloqueados por gate humano separado. Merge
+  em `dev` é exclusivamente humano;
+- `agent/*` é defesa local em profundidade, não ACL provider-enforced: um token
+  `contents: write` ainda pode ter capacidade provider-side maior em refs não
+  protegidas do que a interface fechada expõe;
+- `.github/workflows/**`, rulesets, bypass, Administration, permissões/instalação
+  App, produção, deploy e progressão para `main` continuam fora do escopo.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
