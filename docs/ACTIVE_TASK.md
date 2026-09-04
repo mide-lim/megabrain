@@ -34,6 +34,30 @@ B3 — CI Foundation: COMPLETE.
 - gate humano de merge e isolamento do Hermes preservados;
 - rollback documentado, independente e sujeito a gate humano.
 
+B4 — Hermes Autonomy Foundation: ACTIVE.
+
+- B4.1 — GitHub Auth Bootstrap: `COMPLETE / HUMAN GATE FINAL`.
+- checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
+- fonte canônica versionada em `skills/megabrain-github-app-auth/`; a instalação
+  em `~/.hermes/skills/megabrain/megabrain-github-app-auth` é somente artefato
+  derivado, reconstruído pelo instalador sem ler/copiá-la como fonte;
+- a instalação e reinstalação herméticas em destino temporário limpo passaram:
+  12 testes validaram bytes SHA-256, modo executável `0700`, conjunto exato de
+  artefatos e ausência de `.env`, `.pem` e `.key`, sem credencial, JWT, token,
+  rede ou operação autenticada;
+- a capability contém somente `probe-read-dev` de leitura; B4.2, escrita Git,
+  push, PR, merge, ruleset, bypass, deploy e produção continuam excluídos;
+- `--operational-gate-approved` é um guardrail de processo e não um limite de
+  segurança técnico; toda operação autenticada futura ainda exige autorização
+  humana nova e explícita;
+- probe final da capability corrigida e instalada, explicitamente reautorizado,
+  passou: GitHub provider-validou token read-only restrito a `contents: read`,
+  sem write ou `administration`; escopo exclusivo `mide-lim/megabrain`; leitura
+  de `refs/heads/dev`; revogação e cleanup confirmados. Não há nova operação
+  autenticada autorizada.
+- a entrega canônica permanece parada para revisão e decisão humana de merge do
+  Pull Request para `dev`; não há auto-merge.
+
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
 Engineering Enablement continua separado do roadmap de produto.
 
