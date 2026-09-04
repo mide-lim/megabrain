@@ -45,11 +45,12 @@ def contract(lifecycle_id="life-1", **changes):
 
 
 class Harness:
-    def __init__(self, root: Path, state: Path, data: dict, *, changed=(), branch=None):
+    def __init__(self, root: Path, state: Path, data: dict, *, changed=(), branch=None, head=SHA):
         self.root, self.state, self.data = root, state, data
         self.commands = []
         self.changed = list(changed)
         self.branch = branch or data["branch"]
+        self.head = head
         path = root / "contracts/b4.2"
         path.mkdir(parents=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
@@ -66,7 +67,7 @@ class Harness:
         args = tuple(command[1:])
         if args == ("symbolic-ref", "--short", "HEAD"): return self.branch
         if args == ("remote", "get-url", "origin"): return L.ORIGIN_URL
-        if args == ("rev-parse", "HEAD"): return SHA
+        if args == ("rev-parse", "HEAD"): return self.head
         if args == ("status", "--porcelain=v1", "--untracked-files=all"): return "\n".join(" M " + path for path in self.changed)
         if args[:1] == ("push",): return ""
         if args[:1] == ("ls-remote",): return f"{SHA}\t{args[-1]}"
@@ -134,7 +135,7 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "contract_fingerprint_divergent"): self.h.lifecycle().publish_head()
 
     def test_control_plane_and_capability_paths_are_denied(self):
-        for path in ("skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py", "skills/megabrain-github-app-auth/scripts/github_app_auth.py", ".github/workflows/ci.yml", "AGENTS.md", "docs/RISK_POLICY.md", "docs/DEFINITION_OF_DONE.md", "docs/TASK_CONTRACT_X.md", "docs/DEVELOPMENT_WORKFLOW.md"):
+        for path in ("skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py", "skills/megabrain-github-app-auth/scripts/github_app_auth.py", "skills/another-capability/SKILL.md", ".github/workflows/ci.yml", "AGENTS.md", "docs/RISK_POLICY.md", "docs/DEFINITION_OF_DONE.md", "docs/TASK_CONTRACT_X.md", "docs/DEVELOPMENT_WORKFLOW.md"):
             h = Harness(self.root / hashlib.sha1(path.encode()).hexdigest(), self.state / hashlib.sha1(path.encode()).hexdigest(), contract(), changed=[path])
             with self.assertRaisesRegex(L.StopNeedsHuman, "changed_path_rejected"): h.lifecycle().preflight()
 
@@ -152,6 +153,15 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "local_branch_rejected"): h.lifecycle().preflight()
         linkroot = self.root / "link"; linkroot.mkdir(); (linkroot / "contracts").symlink_to(self.root / "contracts")
         with self.assertRaises(L.StopNeedsHuman): L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight()
+        state_target = self.root / "state-target"; state_target.mkdir()
+        state_link = self.root / "state-link"; state_link.symlink_to(state_target, target_is_directory=True)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "state_root_rejected"):
+            L.Lifecycle(self.root, "life-1", state_root=state_link, runner=self.h.runner)
+
+    def test_preflight_binds_the_declared_initial_head(self):
+        h = Harness(self.root / "initial", self.state / "initial", contract(), head="b" * 40)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "initial_head_mismatch"):
+            h.lifecycle().preflight()
 
     def test_second_pr_base_drift_remote_head_and_old_green_ci_stop(self):
         self.preflight(); life = self.h.lifecycle(); life.publish_head()
@@ -214,6 +224,10 @@ class InstallationTests(unittest.TestCase):
             symlink_destination.symlink_to(symlink_target, target_is_directory=True)
             with self.assertRaisesRegex(RuntimeError, "destination_rejected"):
                 installer.install(symlink_destination, test_only=True)
+            parent_link = Path(temp) / "unsafe-parent"
+            parent_link.symlink_to(symlink_target, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "destination_rejected"):
+                installer.install(parent_link / "megabrain-autonomous-pr-lifecycle", test_only=True)
             expected = installer.ARTIFACTS
             files = {p.relative_to(destination) for p in destination.rglob("*") if p.is_file()}
             self.assertEqual(files, set(expected))

@@ -22,6 +22,7 @@ CONTRACT_DIRECTORY = Path("contracts/b4.2")
 
 PUBLIC_OPERATIONS = frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready"})
 DENIED_PATHS = (
+    "skills/**",
     "skills/megabrain-autonomous-pr-lifecycle/**",
     "skills/megabrain-github-app-auth/**",
     ".github/workflows/**",
@@ -170,8 +171,13 @@ class Lifecycle:
         self.root = repository_root.resolve()
         self.lifecycle_id = lifecycle_id
         self.contract_path = self.root / CONTRACT_DIRECTORY / f"{lifecycle_id}.json"
-        root = state_root or (Path.home() / ".local/state/megabrain/b4.2")
-        self.state_root = root.expanduser().resolve(strict=False)
+        root = (state_root or (Path.home() / ".local/state/megabrain/b4.2")).expanduser().absolute()
+        candidate = root
+        while candidate != candidate.parent:
+            if candidate.exists() and candidate.is_symlink():
+                raise StopNeedsHuman("state_root_rejected")
+            candidate = candidate.parent
+        self.state_root = root
         if self.state_root == self.root or self.root in self.state_root.parents:
             raise StopNeedsHuman("unsafe_state_root")
         self.runner = runner or _default_runner
@@ -333,6 +339,8 @@ class Lifecycle:
     def preflight(self) -> dict[str, str]:
         contract, contract_fingerprint = self._contract()
         head = self._validate_checkout(contract)
+        if head != contract["head_sha_initial"]:
+            raise StopNeedsHuman("initial_head_mismatch")
         self._write_state({"lifecycle_id": self.lifecycle_id, "fingerprint": contract_fingerprint, "head_sha": head, "ci_sha": None}, exclusive=True)
         return {"state": "PREFLIGHT_OK", "head_sha": head, "fingerprint": contract_fingerprint}
 
