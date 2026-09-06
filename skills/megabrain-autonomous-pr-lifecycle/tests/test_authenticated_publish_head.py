@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,14 +32,28 @@ class FakeLifecycle:
     branch = BRANCH
     published_sha = SHA
     commands: list[list[str]] = []
+    roots: list[Path] = []
 
     def __init__(self, root, lifecycle_id):
         self.root = root
+        self.roots.append(root)
         self.lifecycle_id = lifecycle_id
         self.runner = None
 
-    def _contract(self):
-        return {"branch": self.branch}, "fingerprint"
+    def _guard(self):
+        return {"branch": self.branch}, {"head_sha": SHA, "published_once": False, "corrections": 0}
+
+    def _state(self):
+        return {"head_sha": SHA, "published_once": False, "corrections": 0}
+
+    def _validate_checkout(self, contract):
+        return SHA
+
+    def _validate_committed_paths(self, contract, base, head):
+        return None
+
+    def _correction_count(self, contract, state):
+        return 0
 
     @contextmanager
     def _publish_reservation(self):
@@ -62,6 +77,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         FakeLifecycle.branch = BRANCH
         FakeLifecycle.published_sha = SHA
         FakeLifecycle.commands = []
+        FakeLifecycle.roots = []
 
     def api_success(self, method, path, authorization, payload=None):
         if method == "GET" and path == "/app/installations/456":
@@ -80,8 +96,8 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             return 204, {}
         self.fail(f"unexpected request: {method} {path}")
 
-    def patches(self, api=None):
-        def runner(temp, askpass, token, branch):
+    def patches(self, api=None, stage=None):
+        def runner(temp, askpass, token, branch, staging_root):
             self.assertEqual(branch, BRANCH)
             self.assertEqual(token, "TOKEN_FIXTURE")
             return lambda command, cwd: ""
@@ -94,11 +110,12 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle),
             mock.patch.object(PUBLISH, "create_askpass", return_value="/fixture/askpass"),
             mock.patch.object(PUBLISH, "controlled_runner", side_effect=runner),
+            mock.patch.object(PUBLISH, "create_isolated_staging_repository", side_effect=stage),
         )
 
     def test_exact_contents_write_single_scope_exact_branch_and_sanitized_result(self):
         patches = self.patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["origin_valid"])
@@ -115,6 +132,21 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         self.assertNotIn("JWT_FIXTURE", encoded)
         self.assertNotIn(self.environment["MEGABRAIN_GITHUB_APP_KEY_PATH"], encoded)
 
+    def test_isolated_staging_directory_is_removed_after_authenticated_publish(self):
+        staging_parents = []
+
+        def stage(source, staging, branch, approved_head, temporary_home):
+            staging.mkdir()
+            staging_parents.append(staging.parent)
+
+        patches = self.patches(stage=stage)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["temporary_cleanup"])
+        self.assertEqual(len(staging_parents), 1)
+        self.assertFalse(staging_parents[0].exists())
+
     def test_extra_or_wrong_write_permission_is_rejected_and_revoked(self):
         def api(method, path, authorization, payload=None):
             if method == "GET" and path == "/app/installations/456":
@@ -125,7 +157,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 204, {}
             self.fail("scope and push must not run")
         patches = self.patches(api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["failure_code"], "token_permissions_rejected")
         self.assertIs(result["publish_token_permissions_valid"], False)
@@ -144,7 +176,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 204, {}
             self.fail("push must not run")
         patches = self.patches(api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["failure_code"], "scope_rejected")
         self.assertIs(result["scope_valid"], False)
@@ -189,20 +221,51 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             with self.assertRaisesRegex(PUBLISH.SafeFailure, "push_destination_rejected"):
                 PUBLISH.validate_push_destination()
 
-    def test_controlled_runner_disables_repository_credential_helpers(self):
+    def test_controlled_runner_disables_repository_credential_helpers_and_hooks(self):
         command = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
         completed = PUBLISH.subprocess.CompletedProcess(command, 0, "", "")
-        runner = PUBLISH.controlled_runner("/fixture/temp", "/fixture/askpass", "TOKEN_FIXTURE", BRANCH)
+        staging = Path("/fixture/staging")
+        runner = PUBLISH.controlled_runner("/fixture/temp", "/fixture/askpass", "TOKEN_FIXTURE", BRANCH, staging)
         with mock.patch.object(PUBLISH.subprocess, "run", return_value=completed) as execute:
-            self.assertEqual(runner(command, Path("/fixture/repository")), "")
+            self.assertEqual(runner(command, staging), "")
         invoked = execute.call_args.args[0]
         environment = execute.call_args.kwargs["env"]
         self.assertEqual(
             invoked,
-            ["git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", "credential.interactive=false", *command[1:]],
+            ["git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", "credential.interactive=false", "-c", "core.hooksPath=/dev/null", *command[1:]],
         )
         self.assertEqual(environment["GIT_ASKPASS"], "/fixture/askpass")
         self.assertEqual(environment["GIT_CONFIG_GLOBAL"], PUBLISH.os.devnull)
+
+    def test_source_worktree_git_runner_never_receives_installation_token(self):
+        command = ["git", "rev-parse", "HEAD"]
+        completed = PUBLISH.subprocess.CompletedProcess(command, 0, SHA, "")
+        runner = PUBLISH.source_runner("/fixture/temp", BRANCH)
+        with mock.patch.object(PUBLISH.subprocess, "run", return_value=completed) as execute:
+            self.assertEqual(runner(command, Path("/fixture/source")), SHA)
+        environment = execute.call_args.kwargs["env"]
+        self.assertNotIn("MEGABRAIN_GITHUB_APP_TOKEN", environment)
+        self.assertNotIn("GIT_ASKPASS", environment)
+
+    def test_source_pre_push_hook_cannot_execute_during_authenticated_push(self):
+        command = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
+        source = Path("/fixture/source-with-pre-push-hook")
+        staging = Path("/fixture/staging")
+        runner = PUBLISH.controlled_runner("/fixture/temp", "/fixture/askpass", "TOKEN_FIXTURE", BRANCH, staging)
+        with mock.patch.object(PUBLISH.subprocess, "run") as execute:
+            with self.assertRaisesRegex(PUBLISH.LIFECYCLE.StopNeedsHuman, "git_command_rejected"):
+                runner(command, source)
+        execute.assert_not_called()
+
+    def test_staging_rejects_a_commit_other_than_the_approved_head(self):
+        def git(command, **_):
+            stdout = "b" * 40 if command[-2:] == ["rev-parse", "HEAD"] else ""
+            return PUBLISH.subprocess.CompletedProcess(command, 0, stdout, "")
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(PUBLISH.subprocess, "run", side_effect=git):
+            with self.assertRaisesRegex(PUBLISH.LIFECYCLE.StopNeedsHuman, "staged_head_mismatch"):
+                PUBLISH.create_isolated_staging_repository(
+                    Path("/fixture/source"), Path(temporary) / "staging", BRANCH, SHA, temporary,
+                )
 
     def test_only_exact_non_force_head_refspec_is_permitted(self):
         allowed = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
@@ -222,7 +285,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 500, {}
             return self.api_success(method, path, authorization, payload)
         patches = self.patches(revocation_fails)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
             revoked = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(revoked["failure_code"], "revocation_failed")
         self.assertEqual(revoked["revocation"], "failed")
@@ -232,7 +295,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             def cleanup(self):
                 raise OSError("fixture")
         patches = self.patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
             cleaned = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(cleaned["failure_code"], "cleanup_failed")
         self.assertEqual(cleaned["revocation"], "ok")
@@ -259,7 +322,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             return self.api_success(method, path, authorization, payload)
 
         patches = self.patches(api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], mock.patch.object(PUBLISH.urllib.request, "urlopen", return_value=EmptyResponse()):
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], mock.patch.object(PUBLISH.urllib.request, "urlopen", return_value=EmptyResponse()):
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertIsNone(result["failure_code"])

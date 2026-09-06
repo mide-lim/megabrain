@@ -219,27 +219,89 @@ def _allowed_git_command(command: list[str], branch: str) -> bool:
     return False
 
 
-def controlled_runner(temp_directory: str, askpass_path: str, token: str, branch: str):
+def _isolated_git_environment(home: str, token: str | None = None, askpass_path: str | None = None) -> dict[str, str]:
+    environment = {
+        "PATH": os.environ.get("PATH", ""), "HOME": home,
+        "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    if token is not None and askpass_path is not None:
+        environment["GIT_ASKPASS"] = askpass_path
+        environment["MEGABRAIN_GITHUB_APP_TOKEN"] = token
+    return environment
+
+
+def _run_isolated_git(command: list[str], cwd: Path, home: str, *, token: str | None = None,
+                      askpass_path: str | None = None) -> str:
+    isolated_command = [
+        "git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true",
+        "-c", "credential.interactive=false", "-c", "core.hooksPath=/dev/null",
+        *command[1:],
+    ]
+    try:
+        completed = subprocess.run(
+            isolated_command, cwd=cwd,
+            env=_isolated_git_environment(home, token, askpass_path),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LIFECYCLE.StopNeedsHuman("git_command_rejected") from exc
+    if completed.returncode != 0:
+        raise LIFECYCLE.StopNeedsHuman("git_command_rejected")
+    return completed.stdout.strip()
+
+
+def source_runner(temp_directory: str, branch: str):
+    """Run only local validation Git commands without an installation token."""
     def run(command: list[str], cwd: Path) -> str:
-        if not _allowed_git_command(command, branch):
+        if not _allowed_git_command(command, branch) or command[1] in {"ls-remote", "push"}:
             raise LIFECYCLE.StopNeedsHuman("git_command_rejected")
-        environment = {
-            "PATH": os.environ.get("PATH", ""), "HOME": temp_directory,
-            "GIT_ASKPASS": askpass_path, "GIT_TERMINAL_PROMPT": "0",
-            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-            "MEGABRAIN_GITHUB_APP_TOKEN": token,
-        }
-        isolated_command = [
-            "git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true",
-            "-c", "credential.interactive=false", *command[1:],
-        ]
-        try:
-            completed = subprocess.run(isolated_command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False, timeout=30)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise LIFECYCLE.StopNeedsHuman("git_command_rejected") from exc
-        if completed.returncode != 0:
+        return _run_isolated_git(command, cwd, temp_directory)
+    return run
+
+
+def create_isolated_staging_repository(source_root: Path, staging_root: Path, branch: str,
+                                       approved_head: str, temporary_home: str) -> None:
+    """Import only the approved source commit graph before credentials exist."""
+    if not SHA_RE.fullmatch(approved_head):
+        raise LIFECYCLE.StopNeedsHuman("local_head_rejected")
+    staging_root.mkdir(mode=0o700)
+    _run_isolated_git(["git", "init", "--quiet"], staging_root, temporary_home)
+    _run_isolated_git(
+        ["git", "fetch", "--no-tags", "--no-recurse-submodules", str(source_root), approved_head],
+        staging_root, temporary_home,
+    )
+    _run_isolated_git(["git", "cat-file", "-e", f"{approved_head}^{{commit}}"], staging_root, temporary_home)
+    _run_isolated_git(["git", "update-ref", f"refs/heads/{branch}", approved_head], staging_root, temporary_home)
+    _run_isolated_git(["git", "symbolic-ref", "HEAD", f"refs/heads/{branch}"], staging_root, temporary_home)
+    _run_isolated_git(["git", "reset", "--hard", "--quiet", approved_head], staging_root, temporary_home)
+    if _run_isolated_git(["git", "rev-parse", "HEAD"], staging_root, temporary_home) != approved_head:
+        raise LIFECYCLE.StopNeedsHuman("staged_head_mismatch")
+    if _run_isolated_git(["git", "remote"], staging_root, temporary_home):
+        raise LIFECYCLE.StopNeedsHuman("staging_origin_rejected")
+    _run_isolated_git(["git", "remote", "add", "origin", ORIGIN], staging_root, temporary_home)
+    if (_run_isolated_git(["git", "remote"], staging_root, temporary_home) != "origin"
+            or _run_isolated_git(["git", "remote", "get-url", "origin"], staging_root, temporary_home) != ORIGIN):
+        raise LIFECYCLE.StopNeedsHuman("staging_origin_rejected")
+
+
+def validate_source_for_staging(lifecycle: Any, contract: Mapping[str, Any], state: Mapping[str, Any]) -> str:
+    """Complete every local contract, checkout, and committed-range check pre-token."""
+    head = lifecycle._validate_checkout(contract)
+    lifecycle._validate_committed_paths(contract, state.get("head_sha"), head)
+    lifecycle._correction_count(contract, state)
+    if type(state.get("published_once")) is not bool:
+        raise LIFECYCLE.StopNeedsHuman("publication_state_rejected")
+    return head
+
+
+def controlled_runner(temp_directory: str, askpass_path: str, token: str, branch: str,
+                      staging_root: Path):
+    def run(command: list[str], cwd: Path) -> str:
+        if not _allowed_git_command(command, branch) or cwd.resolve() != staging_root.resolve():
             raise LIFECYCLE.StopNeedsHuman("git_command_rejected")
-        return completed.stdout.strip()
+        return _run_isolated_git(command, cwd, temp_directory, token=token, askpass_path=askpass_path)
     return run
 
 
@@ -272,10 +334,17 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
             raise SafeFailure("origin_rejected")
         validate_push_destination()
         result["origin_valid"] = True
-        lifecycle = LIFECYCLE.Lifecycle(Path.cwd(), lifecycle_id)
-        contract, _ = lifecycle._contract()
+        source_root = Path.cwd().resolve()
+        lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
+        contract, state = lifecycle._guard()
         branch = contract["branch"]
         validate_key_path(key_path)
+        temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p2-")
+        result["temporary_cleanup"] = False
+        lifecycle.runner = source_runner(temporary_directory.name, branch)
+        approved_head = validate_source_for_staging(lifecycle, contract, state)
+        staging_root = Path(temporary_directory.name) / "staging"
+        create_isolated_staging_repository(source_root, staging_root, branch, approved_head, temporary_directory.name)
         jwt = make_jwt(app_id, key_path)
         baseline_status, baseline = request_json("GET", f"/app/installations/{installation_id}", f"Bearer {jwt}")
         if baseline_status != 200 or not _valid_installation_permissions(baseline.get("permissions")):
@@ -297,12 +366,13 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
             result["scope_valid"] = False
             raise SafeFailure("scope_rejected")
         result["scope_valid"] = True
-        temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p2-")
-        result["temporary_cleanup"] = False
-        runner = controlled_runner(temporary_directory.name, create_askpass(temporary_directory.name), token, branch)
-        lifecycle.runner = runner
-        with lifecycle._publish_reservation():
-            published = lifecycle._publish_head_locked()
+        runner = controlled_runner(
+            temporary_directory.name, create_askpass(temporary_directory.name), token, branch, staging_root,
+        )
+        staged_lifecycle = LIFECYCLE.Lifecycle(staging_root, lifecycle_id)
+        staged_lifecycle.runner = runner
+        with staged_lifecycle._publish_reservation():
+            published = staged_lifecycle._publish_head_locked()
         result["publish"] = True
         result["remote_sha_verified"] = published.get("head_sha") if isinstance(published.get("head_sha"), str) else None
         if result["remote_sha_verified"] is None:
