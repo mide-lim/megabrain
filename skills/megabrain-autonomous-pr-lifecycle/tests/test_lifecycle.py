@@ -55,9 +55,11 @@ class Harness:
         self.branch = branch or data["branch"]
         self.head = head
         self.remote_sha = SHA
+        self.remote_exists = False
+        self.remote_after_push: str | None = None
         self.tree_modes = {}
-        path = root / "contracts/b4.2"
-        path.mkdir(parents=True)
+        path = L.CONTRACT_ROOT
+        path.mkdir(parents=True, exist_ok=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
         self.pr = self.pr_body(SHA)
         self.runs_sha = SHA
@@ -81,9 +83,10 @@ class Harness:
             path = args[-1]
             return f"{self.tree_modes.get(path, '100644')} blob {'d' * 40}\t{path}\0"
         if args[:1] == ("push",):
-            self.remote_sha = self.head
+            self.remote_exists = True
+            self.remote_sha = self.head if self.remote_after_push is None else self.remote_after_push
             return ""
-        if args[:1] == ("ls-remote",): return f"{self.remote_sha}\t{args[-1]}"
+        if args[:1] == ("ls-remote",): return f"{self.remote_sha}\t{args[-1]}" if self.remote_exists else ""
         if args[:1] in (("fetch",), ("merge",)): return ""
         raise AssertionError(command)
 
@@ -110,11 +113,49 @@ class LifecycleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "repo"; self.root.mkdir()
         self.state = Path(self.temp.name) / "state"
+        self.contract_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-contracts" / "b4.2"
+        self.contract_root.mkdir(parents=True)
+        self.control_directories = (
+            self.contract_root.parent.parent,
+            self.contract_root.parent,
+            self.contract_root,
+        )
+        self.contract_metadata: dict[Path, dict[str, int]] = {}
+        self.real_lstat = os.lstat
+        self.real_fstat = os.fstat
+        self.contract_root_patch = mock.patch.object(L, "CONTRACT_ROOT", self.contract_root)
+        self.lstat_patch = mock.patch.object(L.os, "lstat", side_effect=self.trusted_lstat)
+        self.fstat_patch = mock.patch.object(L.os, "fstat", side_effect=self.trusted_fstat)
+        self.contract_root_patch.start(); self.lstat_patch.start(); self.fstat_patch.start()
         self.h = Harness(self.root, self.state, contract())
         self.live = mock.patch.object(L, "_require_live_operations_enabled", return_value=None)
         self.live.start()
 
-    def tearDown(self): self.live.stop(); self.temp.cleanup()
+    def tearDown(self):
+        self.live.stop(); self.fstat_patch.stop(); self.lstat_patch.stop(); self.contract_root_patch.stop(); self.temp.cleanup()
+
+    def trusted_lstat(self, path, *args, **kwargs):
+        result = self.real_lstat(path, *args, **kwargs)
+        if args or kwargs:
+            return result
+        target = Path(path)
+        metadata = self.contract_metadata.get(target, {})
+        if target in self.control_directories or target.parent == self.contract_root:
+            values = list(result)
+            values[4] = metadata.get("uid", 0)
+            default_mode = 0o755 if target in self.control_directories else 0o644
+            values[0] = (result.st_mode & ~0o777) | metadata.get("mode", default_mode)
+            return os.stat_result(values)
+        return result
+
+    def trusted_fstat(self, descriptor):
+        result = self.real_fstat(descriptor)
+        target = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
+        metadata = self.contract_metadata.get(target, {})
+        if stat.S_ISREG(result.st_mode) and target.parent == self.contract_root:
+            values = list(result); values[0] = (result.st_mode & ~0o777) | metadata.get("mode", 0o644); values[4] = metadata.get("uid", 0)
+            return os.stat_result(values)
+        return result
 
     def preflight(self):
         return self.h.lifecycle().preflight()
@@ -149,8 +190,66 @@ class LifecycleTests(unittest.TestCase):
 
     def test_changed_contract_fingerprint_stops_every_operation(self):
         self.preflight()
-        path = self.root / "contracts/b4.2/life-1.json"; altered = contract(pr_title="changed"); path.write_text(json.dumps(altered), encoding="utf-8")
+        path = self.contract_root / "life-1.json"; altered = contract(pr_title="changed"); path.write_text(json.dumps(altered), encoding="utf-8")
         with self.assertRaisesRegex(L.StopNeedsHuman, "contract_fingerprint_divergent"): self.h.lifecycle().publish_head()
+
+    def test_repository_local_contract_is_ignored(self):
+        local = self.root / "contracts/b4.2"; local.mkdir(parents=True)
+        (local / "life-1.json").write_text("not-json", encoding="utf-8")
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
+
+    def test_missing_external_contract_fails_closed_even_with_repository_contract(self):
+        local = self.root / "contracts/b4.2"; local.mkdir(parents=True)
+        (local / "life-1.json").write_text(json.dumps(contract()), encoding="utf-8")
+        (self.contract_root / "life-1.json").unlink()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_path_rejected"):
+            self.preflight()
+
+    def test_symlink_external_contract_is_rejected(self):
+        path = self.contract_root / "life-1.json"; target = self.contract_root / "target.json"
+        target.write_text(json.dumps(contract()), encoding="utf-8"); path.unlink(); path.symlink_to(target)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_path_rejected"):
+            self.preflight()
+
+    def test_group_or_other_writable_external_contract_is_rejected(self):
+        self.contract_metadata[self.contract_root / "life-1.json"] = {"mode": 0o664}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_path_rejected"):
+            self.preflight()
+
+    def test_group_or_other_writable_external_control_directory_is_rejected(self):
+        self.contract_metadata[self.contract_root] = {"mode": 0o775}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_symlink_intermediate_contract_directory_is_rejected(self):
+        intermediate = self.contract_root.parent
+        replacement = intermediate.with_name("replacement-contracts")
+        intermediate.rename(replacement)
+        intermediate.symlink_to(replacement, target_is_directory=True)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_non_root_owned_intermediate_contract_directory_is_rejected(self):
+        self.contract_metadata[self.contract_root.parent] = {"uid": 1000}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_group_or_other_writable_intermediate_contract_directory_is_rejected(self):
+        self.contract_metadata[self.contract_root.parent] = {"mode": 0o775}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_non_root_owned_external_contract_is_rejected(self):
+        self.contract_metadata[self.contract_root / "life-1.json"] = {"uid": 1000}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_path_rejected"):
+            self.preflight()
+
+    def test_root_owned_read_only_external_contract_is_accepted(self):
+        self.contract_metadata[self.contract_root / "life-1.json"] = {"uid": 0, "mode": 0o444}
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
+
+    def test_fully_trusted_contract_directory_chain_is_accepted(self):
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
 
     def test_clean_committed_workflow_change_stops_publish(self):
         h = Harness(self.root / "clean-workflow", self.state / "clean-workflow", contract(), committed=[("M", ".github/workflows/ci.yml")])
@@ -239,7 +338,7 @@ class LifecycleTests(unittest.TestCase):
             h.lifecycle().publish_head()
 
     def test_control_plane_and_capability_paths_are_denied(self):
-        for path in ("skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py", "skills/megabrain-github-app-auth/scripts/github_app_auth.py", "skills/another-capability/SKILL.md", ".github/workflows/ci.yml", "AGENTS.md", "docs/RISK_POLICY.md", "docs/DEFINITION_OF_DONE.md", "docs/TASK_CONTRACT_X.md", "docs/DEVELOPMENT_WORKFLOW.md"):
+        for path in ("skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py", "skills/megabrain-github-app-auth/scripts/github_app_auth.py", "skills/another-capability/SKILL.md", ".github/workflows/ci.yml", "AGENTS.md", "docs/RISK_POLICY.md", "docs/DEFINITION_OF_DONE.md", "docs/TASK_CONTRACT_X.md", "docs/DEVELOPMENT_WORKFLOW.md", "contracts/b4.2/life-1.json"):
             h = Harness(self.root / hashlib.sha1(path.encode()).hexdigest(), self.state / hashlib.sha1(path.encode()).hexdigest(), contract(), changed=[path])
             with self.assertRaisesRegex(L.StopNeedsHuman, "changed_path_rejected"): h.lifecycle().preflight()
 
@@ -256,7 +355,7 @@ class LifecycleTests(unittest.TestCase):
         h = Harness(self.root / "branch", self.state / "branch", contract(), branch="agent/b4-2-autonomous-pr-lifecycle-x")
         with self.assertRaisesRegex(L.StopNeedsHuman, "local_branch_rejected"): h.lifecycle().preflight()
         linkroot = self.root / "link"; linkroot.mkdir(); (linkroot / "contracts").symlink_to(self.root / "contracts")
-        with self.assertRaises(L.StopNeedsHuman): L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight()
+        self.assertEqual(L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight()["state"], "PREFLIGHT_OK")
         state_target = self.root / "state-target"; state_target.mkdir()
         state_link = self.root / "state-link"; state_link.symlink_to(state_target, target_is_directory=True)
         with self.assertRaisesRegex(L.StopNeedsHuman, "state_root_rejected"):
@@ -275,6 +374,27 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             life.ensure_pr()
         self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
+
+    def test_unexpected_first_remote_branch_and_later_drift_stop_before_push(self):
+        self.preflight()
+        self.h.remote_exists = True
+        with self.assertRaisesRegex(L.StopNeedsHuman, "unexpected_remote_branch"):
+            self.h.lifecycle().publish_head()
+        self.assertFalse(any(command[1:2] == ["push"] for command in self.h.commands))
+
+        self.h.remote_exists = False
+        self.h.lifecycle().publish_head()
+        self.h.head = "b" * 40
+        self.h.remote_sha = "c" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            self.h.lifecycle().publish_head()
+        self.assertEqual(len([command for command in self.h.commands if command[1:2] == ["push"]]), 1)
+
+    def test_publish_requires_exact_remote_sha_readback(self):
+        self.preflight()
+        self.h.remote_after_push = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_mismatch"):
+            self.h.lifecycle().publish_head()
 
     def test_remote_head_drift_during_pr_reuse_stops_before_acceptance(self):
         self.preflight()
