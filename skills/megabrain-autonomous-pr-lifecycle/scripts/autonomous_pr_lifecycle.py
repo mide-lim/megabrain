@@ -490,9 +490,14 @@ class Lifecycle:
 
     def _validate_pr(self, pr: Mapping[str, Any], contract: Mapping[str, Any], sha: str) -> None:
         head, base = pr.get("head"), pr.get("base")
-        if (not isinstance(pr, Mapping) or pr.get("state") != "open" or not isinstance(head, Mapping) or not isinstance(base, Mapping)
-                or head.get("ref") != contract["branch"] or head.get("sha") != sha or head.get("repo", {}).get("full_name") != REPOSITORY
-                or base.get("ref") != "dev" or base.get("repo", {}).get("full_name") != REPOSITORY):
+        head_repository = head.get("repo") if isinstance(head, Mapping) else None
+        base_repository = base.get("repo") if isinstance(base, Mapping) else None
+        if (not isinstance(pr, Mapping) or type(pr.get("number")) is not int or pr["number"] <= 0
+                or pr.get("state") != "open" or pr.get("merged") is True
+                or not isinstance(head, Mapping) or not isinstance(base, Mapping)
+                or not isinstance(head_repository, Mapping) or not isinstance(base_repository, Mapping)
+                or head.get("ref") != contract["branch"] or head.get("sha") != sha or head_repository.get("full_name") != REPOSITORY
+                or base.get("ref") != "dev" or base_repository.get("full_name") != REPOSITORY):
             raise StopNeedsHuman("pr_drift_rejected")
 
     def preflight(self) -> dict[str, str]:
@@ -553,8 +558,19 @@ class Lifecycle:
 
     def ensure_pr(self) -> dict[str, Any]:
         _require_live_operations_enabled()
+        return self._ensure_pr_locked()
+
+    def _ensure_pr_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """Perform only the reviewed contract-bound ensure-pr transition.
+
+        A closed authenticated adapter may supply a deferred state writer so the
+        PR number is persisted only after its independent token teardown has
+        completed.  Public lifecycle callers use the normal atomic writer.
+        """
         contract, state = self._guard()
         sha = self._validate_checkout(contract)
+        if state.get("published_once") is not True:
+            raise StopNeedsHuman("publication_required")
         if state.get("head_sha") != sha:
             raise StopNeedsHuman("publish_required")
         # Read the exact branch ref immediately before either reusing an existing
@@ -598,10 +614,13 @@ class Lifecycle:
                 if not isinstance(pr, Mapping):
                     raise StopNeedsHuman("pr_drift_rejected")
                 self._validate_pr(pr, contract, sha)
-        if not isinstance(pr.get("number"), int):
+        # An API response cannot commit state until its exact branch ref is read
+        # back again.  This closes the API-to-state time-of-check/use window.
+        self._validate_remote_head(contract, sha)
+        if type(pr.get("number")) is not int or pr["number"] <= 0:
             raise StopNeedsHuman("pr_number_rejected")
         state["pr_number"] = pr["number"]
-        self._write_state(state)
+        (self._write_state if state_writer is None else state_writer)(state)
         return {"state": "PR_OPEN", "pr_number": pr["number"], "head_sha": sha}
 
     def observe_ci(self) -> dict[str, Any]:
