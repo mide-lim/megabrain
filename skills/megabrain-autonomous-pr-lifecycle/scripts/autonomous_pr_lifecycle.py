@@ -47,7 +47,6 @@ EXPECTED_FIELDS = frozenset({
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LIFECYCLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 BRANCH_RE = re.compile(r"^agent/[a-z0-9][a-z0-9._-]{0,62}$")
-EXPECTED_CI_JOBS = ("Repository validation", "Enricher tests", "Web tests")
 
 Runner = Callable[[list[str], Path], str]
 Request = Callable[[str, str, Mapping[str, Any] | None], Any]
@@ -259,8 +258,9 @@ class Lifecycle:
             raise StopNeedsHuman("contract_sha_rejected")
         if not isinstance(data["allowed_paths"], list) or not all(isinstance(p, str) and _safe_relative(p) for p in data["allowed_paths"]):
             raise StopNeedsHuman("contract_paths_rejected")
-        if (not isinstance(data["expected_ci_jobs"], list) or tuple(data["expected_ci_jobs"]) != EXPECTED_CI_JOBS
-                or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"])):
+        if (not isinstance(data["expected_ci_jobs"], list) or not data["expected_ci_jobs"]
+                or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"])
+                or not all(isinstance(job, str) and job for job in data["expected_ci_jobs"])):
             raise StopNeedsHuman("contract_jobs_rejected")
 
         if type(data["allow_safe_refresh"]) is not bool or type(data["max_corrections"]) is not int or not 0 <= data["max_corrections"] <= 10:
@@ -675,7 +675,7 @@ class Lifecycle:
             raise StopNeedsHuman("workflow_run_ambiguous")
         return [
             run for run in runs["workflow_runs"]
-            if isinstance(run, Mapping) and run.get("head_sha") == sha
+            if isinstance(run, Mapping) and run.get("event") == "pull_request" and run.get("head_sha") == sha
             and isinstance(run.get("pull_requests"), list)
             and any(isinstance(entry, Mapping) and entry.get("number") == number for entry in run["pull_requests"])
         ]

@@ -32,7 +32,7 @@ OBSERVE = load("b42_authenticated_observe_ci", MODULE_PATH)
 
 
 def contract():
-    return {"branch": BRANCH}
+    return {"branch": BRANCH, "expected_ci_jobs": ["Repository validation", "Enricher tests", "Web tests"]}
 
 
 def state(**changes):
@@ -46,6 +46,7 @@ class FakeLifecycle:
     current_state = state()
     writes = []
     failure: str | None = None
+    observed_jobs: dict[str, str] | None = None
 
     def __init__(self, root, lifecycle_id):
         self.root, self.lifecycle_id, self.runner, self.request = root, lifecycle_id, None, None
@@ -74,7 +75,8 @@ class FakeLifecycle:
         deferred = dict(self.current_state, ci_sha=SHA)
         assert state_writer is not None
         state_writer(deferred)
-        return {"state": "CI_GREEN", "head_sha": SHA, "workflow_run_id": run_id, "jobs": {}}
+        return {"state": "CI_GREEN", "head_sha": SHA, "workflow_run_id": run_id,
+                "jobs": type(self).observed_jobs or {name: "success" for name in self.data["expected_ci_jobs"]}}
 
     def _commit_deferred_ci_state(self, expected, fingerprint, head, deferred):
         assert expected == self.current_state and fingerprint == self.current_state["fingerprint"] and head == SHA
@@ -84,7 +86,7 @@ class FakeLifecycle:
 class ObserveAdapterTests(unittest.TestCase):
     def setUp(self):
         self.environment = {"MEGABRAIN_GITHUB_APP_ID": "123", "MEGABRAIN_GITHUB_APP_INSTALLATION_ID": "456", "MEGABRAIN_GITHUB_APP_KEY_PATH": "/fixture/key"}
-        FakeLifecycle.data, FakeLifecycle.current_state, FakeLifecycle.writes, FakeLifecycle.failure = contract(), state(), [], None
+        FakeLifecycle.data, FakeLifecycle.current_state, FakeLifecycle.writes, FakeLifecycle.failure, FakeLifecycle.observed_jobs = contract(), state(), [], None, None
 
     def api(self, method, path, authorization, payload=None):
         if method == "GET" and path == "/app/installations/456":
@@ -98,7 +100,7 @@ class ObserveAdapterTests(unittest.TestCase):
         if method == "GET" and path.endswith("/pulls/7"):
             return 200, {"number": 7}
         if method == "GET" and "actions/runs?" in path:
-            return 200, {"workflow_runs": [{"id": 5, "head_sha": SHA, "pull_requests": [{"number": 7}]}]}
+            return 200, {"workflow_runs": [{"id": 5, "event": "pull_request", "head_sha": SHA, "pull_requests": [{"number": 7}]}]}
         if method == "GET" and path.endswith("/actions/runs/5/jobs"):
             return 200, {"jobs": []}
         if method == "DELETE" and path == "/installation/token":
@@ -121,9 +123,28 @@ class ObserveAdapterTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["observe_token_permissions_valid"])
         self.assertEqual(result["workflow_run_id"], 5)
+        self.assertEqual(result["jobs"], {"Repository validation": "success", "Enricher tests": "success", "Web tests": "success"})
         self.assertEqual(FakeLifecycle.writes, [dict(state(), ci_sha=SHA)])
         self.assertNotIn("TOKEN_FIXTURE", json.dumps(result))
         self.assertNotIn("JWT_FIXTURE", json.dumps(result))
+
+    def test_run_matching_requires_pull_request_event(self):
+        matching = {"workflow_runs": [{"id": 5, "event": "pull_request", "head_sha": SHA, "pull_requests": [{"number": 7}]}]}
+        self.assertEqual(OBSERVE._matching_run_ids(matching, SHA, 7), [5])
+        for event in ("push", None):
+            run = dict(matching["workflow_runs"][0])
+            if event is None:
+                del run["event"]
+            else:
+                run["event"] = event
+            with self.subTest(event=event):
+                self.assertEqual(OBSERVE._matching_run_ids({"workflow_runs": [run]}, SHA, 7), [])
+
+    def test_invalid_observed_jobs_fail_closed_before_state_commit(self):
+        FakeLifecycle.observed_jobs = {"Repository validation": "success"}
+        result = self.run_adapter()
+        self.assertEqual(result["failure_code"], "ci_result_rejected")
+        self.assertFalse(FakeLifecycle.writes)
 
     def test_operation_gate_and_preconditions_stop_before_authentication(self):
         self.assertEqual(OBSERVE.run_operation("ensure-pr", "life-1", True, self.environment)["failure_code"], "operation_rejected")

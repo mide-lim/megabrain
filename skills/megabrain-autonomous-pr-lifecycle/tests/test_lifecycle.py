@@ -108,7 +108,7 @@ class Harness:
         if path.endswith("/pulls/7"):
             return (200, self.pr)
         if path.endswith("actions/runs?event=pull_request&head_sha=" + SHA):
-            runs = self.runs if self.runs is not None else [{"id": 5, "head_sha": self.runs_sha, "status": self.run_status, "conclusion": self.run_conclusion, "pull_requests": [{"number": 7}]}]
+            runs = self.runs if self.runs is not None else [{"id": 5, "event": "pull_request", "head_sha": self.runs_sha, "status": self.run_status, "conclusion": self.run_conclusion, "pull_requests": [{"number": 7}]}]
             return (200, {"workflow_runs": copy.deepcopy(runs)})
         if path.endswith("/actions/runs/5/jobs"):
             jobs = self.jobs if self.jobs is not None else [{"name": name, "status": "completed", "conclusion": "success"} for name in self.data["expected_ci_jobs"]]
@@ -373,6 +373,14 @@ class LifecycleTests(unittest.TestCase):
         state_link = self.root / "state-link"; state_link.symlink_to(state_target, target_is_directory=True)
         with self.assertRaisesRegex(L.StopNeedsHuman, "state_root_rejected"):
             L.Lifecycle(self.root, "life-1", state_root=state_link, runner=self.h.runner)
+
+    def test_alternative_unique_nonempty_ci_job_contract_is_valid(self):
+        h = Harness(
+            self.root / "alternative-ci-jobs",
+            self.state / "alternative-ci-jobs",
+            contract(expected_ci_jobs=["Alternative validation", "Alternative tests"]),
+        )
+        self.assertEqual(h.lifecycle().preflight()["state"], "PREFLIGHT_OK")
 
     def test_preflight_binds_the_declared_initial_head(self):
         h = Harness(self.root / "initial", self.state / "initial", contract(), head="b" * 40)
@@ -734,8 +742,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_p4_runs_and_jobs_require_exact_completed_success(self):
         self._published_state_with_stored_pr()
-        run = {"id": 5, "head_sha": SHA, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 7}]}
-        for runs, code in (([], "workflow_run_ambiguous"), ([run, run | {"id": 6}], "workflow_run_ambiguous"), ([run | {"head_sha": "b" * 40}], "workflow_run_ambiguous"), ([run | {"pull_requests": [{"number": 8}]}], "workflow_run_ambiguous"), ([run | {"status": "in_progress"}], "ci_not_green_for_head"), ([run | {"conclusion": "failure"}], "ci_not_green_for_head")):
+        run = {"id": 5, "event": "pull_request", "head_sha": SHA, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 7}]}
+        for runs, code in (([], "workflow_run_ambiguous"), ([run, run | {"id": 6}], "workflow_run_ambiguous"), ([run | {"head_sha": "b" * 40}], "workflow_run_ambiguous"), ([run | {"pull_requests": [{"number": 8}]}], "workflow_run_ambiguous"), ([run | {"event": "push"}], "workflow_run_ambiguous"), ([{key: value for key, value in run.items() if key != "event"}], "workflow_run_ambiguous"), ([run | {"status": "in_progress"}], "ci_not_green_for_head"), ([run | {"conclusion": "failure"}], "ci_not_green_for_head")):
             with self.subTest(runs=runs):
                 self.h.runs = runs
                 with self.assertRaisesRegex(L.StopNeedsHuman, code): self.h.lifecycle().observe_ci()

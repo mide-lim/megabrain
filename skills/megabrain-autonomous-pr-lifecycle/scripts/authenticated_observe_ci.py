@@ -186,7 +186,7 @@ def _matching_run_ids(body: Any, sha: str, number: int) -> list[int]:
     if not isinstance(body, Mapping) or not isinstance(body.get("workflow_runs"), list):
         return []
     return [run["id"] for run in body["workflow_runs"] if isinstance(run, Mapping) and type(run.get("id")) is int
-            and run.get("head_sha") == sha and isinstance(run.get("pull_requests"), list)
+            and run.get("event") == "pull_request" and run.get("head_sha") == sha and isinstance(run.get("pull_requests"), list)
             and any(isinstance(entry, Mapping) and entry.get("number") == number for entry in run["pull_requests"])]
 
 
@@ -224,6 +224,15 @@ def validate_source_for_observe_ci(lifecycle: Any, contract: Mapping[str, Any], 
         raise LIFECYCLE.StopNeedsHuman("pr_or_head_missing")
     lifecycle._validate_remote_head(contract, head)
     return head
+
+
+def validated_jobs_evidence(observed: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, str]:
+    expected = contract.get("expected_ci_jobs")
+    jobs = observed.get("jobs")
+    if (not isinstance(expected, list) or not isinstance(jobs, Mapping) or set(jobs) != set(expected)
+            or any(jobs.get(name) != "success" for name in expected)):
+        raise SafeFailure("ci_result_rejected")
+    return {name: "success" for name in expected}
 
 
 def _base_result() -> dict[str, Any]:
@@ -311,7 +320,8 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         observed = lifecycle._observe_ci_locked(state_writer=defer_state_write)
         if observed.get("head_sha") != head or type(observed.get("workflow_run_id")) is not int:
             raise SafeFailure("ci_result_rejected")
-        result.update({"pr_number": state["pr_number"], "head_sha": head, "workflow_run_id": observed["workflow_run_id"]})
+        jobs = validated_jobs_evidence(observed, contract)
+        result.update({"pr_number": state["pr_number"], "head_sha": head, "workflow_run_id": observed["workflow_run_id"], "jobs": jobs})
     except SafeFailure as exc:
         result["failure_code"] = exc.code
     except LIFECYCLE.StopNeedsHuman as exc:
