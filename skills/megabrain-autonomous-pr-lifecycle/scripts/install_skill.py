@@ -15,12 +15,14 @@ ARTIFACTS = {
     Path("scripts/autonomous_pr_lifecycle.py"): 0o700,
     Path("scripts/authenticated_read_validation.py"): 0o700,
     Path("scripts/authenticated_publish_head.py"): 0o700,
+    Path("scripts/authenticated_ensure_pr.py"): 0o700,
 }
 VERSIONED_SOURCE_FILES = set(ARTIFACTS) | {
     Path("scripts/install_skill.py"),
     Path("tests/test_lifecycle.py"),
     Path("tests/test_authenticated_read_validation.py"),
     Path("tests/test_authenticated_publish_head.py"),
+    Path("tests/test_authenticated_ensure_pr.py"),
 }
 
 

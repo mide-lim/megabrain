@@ -489,10 +489,17 @@ class Lifecycle:
             raise StopNeedsHuman("remote_head_drift")
 
     def _validate_pr(self, pr: Mapping[str, Any], contract: Mapping[str, Any], sha: str) -> None:
+        if not isinstance(pr, Mapping):
+            raise StopNeedsHuman("pr_drift_rejected")
         head, base = pr.get("head"), pr.get("base")
-        if (not isinstance(pr, Mapping) or pr.get("state") != "open" or not isinstance(head, Mapping) or not isinstance(base, Mapping)
-                or head.get("ref") != contract["branch"] or head.get("sha") != sha or head.get("repo", {}).get("full_name") != REPOSITORY
-                or base.get("ref") != "dev" or base.get("repo", {}).get("full_name") != REPOSITORY):
+        head_repository = head.get("repo") if isinstance(head, Mapping) else None
+        base_repository = base.get("repo") if isinstance(base, Mapping) else None
+        if (type(pr.get("number")) is not int or pr["number"] <= 0
+                or pr.get("state") != "open" or pr.get("merged") is True
+                or not isinstance(head, Mapping) or not isinstance(base, Mapping)
+                or not isinstance(head_repository, Mapping) or not isinstance(base_repository, Mapping)
+                or head.get("ref") != contract["branch"] or head.get("sha") != sha or head_repository.get("full_name") != REPOSITORY
+                or base.get("ref") != "dev" or base_repository.get("full_name") != REPOSITORY):
             raise StopNeedsHuman("pr_drift_rejected")
 
     def preflight(self) -> dict[str, str]:
@@ -553,56 +560,112 @@ class Lifecycle:
 
     def ensure_pr(self) -> dict[str, Any]:
         _require_live_operations_enabled()
+        with self._publish_reservation():
+            return self._ensure_pr_locked()
+
+    def _ensure_pr_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """Perform only the reviewed contract-bound ensure-pr transition.
+
+        A closed authenticated adapter may supply a deferred state writer so the
+        PR number is persisted only after its independent token teardown has
+        completed.  Public lifecycle callers use the normal atomic writer.
+        """
         contract, state = self._guard()
         sha = self._validate_checkout(contract)
+        if state.get("published_once") is not True:
+            raise StopNeedsHuman("publication_required")
         if state.get("head_sha") != sha:
             raise StopNeedsHuman("publish_required")
         # Read the exact branch ref immediately before either reusing an existing
         # PR or creating one.  API head metadata alone is not a ref readback.
         self._validate_remote_head(contract, sha)
         marker = f"B4.2-Contract-Fingerprint: {state['fingerprint']}"
+        # Every ensure-pr execution searches the complete same-head collection.
+        # Do not add a base filter: a same-head PR to another base is still a
+        # conflicting PR and must block this lifecycle permanently.
+        path = f"/repos/{REPOSITORY}/pulls?state=all&head=mide-lim:{contract['branch']}"
+        prs = self._api("GET", path)
+        self._validate_remote_head(contract, sha)
+        if not isinstance(prs, list):
+            raise StopNeedsHuman("pr_count_rejected")
+
         stored_number = state.get("pr_number")
         if stored_number is not None:
-            if not isinstance(stored_number, int):
+            if type(stored_number) is not int or stored_number <= 0:
                 raise StopNeedsHuman("pr_number_rejected")
+            if len(prs) != 1:
+                raise StopNeedsHuman("pr_count_rejected")
+            listed = prs[0]
+            if not isinstance(listed, Mapping) or listed.get("number") != stored_number:
+                raise StopNeedsHuman("pr_drift_rejected")
+            if listed.get("state") == "closed" or listed.get("merged") is True:
+                raise StopNeedsHuman("pr_terminal_state")
+            if marker not in str(listed.get("body", "")):
+                raise StopNeedsHuman("pr_fingerprint_rejected")
+            self._validate_pr(listed, contract, sha)
             pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{stored_number}")
             self._validate_remote_head(contract, sha)
+            if not isinstance(pr, Mapping) or pr.get("number") != stored_number:
+                raise StopNeedsHuman("pr_drift_rejected")
+        elif len(prs) > 1:
+            raise StopNeedsHuman("pr_count_rejected")
+        elif prs:
+            pr = prs[0]
+        else:
+            # The adapter independently permits this one POST only while the
+            # immediately preceding same-head collection is known to be empty.
+            self._guard()
+            self._validate_remote_head(contract, sha)
+            pr = self._api("POST", f"/repos/{REPOSITORY}/pulls", {"title": contract["pr_title"], "head": contract["branch"], "base": "dev", "body": f"{contract['pr_body']}\n\n{marker}"})
             if not isinstance(pr, Mapping):
                 raise StopNeedsHuman("pr_drift_rejected")
-            if pr.get("state") == "closed" or pr.get("merged") is True:
-                raise StopNeedsHuman("pr_terminal_state")
-            if marker not in str(pr.get("body", "")):
-                raise StopNeedsHuman("pr_fingerprint_rejected")
             self._validate_pr(pr, contract, sha)
-        else:
-            # Deliberately do not filter base server-side: a same-head PR to any
-            # other base is still a conflicting PR for this execution and must stop.
-            path = f"/repos/{REPOSITORY}/pulls?state=all&head=mide-lim:{contract['branch']}"
-            prs = self._api("GET", path)
             self._validate_remote_head(contract, sha)
-            if not isinstance(prs, list) or len(prs) > 1:
+            # Search again after POST.  The transition cannot continue unless
+            # the server now has exactly the PR returned by this create.
+            post_create_prs = self._api("GET", path)
+            self._validate_remote_head(contract, sha)
+            if (not isinstance(post_create_prs, list) or len(post_create_prs) != 1
+                    or not isinstance(post_create_prs[0], Mapping)
+                    or post_create_prs[0].get("number") != pr.get("number")):
                 raise StopNeedsHuman("pr_count_rejected")
-            if prs:
-                pr = prs[0]
-                if not isinstance(pr, Mapping):
-                    raise StopNeedsHuman("pr_drift_rejected")
-                if pr.get("state") == "closed" or pr.get("merged") is True:
-                    raise StopNeedsHuman("pr_terminal_state")
-                if marker not in str(pr.get("body", "")):
-                    raise StopNeedsHuman("pr_fingerprint_rejected")
-                self._validate_pr(pr, contract, sha)
-            else:
-                self._guard()
-                self._validate_remote_head(contract, sha)
-                pr = self._api("POST", f"/repos/{REPOSITORY}/pulls", {"title": contract["pr_title"], "head": contract["branch"], "base": "dev", "body": f"{contract['pr_body']}\n\n{marker}"})
-                if not isinstance(pr, Mapping):
-                    raise StopNeedsHuman("pr_drift_rejected")
-                self._validate_pr(pr, contract, sha)
-        if not isinstance(pr.get("number"), int):
+            pr = post_create_prs[0]
+
+        if not isinstance(pr, Mapping):
+            raise StopNeedsHuman("pr_drift_rejected")
+        if pr.get("state") == "closed" or pr.get("merged") is True:
+            raise StopNeedsHuman("pr_terminal_state")
+        if marker not in str(pr.get("body", "")):
+            raise StopNeedsHuman("pr_fingerprint_rejected")
+        self._validate_pr(pr, contract, sha)
+        # An API response cannot commit state until its exact branch ref is read
+        # back again.  This closes the API-to-state time-of-check/use window.
+        self._validate_remote_head(contract, sha)
+        if type(pr.get("number")) is not int or pr["number"] <= 0:
             raise StopNeedsHuman("pr_number_rejected")
         state["pr_number"] = pr["number"]
-        self._write_state(state)
+        (self._write_state if state_writer is None else state_writer)(state)
         return {"state": "PR_OPEN", "pr_number": pr["number"], "head_sha": sha}
+
+    def _commit_deferred_pr_state(self, expected_state: Mapping[str, Any], expected_fingerprint: str,
+                                  expected_head: str, deferred_state: dict[str, Any]) -> None:
+        """Compare-and-set a P3 result after external token teardown.
+
+        The authenticated adapter holds the shared publish reservation while
+        calling this method.  The method nevertheless reloads all mutable
+        inputs so an out-of-band state, contract, local-HEAD, or remote-ref
+        change cannot overwrite a newer lifecycle state.
+        """
+        contract, current_state = self._guard()
+        if (current_state != expected_state
+                or current_state.get("fingerprint") != expected_fingerprint):
+            raise StopNeedsHuman("state_changed_before_commit")
+        current_head = self._validate_checkout(contract)
+        if (current_head != expected_head or current_state.get("published_once") is not True
+                or current_state.get("head_sha") != current_head):
+            raise StopNeedsHuman("publish_required")
+        self._validate_remote_head(contract, current_head)
+        self._write_state(deferred_state)
 
     def observe_ci(self) -> dict[str, Any]:
         _require_live_operations_enabled()

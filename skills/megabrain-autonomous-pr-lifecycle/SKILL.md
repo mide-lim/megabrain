@@ -12,7 +12,7 @@ This is canonical, versioned source for the B4.2 local capability. Its only life
 
 ## Canonical source and derived installation
 
-Canonical source is this repository directory. It never contains an App identifier, installation identifier, key, JWT, token, `.env`, or persistent credentials. The only installed artifacts are `SKILL.md`, `scripts/autonomous_pr_lifecycle.py`, `scripts/authenticated_read_validation.py`, and `scripts/authenticated_publish_head.py`.
+Canonical source is this repository directory. It never contains an App identifier, installation identifier, key, JWT, token, `.env`, or persistent credentials. The only installed artifacts are `SKILL.md`, `scripts/autonomous_pr_lifecycle.py`, `scripts/authenticated_read_validation.py`, `scripts/authenticated_publish_head.py`, and `scripts/authenticated_ensure_pr.py`.
 
 From the repository root, install or reconstruct the derived artifact:
 
@@ -38,13 +38,15 @@ Each future operation uses a distinct ephemeral purpose: publish only `contents:
 
 `authenticated_publish_head.py` is the separate P2 adapter for only `publish-head`. After a distinct explicit human authorization, it validates the immutable approved Task Contract, exact origin, installation baseline, exact one-repository scope, and a repository-restricted `contents: write` token (with only optional provider-returned `metadata: read`). It runs only the contract's exact local `HEAD` to exact `agent/*` branch non-force push, rejects a pre-existing first remote branch and later remote drift, reads back the exact remote SHA, then revokes the token and removes the temporary askpass directory. Its output is sanitized. It has no PR, Actions, merge, deletion, tag, refspec, remote, deployment, or production interface.
 
+`authenticated_ensure_pr.py` is the separate P3 adapter for only `ensure-pr`. Before authentication it revalidates the root-owned immutable Task Contract and fingerprint, lifecycle publication state, clean contract branch and exact local/remote SHA through fixed token-free `/usr/bin/git` reads. It requests only a repository-restricted `pull_requests: write` token (with only optional provider-added `metadata: read`), permits only the fixed `mide-lim/megabrain` PR reads and exact `agent/* -> dev` create payload, and calls only the reviewed internal ensure-pr implementation. It validates the remote ref again after the API result before deferred state commit; it never updates, closes, merges, reviews, comments on, or otherwise mutates a PR. Revocation and temporary cleanup happen before the PR number is persisted and fail closed.
+
 `--operational-gate-approved` records the caller's acknowledgement of that separate human authorization. It is a process guardrail, not a technical authorization boundary. Installation, compilation, and hermetic tests do not authorize a real JWT, token, API call, or authenticated read. No P1 authenticated operation has been performed by this implementation.
 
 ## Validation and human gate
 
-The lifecycle class remains technically inert for authenticated operations: only `preflight` can run outside hermetic mocks. The P2 adapter is the sole exception: it enables only its separately gated `publish-head` operation. `ensure-pr`, `observe-ci`, `refresh-from-dev`, and `report-ready` continue to stop with `authenticated_operations_not_authorized`. The P1 adapter never writes Git or GitHub state and does not authorize any lifecycle write, PR action, CI operation, merge, workflow/ruleset/App-permission change, deploy, or production action.
+The lifecycle class remains technically inert for authenticated operations: only `preflight` can run outside hermetic mocks. The P2 and P3 adapters are the narrow separate exceptions, enabling only their separately gated `publish-head` and `ensure-pr` operations; the public `Lifecycle.ensure_pr()` gate remains `authenticated_operations_not_authorized`. `observe-ci`, `refresh-from-dev`, and `report-ready` continue to stop with `authenticated_operations_not_authorized`. The P1 adapter never writes Git or GitHub state and does not authorize any lifecycle write, PR action, CI operation, merge, workflow/ruleset/App-permission change, deploy, or production action.
 
     python3 -m unittest discover -s skills/megabrain-autonomous-pr-lifecycle/tests -v
-    python3 -m py_compile skills/megabrain-autonomous-pr-lifecycle/scripts/autonomous_pr_lifecycle.py skills/megabrain-autonomous-pr-lifecycle/scripts/authenticated_read_validation.py skills/megabrain-autonomous-pr-lifecycle/scripts/authenticated_publish_head.py skills/megabrain-autonomous-pr-lifecycle/scripts/install_skill.py
+    python3 -m py_compile skills/megabrain-autonomous-pr-lifecycle/scripts/*.py
 
 The first real P1 read and every later lifecycle operation each need a new explicit human authorization as specified by the approved operational contract. Merge into `dev`, any `main` progression, workflow/ruleset/App permission/policy change, bypass, and production action remain separate human gates.
