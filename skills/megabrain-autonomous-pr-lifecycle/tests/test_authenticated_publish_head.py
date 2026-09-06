@@ -87,6 +87,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             return lambda command, cwd: ""
         return (
             mock.patch.object(PUBLISH, "configured_origin", return_value=PUBLISH.ORIGIN),
+            mock.patch.object(PUBLISH, "validate_push_destination"),
             mock.patch.object(PUBLISH, "validate_key_path"),
             mock.patch.object(PUBLISH, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(PUBLISH, "request_json", side_effect=api or self.api_success),
@@ -97,7 +98,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
 
     def test_exact_contents_write_single_scope_exact_branch_and_sanitized_result(self):
         patches = self.patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["origin_valid"])
@@ -124,7 +125,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 204, {}
             self.fail("scope and push must not run")
         patches = self.patches(api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["failure_code"], "token_permissions_rejected")
         self.assertIs(result["publish_token_permissions_valid"], False)
@@ -143,7 +144,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 204, {}
             self.fail("push must not run")
         patches = self.patches(api)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(result["failure_code"], "scope_rejected")
         self.assertIs(result["scope_valid"], False)
@@ -160,6 +161,48 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         origin.assert_not_called()
         self.assertEqual(gated["failure_code"], "operational_gate_required")
         self.assertEqual(unknown["failure_code"], "operation_rejected")
+
+    def test_unexpected_pushurl_is_rejected_before_authentication_or_push(self):
+        with (
+            mock.patch.object(PUBLISH, "configured_origin", return_value=PUBLISH.ORIGIN),
+            mock.patch.object(PUBLISH, "validate_push_destination", side_effect=PUBLISH.SafeFailure("push_destination_rejected")),
+            mock.patch.object(PUBLISH, "make_jwt") as signer,
+        ):
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+        signer.assert_not_called()
+        self.assertEqual(result["failure_code"], "push_destination_rejected")
+        self.assertFalse(FakeLifecycle.commands)
+
+    def test_exact_expected_push_target_is_accepted(self):
+        def git(command, **_):
+            if command == ["git", "config", "--local", "--get-all", "remote.origin.pushurl"]:
+                return PUBLISH.subprocess.CompletedProcess(command, 1, "", "")
+            if command == ["git", "remote", "get-url", "--all", "--push", "origin"]:
+                return PUBLISH.subprocess.CompletedProcess(command, 0, f"{PUBLISH.ORIGIN}\n", "")
+            self.fail(f"unexpected command: {command}")
+        with mock.patch.object(PUBLISH.subprocess, "run", side_effect=git):
+            PUBLISH.validate_push_destination()
+
+    def test_unexpected_configured_pushurl_is_rejected(self):
+        command = ["git", "config", "--local", "--get-all", "remote.origin.pushurl"]
+        with mock.patch.object(PUBLISH.subprocess, "run", return_value=PUBLISH.subprocess.CompletedProcess(command, 0, "https://example.invalid/repo.git\n", "")):
+            with self.assertRaisesRegex(PUBLISH.SafeFailure, "push_destination_rejected"):
+                PUBLISH.validate_push_destination()
+
+    def test_controlled_runner_disables_repository_credential_helpers(self):
+        command = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
+        completed = PUBLISH.subprocess.CompletedProcess(command, 0, "", "")
+        runner = PUBLISH.controlled_runner("/fixture/temp", "/fixture/askpass", "TOKEN_FIXTURE", BRANCH)
+        with mock.patch.object(PUBLISH.subprocess, "run", return_value=completed) as execute:
+            self.assertEqual(runner(command, Path("/fixture/repository")), "")
+        invoked = execute.call_args.args[0]
+        environment = execute.call_args.kwargs["env"]
+        self.assertEqual(
+            invoked,
+            ["git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", "credential.interactive=false", *command[1:]],
+        )
+        self.assertEqual(environment["GIT_ASKPASS"], "/fixture/askpass")
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], PUBLISH.os.devnull)
 
     def test_only_exact_non_force_head_refspec_is_permitted(self):
         allowed = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
@@ -179,7 +222,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 return 500, {}
             return self.api_success(method, path, authorization, payload)
         patches = self.patches(revocation_fails)
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
             revoked = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(revoked["failure_code"], "revocation_failed")
         self.assertEqual(revoked["revocation"], "failed")
@@ -189,11 +232,38 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             def cleanup(self):
                 raise OSError("fixture")
         patches = self.patches()
-        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
             cleaned = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
         self.assertEqual(cleaned["failure_code"], "cleanup_failed")
         self.assertEqual(cleaned["revocation"], "ok")
         self.assertIs(cleaned["temporary_cleanup"], False)
+
+    def test_empty_204_revocation_body_is_accepted(self):
+        original_request_json = PUBLISH.request_json
+
+        class EmptyResponse:
+            status = 204
+
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def api(method, path, authorization, payload=None):
+            if method == "DELETE":
+                return original_request_json(method, path, authorization, payload)
+            return self.api_success(method, path, authorization, payload)
+
+        patches = self.patches(api)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], mock.patch.object(PUBLISH.urllib.request, "urlopen", return_value=EmptyResponse()):
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+        self.assertEqual(result["status"], "ok")
+        self.assertIsNone(result["failure_code"])
+        self.assertEqual(result["revocation"], "ok")
 
 
 if __name__ == "__main__":

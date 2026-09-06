@@ -72,7 +72,7 @@ def _required_environment(environ: Mapping[str, str]) -> tuple[str, str, str]:
 
 def configured_origin() -> str:
     completed = subprocess.run(
-        ["git", "config", "--get", "remote.origin.url"],
+        ["git", "remote", "get-url", "origin"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -82,6 +82,35 @@ def configured_origin() -> str:
     if completed.returncode != 0:
         raise SafeFailure("origin_rejected")
     return completed.stdout.strip()
+
+
+def validate_push_destination() -> None:
+    """Require one exact effective HTTPS push target before any mutation."""
+    try:
+        configured = subprocess.run(
+            ["git", "config", "--local", "--get-all", "remote.origin.pushurl"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+        effective = subprocess.run(
+            ["git", "remote", "get-url", "--all", "--push", "origin"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SafeFailure("push_destination_rejected") from exc
+    if configured.returncode not in {0, 1} or effective.returncode != 0:
+        raise SafeFailure("push_destination_rejected")
+    configured_values = configured.stdout.splitlines() if configured.returncode == 0 else []
+    effective_values = effective.stdout.splitlines()
+    if (configured_values and configured_values != [ORIGIN]) or effective_values != [ORIGIN]:
+        raise SafeFailure("push_destination_rejected")
 
 
 def validate_key_path(key_path: str) -> None:
@@ -125,7 +154,8 @@ def request_json(method: str, path: str, authorization: str, payload: Mapping[st
     )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            decoded = json.loads(response.read().decode("utf-8"))
+            body_value = response.read()
+            decoded = json.loads(body_value.decode("utf-8")) if body_value else {}
             return response.status, decoded if isinstance(decoded, dict) else {}
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
         raise SafeFailure("api_request_failed") from exc
@@ -199,8 +229,12 @@ def controlled_runner(temp_directory: str, askpass_path: str, token: str, branch
             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
             "MEGABRAIN_GITHUB_APP_TOKEN": token,
         }
+        isolated_command = [
+            "git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true",
+            "-c", "credential.interactive=false", *command[1:],
+        ]
         try:
-            completed = subprocess.run(command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False, timeout=30)
+            completed = subprocess.run(isolated_command, cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False, timeout=30)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise LIFECYCLE.StopNeedsHuman("git_command_rejected") from exc
         if completed.returncode != 0:
@@ -236,6 +270,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         app_id, installation_id, key_path = _required_environment(environment)
         if configured_origin() != ORIGIN:
             raise SafeFailure("origin_rejected")
+        validate_push_destination()
         result["origin_valid"] = True
         lifecycle = LIFECYCLE.Lifecycle(Path.cwd(), lifecycle_id)
         contract, _ = lifecycle._contract()
