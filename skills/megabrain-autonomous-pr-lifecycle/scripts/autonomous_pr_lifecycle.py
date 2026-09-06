@@ -444,6 +444,18 @@ class Lifecycle:
         if len(remote) != 2 or remote[0] != sha or remote[1] != ref:
             raise StopNeedsHuman("remote_head_drift")
 
+    def _validate_remote_before_publish(self, contract: Mapping[str, Any], state: Mapping[str, Any], published_once: bool) -> None:
+        """Fail closed on a pre-existing first ref or later remote drift."""
+        ref = f"refs/heads/{contract['branch']}"
+        remote = self._git("ls-remote", "origin", ref).split()
+        if not published_once:
+            if remote:
+                raise StopNeedsHuman("unexpected_remote_branch")
+            return
+        previous_head = state.get("head_sha")
+        if len(remote) != 2 or remote[0] != previous_head or remote[1] != ref:
+            raise StopNeedsHuman("remote_head_drift")
+
     def _validate_pr(self, pr: Mapping[str, Any], contract: Mapping[str, Any], sha: str) -> None:
         head, base = pr.get("head"), pr.get("base")
         if (not isinstance(pr, Mapping) or pr.get("state") != "open" or not isinstance(head, Mapping) or not isinstance(base, Mapping)
@@ -480,6 +492,7 @@ class Lifecycle:
         published_once = state.get("published_once")
         if type(published_once) is not bool:
             raise StopNeedsHuman("publication_state_rejected")
+        self._validate_remote_before_publish(contract, state, published_once)
 
         # The first meaningful implementation publish is not a correction.
         # Only subsequent changed HEADs consume the correction budget.
@@ -496,12 +509,12 @@ class Lifecycle:
         ref = f"refs/heads/{contract['branch']}"
         self._git("push", "origin", f"HEAD:{ref}")
         remote = self._git("ls-remote", "origin", ref).split()
-        if len(remote) < 2 or remote[0] != head or remote[1] != ref:
+        if len(remote) != 2 or remote[0] != head or remote[1] != ref:
             raise StopNeedsHuman("remote_head_mismatch")
         state.update({
             "head_sha": head,
             "ci_sha": None,
-            "published_once": published_once or head != previous_head,
+            "published_once": True,
         })
         self._write_state(state)
         return {"state": "PUBLISHED", "head_sha": head}

@@ -55,6 +55,8 @@ class Harness:
         self.branch = branch or data["branch"]
         self.head = head
         self.remote_sha = SHA
+        self.remote_exists = False
+        self.remote_after_push: str | None = None
         self.tree_modes = {}
         path = root / "contracts/b4.2"
         path.mkdir(parents=True)
@@ -81,9 +83,10 @@ class Harness:
             path = args[-1]
             return f"{self.tree_modes.get(path, '100644')} blob {'d' * 40}\t{path}\0"
         if args[:1] == ("push",):
-            self.remote_sha = self.head
+            self.remote_exists = True
+            self.remote_sha = self.head if self.remote_after_push is None else self.remote_after_push
             return ""
-        if args[:1] == ("ls-remote",): return f"{self.remote_sha}\t{args[-1]}"
+        if args[:1] == ("ls-remote",): return f"{self.remote_sha}\t{args[-1]}" if self.remote_exists else ""
         if args[:1] in (("fetch",), ("merge",)): return ""
         raise AssertionError(command)
 
@@ -275,6 +278,27 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             life.ensure_pr()
         self.assertFalse(any(method == "POST" for method, _, _ in self.h.requests))
+
+    def test_unexpected_first_remote_branch_and_later_drift_stop_before_push(self):
+        self.preflight()
+        self.h.remote_exists = True
+        with self.assertRaisesRegex(L.StopNeedsHuman, "unexpected_remote_branch"):
+            self.h.lifecycle().publish_head()
+        self.assertFalse(any(command[1:2] == ["push"] for command in self.h.commands))
+
+        self.h.remote_exists = False
+        self.h.lifecycle().publish_head()
+        self.h.head = "b" * 40
+        self.h.remote_sha = "c" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            self.h.lifecycle().publish_head()
+        self.assertEqual(len([command for command in self.h.commands if command[1:2] == ["push"]]), 1)
+
+    def test_publish_requires_exact_remote_sha_readback(self):
+        self.preflight()
+        self.h.remote_after_push = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_mismatch"):
+            self.h.lifecycle().publish_head()
 
     def test_remote_head_drift_during_pr_reuse_stops_before_acceptance(self):
         self.preflight()
