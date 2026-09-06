@@ -174,7 +174,7 @@ class LifecycleTests(unittest.TestCase):
         return self.h.lifecycle().preflight()
 
     def test_closed_operations_are_exactly_required(self):
-        self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready"}))
+        self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"}))
         self.assertEqual(
             {n.replace("_", "-") for n in L.Lifecycle.__dict__ if not n.startswith("_")},
             set(L.PUBLIC_OPERATIONS),
@@ -184,7 +184,7 @@ class LifecycleTests(unittest.TestCase):
         self.preflight(); life = self.h.lifecycle()
         self.assertEqual(life.publish_head()["state"], "PUBLISHED")
         self.assertEqual(life.ensure_pr()["state"], "PR_OPEN")
-        self.assertEqual(life.observe_ci()["state"], "CI_GREEN")
+        self.assertEqual(life.observe_ci()["state"], "CI_GREEN_FOR_HEAD")
         self.assertEqual(life.report_ready()["state"], "READY")
         push = next(c for c in self.h.commands if c[1] == "push")
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
@@ -740,6 +740,19 @@ class LifecycleTests(unittest.TestCase):
                     self.h.lifecycle().observe_ci()
             self.h.pr = self.h.pr_body(SHA)
 
+    def test_p4_writes_exact_structured_failure_and_keeps_ci_sha_green_only(self):
+        self._published_state_with_stored_pr()
+        self.h.run_conclusion = "failure"
+        self.h.jobs = [{"name": "Repository validation", "status": "completed", "conclusion": "failure"},
+                       {"name": "Enricher tests", "status": "completed", "conclusion": "success"},
+                       {"name": "Web tests", "status": "completed", "conclusion": "success"}]
+        observed = self.h.lifecycle().observe_ci()
+        self.assertEqual(observed["state"], "CI_FAILED_FOR_HEAD")
+        current = json.loads((self.h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertIsNone(current["ci_sha"])
+        self.assertEqual(current["ci_failure"], {"head_sha": SHA, "pr_number": 7, "workflow_run_id": 5,
+                                                  "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}})
+
     def test_p4_runs_and_jobs_require_exact_completed_success(self):
         self._published_state_with_stored_pr()
         run = {"id": 5, "event": "pull_request", "head_sha": SHA, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 7}]}
@@ -753,14 +766,14 @@ class LifecycleTests(unittest.TestCase):
         invalid_jobs = [green[:-1], green + [{"name": "extra", "status": "completed", "conclusion": "success"}], green + [green[0]],
                         [{"name": name, "status": "queued", "conclusion": None} for name in expected],
                         [{"name": name, "status": "in_progress", "conclusion": None} for name in expected]]
-        for conclusion in ("failure", "cancelled", "skipped", "timed_out"):
+        for conclusion in ("cancelled", "skipped", "timed_out"):
             invalid_jobs.append([{"name": name, "status": "completed", "conclusion": conclusion} for name in expected])
         for jobs in invalid_jobs:
             with self.subTest(jobs=jobs):
                 self.h.jobs = jobs
                 with self.assertRaisesRegex(L.StopNeedsHuman, "ci_not_green_for_head"): self.h.lifecycle().observe_ci()
         self.h.jobs = green
-        self.assertEqual(self.h.lifecycle().observe_ci()["state"], "CI_GREEN")
+        self.assertEqual(self.h.lifecycle().observe_ci()["state"], "CI_GREEN_FOR_HEAD")
         self.assertFalse(any("logs" in path for _, path, _ in self.h.requests))
 
     def test_p4_deferred_cas_rejects_state_contract_and_remote_drift(self):
@@ -780,6 +793,34 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             life._commit_deferred_ci_state(expected, expected["fingerprint"], SHA, deferred)
 
+    def test_correction_p2_latches_then_publishes_same_pr_and_clears_pending(self):
+        self.preflight(); life = self.h.lifecycle(); life.publish_head(); life.ensure_pr()
+        self.h.head = "b" * 40
+        self.h.committed = [("M", "docs/EVIDENCE.md")]
+        state_path = self.h.state / "life-1/state.json"
+        current = json.loads(state_path.read_text(encoding="utf-8"))
+        current.update({"pending_correction_sha": self.h.head, "pending_publish_attempted": False,
+                        "ci_failure": {"head_sha": SHA, "pr_number": 7, "workflow_run_id": 5,
+                                       "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}}})
+        state_path.write_text(json.dumps(current), encoding="utf-8")
+        self.assertEqual(life.publish_head()["state"], "PUBLISHED")
+        final = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(final["head_sha"], self.h.head)
+        self.assertEqual(final["corrections"], 1)
+        self.assertFalse(final["pending_publish_attempted"])
+        self.assertIsNone(final["pending_correction_sha"])
+        self.assertIsNone(final["ci_failure"])
+
+    def test_correction_p2_rejects_dirty_or_duplicate_same_head_pr_before_push(self):
+        self.preflight(); life = self.h.lifecycle(); life.publish_head(); life.ensure_pr()
+        self.h.head = "b" * 40; self.h.committed = [("M", "docs/EVIDENCE.md")]
+        state_path = self.h.state / "life-1/state.json"; current = json.loads(state_path.read_text(encoding="utf-8"))
+        current.update({"pending_correction_sha": self.h.head, "pending_publish_attempted": False}); state_path.write_text(json.dumps(current), encoding="utf-8")
+        self.h.changed = ["docs/EVIDENCE.md"]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "worktree_not_clean"): life.publish_head()
+        self.h.changed = []; self.h.same_head_responses = [[self.h.pr, self.h.pr]]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_count_rejected"): life.publish_head()
+
     def test_p2_and_p4_share_one_reservation(self):
         self._published_state_with_stored_pr()
         entered, release = threading.Event(), threading.Event()
@@ -794,7 +835,7 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
             self.h.lifecycle().publish_head()
         release.set(); thread.join(timeout=2)
-        self.assertFalse(thread.is_alive()); self.assertEqual(result[0]["state"], "CI_GREEN")
+        self.assertFalse(thread.is_alive()); self.assertEqual(result[0]["state"], "CI_GREEN_FOR_HEAD")
 
     def test_p2_reservation_blocks_p4_observation(self):
         h = Harness(self.root / "p2-blocks-p4", self.state / "p2-blocks-p4", contract())

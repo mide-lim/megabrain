@@ -6,7 +6,7 @@ version: 1.0.0
 
 # MegaBrain B4.2 Autonomous PR Lifecycle
 
-This is canonical, versioned source for the B4.2 local capability. Its only lifecycle operations are `preflight`, `publish-head`, `ensure-pr`, `observe-ci`, `refresh-from-dev`, and `report-ready`; it contains no merge, auto-merge, generic shell, generic Git/API endpoint, arbitrary refspec, URL, remote, or base interface.
+This is canonical, versioned source for the B4.2 local capability. Its lifecycle operations are `preflight`, `publish-head`, `ensure-pr`, `observe-ci`, `authorize-correction`, `finalize-correction`, `refresh-from-dev`, and `report-ready`; it contains no merge, auto-merge, generic shell, generic Git/API endpoint, arbitrary refspec, URL, remote, or base interface.
 
 `agent/*` validation is a local defense-in-depth control, not a GitHub ACL. A `contents: write` token can have broader provider-side authority over unprotected refs than the capability exposes. GitHub protects `dev` and `main`; human review and human merge into `dev` remain mandatory.
 

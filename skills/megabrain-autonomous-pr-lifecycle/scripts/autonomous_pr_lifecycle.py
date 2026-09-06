@@ -21,7 +21,7 @@ ORIGIN_URL = "https://github.com/mide-lim/megabrain.git"
 API_ROOT = "https://api.github.com"
 CONTRACT_ROOT = Path("/etc/megabrain/hermes-contracts/b4.2")
 
-PUBLIC_OPERATIONS = frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready"})
+PUBLIC_OPERATIONS = frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"})
 DENIED_PATHS = (
     "skills/**",
     "skills/megabrain-autonomous-pr-lifecycle/**",
@@ -47,6 +47,11 @@ EXPECTED_FIELDS = frozenset({
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LIFECYCLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 BRANCH_RE = re.compile(r"^agent/[a-z0-9][a-z0-9._-]{0,62}$")
+MAX_WORKFLOW_JSON_FILES = 32
+MAX_JSON_FILE_BYTES = 262144
+MAX_DIAGNOSTIC_ENTRIES = 8
+MAX_SAFE_RELATIVE_PATH_LENGTH = 128
+CORRECTION_COMMIT_MESSAGE = "fix(b4.2): correct repository validation"
 
 Runner = Callable[[list[str], Path], str]
 Request = Callable[[str, str, Mapping[str, Any] | None], Any]
@@ -68,6 +73,71 @@ def fingerprint(value: Mapping[str, Any]) -> str:
 def _safe_relative(value: str) -> bool:
     path = PurePosixPath(value)
     return bool(value) and not path.is_absolute() and ".." not in path.parts and "\\" not in value and "\x00" not in value
+
+
+def normalize_p5_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Read legacy state without persisting defaults during a read."""
+    normalized = dict(state)
+    normalized.setdefault("ci_failure", None)
+    normalized.setdefault("pending_correction_sha", None)
+    normalized.setdefault("pending_publish_attempted", False)
+    return normalized
+
+
+def repository_validation_json_v1(root: Path, allowed_paths: list[str]) -> dict[str, Any]:
+    """Parse fixed local workflow JSON files without subprocesses or network."""
+    del allowed_paths  # Authorization separately decides whether diagnostics are in scope.
+    directory = root / "workflows"
+    invalid: list[dict[str, Any]] = []
+    try:
+        entries = [] if not directory.exists() else sorted(directory.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise StopNeedsHuman("json_profile_directory_rejected") from exc
+    files = [item for item in entries if item.name.endswith(".json")]
+    if len(files) > MAX_WORKFLOW_JSON_FILES:
+        raise StopNeedsHuman("json_profile_file_limit_rejected")
+    for item in files:
+        relative = item.relative_to(root).as_posix()
+        try:
+            item_stat = item.lstat()
+        except OSError as exc:
+            raise StopNeedsHuman("json_profile_file_rejected") from exc
+        if (not _safe_relative(relative) or len(relative) > MAX_SAFE_RELATIVE_PATH_LENGTH
+                or stat.S_ISLNK(item_stat.st_mode) or not stat.S_ISREG(item_stat.st_mode)
+                or item_stat.st_size > MAX_JSON_FILE_BYTES):
+            raise StopNeedsHuman("json_profile_file_rejected")
+        try:
+            content = item.read_text(encoding="utf-8")
+            json.loads(content)
+        except json.JSONDecodeError as exc:
+            if len(invalid) >= MAX_DIAGNOSTIC_ENTRIES:
+                raise StopNeedsHuman("json_profile_diagnostic_limit_rejected") from exc
+            invalid.append({"path": relative, "reason_code": "json_decode_error", "line": min(max(exc.lineno, 1), MAX_JSON_FILE_BYTES), "column": min(max(exc.colno, 1), MAX_JSON_FILE_BYTES)})
+        except (OSError, UnicodeDecodeError) as exc:
+            raise StopNeedsHuman("json_profile_file_rejected") from exc
+    return {"profile_id": "repository-validation-json-v1", "result": "fail" if invalid else "pass", "invalid_files": invalid}
+
+
+def profile_invalid_paths_allowed(profile: Mapping[str, Any], root: Path, allowed_paths: list[str]) -> bool:
+    entries = profile.get("invalid_files")
+    if not isinstance(entries, list) or len(entries) > MAX_DIAGNOSTIC_ENTRIES:
+        return False
+    for entry in entries:
+        if not isinstance(entry, Mapping) or set(entry) != {"path", "reason_code", "line", "column"}:
+            return False
+        path = entry.get("path")
+        if (not isinstance(path, str) or not _safe_relative(path) or len(path) > MAX_SAFE_RELATIVE_PATH_LENGTH
+                or entry.get("reason_code") != "json_decode_error" or type(entry.get("line")) is not int
+                or type(entry.get("column")) is not int or entry["line"] < 1 or entry["column"] < 1):
+            return False
+        local = root / path
+        try:
+            mode = local.lstat().st_mode
+        except OSError:
+            return False
+        if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or not any(fnmatch.fnmatchcase(path, allowed) for allowed in allowed_paths):
+            return False
+    return True
 
 
 def _default_runner(command: list[str], cwd: Path) -> str:
@@ -371,7 +441,7 @@ class Lifecycle:
             raise StopNeedsHuman("state_unavailable") from exc
         if not isinstance(value, dict):
             raise StopNeedsHuman("state_unavailable")
-        return value
+        return normalize_p5_state(value)
 
     def _guard(self) -> tuple[dict[str, Any], dict[str, Any]]:
         contract, current = self._contract()
@@ -505,6 +575,22 @@ class Lifecycle:
                 or base.get("ref") != "dev" or base_repository.get("full_name") != REPOSITORY):
             raise StopNeedsHuman("pr_drift_rejected")
 
+    def _validate_correction_pr(self, contract: Mapping[str, Any], state: Mapping[str, Any], published_head: str) -> None:
+        """Read exactly the full same-head collection and the stored PR before correction push."""
+        number = state.get("pr_number")
+        if type(number) is not int or number <= 0:
+            raise StopNeedsHuman("pr_number_rejected")
+        path = f"/repos/{REPOSITORY}/pulls?state=all&head=mide-lim:{contract['branch']}"
+        collection = self._api("GET", path)
+        if (not isinstance(collection, list) or len(collection) != 1 or not isinstance(collection[0], Mapping)
+                or collection[0].get("number") != number):
+            raise StopNeedsHuman("pr_count_rejected")
+        pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{number}")
+        marker = f"B4.2-Contract-Fingerprint: {state['fingerprint']}"
+        if not isinstance(pr, Mapping) or pr.get("number") != number or marker not in str(pr.get("body", "")):
+            raise StopNeedsHuman("pr_fingerprint_rejected")
+        self._validate_pr(pr, contract, published_head)
+
     def preflight(self) -> dict[str, str]:
         contract, contract_fingerprint = self._contract()
         head = self._validate_checkout(contract)
@@ -515,17 +601,83 @@ class Lifecycle:
             "fingerprint": contract_fingerprint,
             "head_sha": head,
             "ci_sha": None,
+            "ci_failure": None,
+            "pending_correction_sha": None,
+            "pending_publish_attempted": False,
             "corrections": 0,
             "published_once": False,
         }, exclusive=True)
         return {"state": "PREFLIGHT_OK", "head_sha": head, "fingerprint": contract_fingerprint}
+
+    def _require_clean_checkout(self) -> None:
+        if self._changed_paths():
+            raise StopNeedsHuman("worktree_not_clean")
+
+    @staticmethod
+    def _self_correctable_ci_failure(value: Any, contract: Mapping[str, Any], head: str, pr_number: Any) -> bool:
+        if not isinstance(value, Mapping) or set(value) != {"head_sha", "pr_number", "workflow_run_id", "jobs"}:
+            return False
+        jobs = value.get("jobs")
+        expected = contract.get("expected_ci_jobs")
+        return (value.get("head_sha") == head and value.get("pr_number") == pr_number
+                and type(value.get("workflow_run_id")) is int and value["workflow_run_id"] > 0
+                and isinstance(jobs, Mapping) and isinstance(expected, list) and set(jobs) == set(expected)
+                and jobs == {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"})
+
+    def authorize_correction(self) -> dict[str, Any]:
+        """Local-only reproduction gate; it never contacts GitHub or a remote."""
+        contract, state = self._guard()
+        self._require_clean_checkout()
+        head = self._validate_checkout(contract)
+        if (state.get("published_once") is not True or state.get("head_sha") != head or state.get("ci_sha") is not None
+                or state.get("pending_correction_sha") is not None or state.get("pending_publish_attempted") is not False
+                or self._correction_count(contract, state) >= contract["max_corrections"]
+                or not self._self_correctable_ci_failure(state.get("ci_failure"), contract, head, state.get("pr_number"))):
+            raise StopNeedsHuman("correction_not_authorized")
+        profile = repository_validation_json_v1(self.root, contract["allowed_paths"])
+        if profile.get("result") != "fail" or not profile_invalid_paths_allowed(profile, self.root, contract["allowed_paths"]):
+            raise StopNeedsHuman("correction_not_reproduced")
+        return {"profile_id": profile["profile_id"], "result": profile["result"], "invalid_files": profile["invalid_files"]}
+
+    def finalize_correction(self) -> dict[str, str]:
+        """Locally bind one validated descendant correction SHA; no network calls."""
+        contract, expected_state = self._guard()
+        self._require_clean_checkout()
+        head = self._validate_checkout(contract)
+        base = expected_state.get("head_sha")
+        if (not isinstance(base, str) or not SHA_RE.fullmatch(base) or head == base
+                or expected_state.get("ci_sha") is not None or expected_state.get("pending_correction_sha") is not None
+                or expected_state.get("pending_publish_attempted") is not False
+                or self._correction_count(contract, expected_state) >= contract["max_corrections"]
+                or not self._self_correctable_ci_failure(expected_state.get("ci_failure"), contract, base, expected_state.get("pr_number"))):
+            raise StopNeedsHuman("correction_not_authorized")
+        if self._git("rev-parse", "HEAD^") != base or self._git("rev-list", "--count", f"{base}..{head}") != "1":
+            raise StopNeedsHuman("correction_commit_count_rejected")
+        if self._git("log", "-1", "--format=%B", head) != CORRECTION_COMMIT_MESSAGE:
+            raise StopNeedsHuman("correction_commit_message_rejected")
+        self._validate_committed_paths(contract, base, head)
+        self._git("diff", "--check", base, head)
+        profile = repository_validation_json_v1(self.root, contract["allowed_paths"])
+        if profile.get("result") != "pass":
+            raise StopNeedsHuman("correction_validation_failed")
+        _, current_state = self._guard()
+        if current_state != expected_state:
+            raise StopNeedsHuman("state_changed_before_commit")
+        current_head = self._validate_checkout(contract)
+        self._require_clean_checkout()
+        if current_head != head:
+            raise StopNeedsHuman("correction_head_changed")
+        current_state["pending_correction_sha"] = head
+        current_state["pending_publish_attempted"] = False
+        self._write_state(current_state)
+        return {"state": "CORRECTION_FINALIZED", "head_sha": head}
 
     def publish_head(self) -> dict[str, str]:
         _require_live_operations_enabled()
         with self._publish_reservation():
             return self._publish_head_locked()
 
-    def _publish_head_locked(self) -> dict[str, str]:
+    def _publish_head_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, str]:
         contract, state = self._guard()
         head = self._validate_checkout(contract)
         previous_head = state.get("head_sha")
@@ -534,32 +686,60 @@ class Lifecycle:
         published_once = state.get("published_once")
         if type(published_once) is not bool:
             raise StopNeedsHuman("publication_state_rejected")
+        pending = state.get("pending_correction_sha")
+        correction_mode = pending is not None
+        if correction_mode:
+            if (not isinstance(pending, str) or not SHA_RE.fullmatch(pending) or pending != head
+                    or not isinstance(previous_head, str) or not SHA_RE.fullmatch(previous_head)
+                    or state.get("pending_publish_attempted") is not False or not published_once
+                    or corrections >= contract["max_corrections"]):
+                raise StopNeedsHuman("correction_publish_rejected")
+            self._require_clean_checkout()
+            self._validate_correction_pr(contract, state, previous_head)
         self._validate_remote_before_publish(contract, state, published_once)
 
-        # The first meaningful implementation publish is not a correction.
-        # Only subsequent changed HEADs consume the correction budget.
         if head != previous_head and published_once:
             if corrections >= contract["max_corrections"]:
                 raise StopNeedsHuman("correction_budget_exhausted")
-            # Reserve the correction before a network mutation.  A failed push
-            # consumes the approval budget rather than allowing silent retries.
             state["corrections"] = corrections + 1
+            if correction_mode:
+                state["pending_publish_attempted"] = True
             self._write_state(state)
+        elif correction_mode:
+            raise StopNeedsHuman("correction_publish_rejected")
         # Fresh contract and committed-range verification immediately precede the
-        # only Git mutation.
+        # only Git mutation. Correction mode repeats complete-clean enforcement
+        # after latching, preventing an uncommitted local mutation before push.
         self._guard()
+        if correction_mode:
+            self._require_clean_checkout()
         ref = f"refs/heads/{contract['branch']}"
         self._git("push", "origin", f"HEAD:{ref}")
         remote = self._git("ls-remote", "origin", ref).split()
         if len(remote) != 2 or remote[0] != head or remote[1] != ref:
             raise StopNeedsHuman("remote_head_mismatch")
-        state.update({
-            "head_sha": head,
-            "ci_sha": None,
-            "published_once": True,
-        })
-        self._write_state(state)
+        state.update({"head_sha": head, "ci_sha": None, "published_once": True})
+        if correction_mode:
+            state.update({"ci_failure": None, "pending_correction_sha": None, "pending_publish_attempted": False})
+        (self._write_state if state_writer is None else state_writer)(state)
         return {"state": "PUBLISHED", "head_sha": head}
+
+    def _commit_deferred_correction_publish(self, expected_latched: Mapping[str, Any], expected_head: str,
+                                            deferred_state: Mapping[str, Any]) -> None:
+        """Persist correction publish success only after the adapter tore down its token."""
+        contract, current = self._guard()
+        if current != expected_latched or current.get("pending_correction_sha") != expected_head or current.get("pending_publish_attempted") is not True:
+            raise StopNeedsHuman("state_changed_before_commit")
+        if self._validate_checkout(contract) != expected_head:
+            raise StopNeedsHuman("correction_head_changed")
+        self._require_clean_checkout()
+        expected = dict(current)
+        expected.update({"head_sha": expected_head, "ci_sha": None, "ci_failure": None,
+                         "pending_correction_sha": None, "pending_publish_attempted": False,
+                         "published_once": True})
+        if dict(deferred_state) != expected:
+            raise StopNeedsHuman("publish_state_commit_rejected")
+        self._write_state(expected)
 
     def ensure_pr(self) -> dict[str, Any]:
         _require_live_operations_enabled()
@@ -687,9 +867,10 @@ class Lifecycle:
         for job in jobs["jobs"]:
             if not isinstance(job, Mapping) or not isinstance(job.get("name"), str) or job["name"] in found:
                 raise StopNeedsHuman("ci_not_green_for_head")
-            if job.get("status") != "completed" or job.get("conclusion") != "success":
+            conclusion = job.get("conclusion")
+            if job.get("status") != "completed" or conclusion not in {"success", "failure"}:
                 raise StopNeedsHuman("ci_not_green_for_head")
-            found[job["name"]] = "success"
+            found[job["name"]] = conclusion
         if set(found) != set(contract["expected_ci_jobs"]):
             raise StopNeedsHuman("ci_not_green_for_head")
         return found
@@ -702,6 +883,8 @@ class Lifecycle:
         if (state.get("published_once") is not True or type(number) is not int or number <= 0
                 or state.get("head_sha") != sha):
             raise StopNeedsHuman("pr_or_head_missing")
+        if state.get("pending_correction_sha") is not None:
+            raise StopNeedsHuman("correction_pending")
         self._validate_remote_head(contract, sha)
         pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{number}")
         if not isinstance(pr, Mapping) or pr.get("number") != number:
@@ -714,16 +897,28 @@ class Lifecycle:
             raise StopNeedsHuman("workflow_run_ambiguous")
         run = candidates[0]
         run_id = run.get("id")
-        if type(run_id) is not int or run_id <= 0 or run.get("status") != "completed" or run.get("conclusion") != "success":
+        if (type(run_id) is not int or run_id <= 0 or run.get("status") != "completed"
+                or run.get("conclusion") not in {"success", "failure"}):
             raise StopNeedsHuman("ci_not_green_for_head")
         self._validate_remote_head(contract, sha)
         jobs = self._api("GET", f"/repos/{REPOSITORY}/actions/runs/{run_id}/jobs")
         found = self._validate_ci_jobs(jobs, contract)
+        is_green = all(found[name] == "success" for name in contract["expected_ci_jobs"])
+        if (run.get("conclusion") == "success") != is_green:
+            raise StopNeedsHuman("ci_not_green_for_head")
         self._validate_remote_head(contract, sha)
         deferred = dict(state)
-        deferred["ci_sha"] = sha
+        if is_green:
+            deferred["ci_sha"] = sha
+            deferred["ci_failure"] = None
+            result_state = "CI_GREEN_FOR_HEAD"
+        else:
+            deferred["ci_sha"] = None
+            deferred["ci_failure"] = {"head_sha": sha, "pr_number": number, "workflow_run_id": run_id,
+                                      "jobs": {name: found[name] for name in contract["expected_ci_jobs"]}}
+            result_state = "CI_FAILED_FOR_HEAD"
         (self._write_state if state_writer is None else state_writer)(deferred)
-        return {"state": "CI_GREEN", "head_sha": sha, "workflow_run_id": run_id,
+        return {"state": result_state, "head_sha": sha, "workflow_run_id": run_id,
                 "jobs": {name: found[name] for name in contract["expected_ci_jobs"]}}
 
     def _commit_deferred_ci_state(self, expected_state: Mapping[str, Any], expected_fingerprint: str,
@@ -740,7 +935,26 @@ class Lifecycle:
             raise StopNeedsHuman("publish_required")
         self._validate_remote_head(contract, current_head)
         expected_deferred = dict(current_state)
-        expected_deferred["ci_sha"] = current_head
+        if dict(deferred_state).get("ci_sha") == current_head and dict(deferred_state).get("ci_failure") is None:
+            expected_deferred["ci_sha"] = current_head
+            expected_deferred["ci_failure"] = None
+        elif (dict(deferred_state).get("ci_sha") is None
+                and isinstance(dict(deferred_state).get("ci_failure"), Mapping)):
+            evidence = dict(deferred_state)["ci_failure"]
+            jobs = evidence.get("jobs") if isinstance(evidence, Mapping) else None
+            if (not isinstance(evidence, Mapping) or evidence.get("head_sha") != current_head
+                    or evidence.get("pr_number") != current_state.get("pr_number")
+                    or type(evidence.get("workflow_run_id")) is not int
+                    or not isinstance(jobs, Mapping) or set(jobs) != set(contract["expected_ci_jobs"])
+                    or any(value not in {"success", "failure"} for value in jobs.values())
+                    or all(value == "success" for value in jobs.values())):
+                raise StopNeedsHuman("ci_state_commit_rejected")
+            expected_deferred["ci_sha"] = None
+            expected_deferred["ci_failure"] = {"head_sha": current_head, "pr_number": current_state["pr_number"],
+                                                "workflow_run_id": evidence["workflow_run_id"],
+                                                "jobs": {name: jobs[name] for name in contract["expected_ci_jobs"]}}
+        else:
+            raise StopNeedsHuman("ci_state_commit_rejected")
         if dict(deferred_state) != expected_deferred:
             raise StopNeedsHuman("ci_state_commit_rejected")
         self._write_state(expected_deferred)
