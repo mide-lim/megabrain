@@ -228,7 +228,8 @@ def _expected_create_payload(contract: Mapping[str, Any], state: Mapping[str, An
 
 
 def _allowed_pr_api_call(method: str, path: str, payload: Mapping[str, Any] | None,
-                         contract: Mapping[str, Any], state: Mapping[str, Any], searched: bool) -> bool:
+                         contract: Mapping[str, Any], state: Mapping[str, Any],
+                         latest_same_head_search_zero: bool, post_attempted: bool) -> bool:
     branch = contract.get("branch")
     number = state.get("pr_number")
     pulls = f"/repos/{REPOSITORY}/pulls"
@@ -236,23 +237,36 @@ def _allowed_pr_api_call(method: str, path: str, payload: Mapping[str, Any] | No
         return True
     if method == "GET" and payload is None and path == f"{pulls}?state=all&head=mide-lim:{branch}":
         return True
-    return method == "POST" and searched and path == pulls and payload == _expected_create_payload(contract, state)
+    return (
+        method == "POST"
+        and latest_same_head_search_zero
+        and not post_attempted
+        and path == pulls
+        and payload == _expected_create_payload(contract, state)
+    )
 
 
 def authenticated_pr_request(token: str, contract: Mapping[str, Any], state: Mapping[str, Any]):
     """Expose exactly the two fixed reads and one exact create to Lifecycle."""
-    searched = False
+    latest_same_head_search_zero = False
+    post_attempted = False
 
     def request(method: str, path: str, payload: Mapping[str, Any] | None = None) -> Any:
-        nonlocal searched
-        if not _allowed_pr_api_call(method, path, payload, contract, state, searched):
+        nonlocal latest_same_head_search_zero, post_attempted
+        if not _allowed_pr_api_call(
+            method, path, payload, contract, state, latest_same_head_search_zero, post_attempted,
+        ):
             raise LIFECYCLE.StopNeedsHuman("api_request_rejected")
-        if method == "GET" and "?state=all&head=" in path:
-            searched = True
         status, body = request_json(method, path, f"token {token}", payload)
         expected_status = 201 if method == "POST" else 200
         if status != expected_status:
             raise LIFECYCLE.StopNeedsHuman("api_response_rejected")
+        if method == "GET" and "?state=all&head=" in path:
+            # A create can follow only the immediately preceding same-head
+            # collection response, and only if that response was exactly empty.
+            latest_same_head_search_zero = isinstance(body, list) and not body
+        elif method == "POST":
+            post_attempted = True
         return body
 
     return request
@@ -303,6 +317,11 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
     lifecycle: Any = None
     deferred_state: dict[str, Any] | None = None
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
+    reservation: Any = None
+    reservation_acquired = False
+    expected_state: dict[str, Any] | None = None
+    expected_fingerprint: str | None = None
+    head: str | None = None
     try:
         app_id, installation_id, key_path = _required_environment(environment)
         validate_privileged_executable(GIT_BINARY)
@@ -310,7 +329,17 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         validate_key_path(key_path)
         source_root = Path.cwd().resolve()
         lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
+        # P2 and P3 use this same owner-only reservation.  It intentionally
+        # begins before P3's final source revalidation and remains held until
+        # after token teardown and the compare-and-set state commit.
+        reservation = lifecycle._publish_reservation()
+        reservation.__enter__()
+        reservation_acquired = True
         contract, state = lifecycle._guard()
+        expected_state = copy.deepcopy(state)
+        expected_fingerprint = state.get("fingerprint")
+        if not isinstance(expected_fingerprint, str):
+            raise LIFECYCLE.StopNeedsHuman("contract_fingerprint_divergent")
         result["contract_valid"] = True
         temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p3-")
         result["temporary_cleanup"] = False
@@ -318,6 +347,11 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         if configured_origin(source_root, temporary_directory.name) != ORIGIN:
             raise SafeFailure("origin_rejected")
         result["origin_valid"] = True
+        # Reload under the reservation immediately before minting the JWT.
+        # This prevents a P2 state transition from being validated as P3 input.
+        contract, state = lifecycle._guard()
+        if state != expected_state or state.get("fingerprint") != expected_fingerprint:
+            raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         head = validate_source_for_ensure_pr(lifecycle, contract, state)
         result["preconditions_valid"] = True
 
@@ -381,16 +415,29 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
                 result["temporary_cleanup"] = False
                 result["failure_code"] = "cleanup_failed"
         token = None
-    if result["failure_code"] is None:
-        if lifecycle is None or deferred_state is None:
-            result["failure_code"] = "state_commit_rejected"
-        else:
+        if result["failure_code"] is None:
+            if (lifecycle is None or deferred_state is None or expected_state is None
+                    or expected_fingerprint is None or head is None):
+                result["failure_code"] = "state_commit_rejected"
+            else:
+                try:
+                    # State is not written until teardown succeeded.  Reload it
+                    # while the P2/P3 reservation remains held and require an
+                    # exact match to the P3 input snapshot before replacing it.
+                    lifecycle._commit_deferred_pr_state(
+                        expected_state, expected_fingerprint, head, deferred_state,
+                    )
+                except LIFECYCLE.StopNeedsHuman as exc:
+                    result["failure_code"] = str(exc)
+                except Exception:
+                    result["failure_code"] = "state_commit_rejected"
+        if reservation_acquired:
             try:
-                lifecycle._write_state(deferred_state)
+                reservation.__exit__(None, None, None)
             except LIFECYCLE.StopNeedsHuman as exc:
                 result["failure_code"] = str(exc)
             except Exception:
-                result["failure_code"] = "state_commit_rejected"
+                result["failure_code"] = "publish_reservation_cleanup_failed"
     if result["failure_code"] is None:
         result["status"] = "ok"
     return result

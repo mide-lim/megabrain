@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import copy
 from unittest import mock
 from pathlib import Path
 
@@ -62,6 +63,8 @@ class Harness:
         path.mkdir(parents=True, exist_ok=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
         self.pr = self.pr_body(SHA)
+        self.same_head_responses: list[list[dict]] | None = None
+        self.post_response: dict | None = None
         self.runs_sha = SHA
 
     def pr_body(self, sha, *, base="dev"):
@@ -93,6 +96,10 @@ class Harness:
     def request(self, method, path, payload=None):
         self.requests.append((method, path, payload))
         if path.endswith("/pulls?state=all&head=mide-lim:" + self.data["branch"]):
+            if self.same_head_responses is not None:
+                if not self.same_head_responses:
+                    raise AssertionError("unexpected_same_head_search")
+                return (200, copy.deepcopy(self.same_head_responses.pop(0)))
             return (200, [self.pr])
         if path.endswith("/pulls/7"):
             return (200, self.pr)
@@ -101,7 +108,7 @@ class Harness:
         if path.endswith("/actions/runs/5/jobs"):
             return (200, {"jobs": [{"name": name, "conclusion": "success"} for name in self.data["expected_ci_jobs"]]})
         if method == "POST" and path.endswith("/pulls"):
-            return (201, self.pr)
+            return (201, copy.deepcopy(self.post_response if self.post_response is not None else self.pr))
         raise AssertionError((method, path, payload))
 
     def lifecycle(self):
@@ -410,6 +417,99 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             self.h.lifecycle().ensure_pr()
 
+    def _published_state_with_stored_pr(self, number=7):
+        self.preflight()
+        self.h.lifecycle().publish_head()
+        state_path = self.h.state / "life-1/state.json"
+        value = json.loads(state_path.read_text(encoding="utf-8"))
+        value["pr_number"] = number
+        state_path.write_text(json.dumps(value), encoding="utf-8")
+
+    def test_stored_pr_requires_exactly_one_matching_same_head_pr_and_direct_get(self):
+        self._published_state_with_stored_pr()
+        self.h.same_head_responses = [[self.h.pr_body(SHA)]]
+        result = self.h.lifecycle().ensure_pr()
+        self.assertEqual(result["pr_number"], 7)
+        paths = [path for _, path, _ in self.h.requests]
+        self.assertIn(f"/repos/{L.REPOSITORY}/pulls?state=all&head=mide-lim:{self.h.data['branch']}", paths)
+        self.assertIn(f"/repos/{L.REPOSITORY}/pulls/7", paths)
+
+    def test_stored_pr_second_same_head_pr_stops(self):
+        self._published_state_with_stored_pr()
+        self.h.same_head_responses = [[self.h.pr_body(SHA), self.h.pr_body(SHA)]]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_count_rejected"):
+            self.h.lifecycle().ensure_pr()
+
+    def test_stored_pr_missing_from_same_head_collection_stops(self):
+        self._published_state_with_stored_pr()
+        self.h.same_head_responses = [[]]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_count_rejected"):
+            self.h.lifecycle().ensure_pr()
+
+    def test_stored_pr_must_match_the_sole_same_head_pr(self):
+        self._published_state_with_stored_pr()
+        self.h.same_head_responses = [[self.h.pr_body(SHA) | {"number": 8}]]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_drift_rejected"):
+            self.h.lifecycle().ensure_pr()
+
+    def test_post_create_second_same_head_pr_stops_without_state_commit(self):
+        self.preflight()
+        self.h.lifecycle().publish_head()
+        created = self.h.pr_body(SHA)
+        conflicting = self.h.pr_body(SHA) | {"number": 8}
+        self.h.post_response = created
+        self.h.same_head_responses = [[], [created, conflicting]]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "pr_count_rejected"):
+            self.h.lifecycle().ensure_pr()
+        value = json.loads((self.h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("pr_number", value)
+
+    def test_post_create_requires_exactly_the_returned_same_head_pr(self):
+        self.preflight()
+        self.h.lifecycle().publish_head()
+        created = self.h.pr_body(SHA) | {"number": 11}
+        self.h.post_response = created
+        self.h.same_head_responses = [[], [created]]
+        self.assertEqual(self.h.lifecycle().ensure_pr()["pr_number"], 11)
+        searches = [path for _, path, _ in self.h.requests if "pulls?state=all" in path]
+        self.assertEqual(len(searches), 2)
+
+    def _deferred_pr_commit_inputs(self):
+        self.preflight()
+        self.h.lifecycle().publish_head()
+        life = self.h.lifecycle()
+        _, expected = life._guard()
+        deferred = copy.deepcopy(expected)
+        deferred["pr_number"] = 7
+        return life, expected, deferred
+
+    def test_deferred_pr_commit_rejects_lifecycle_state_change_without_overwrite(self):
+        life, expected, deferred = self._deferred_pr_commit_inputs()
+        state_path = self.h.state / "life-1/state.json"
+        changed = json.loads(state_path.read_text(encoding="utf-8"))
+        changed["ci_sha"] = SHA
+        state_path.write_text(json.dumps(changed), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "state_changed_before_commit"):
+            life._commit_deferred_pr_state(expected, expected["fingerprint"], SHA, deferred)
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8")), changed)
+
+    def test_deferred_pr_commit_revalidates_remote_sha_before_state_write(self):
+        life, expected, deferred = self._deferred_pr_commit_inputs()
+        self.h.remote_sha = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            life._commit_deferred_pr_state(expected, expected["fingerprint"], SHA, deferred)
+        value = json.loads((self.h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("pr_number", value)
+
+    def test_deferred_pr_commit_revalidates_contract_fingerprint_before_state_write(self):
+        life, expected, deferred = self._deferred_pr_commit_inputs()
+        altered = contract(pr_title="changed")
+        (self.contract_root / "life-1.json").write_text(json.dumps(altered), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_fingerprint_divergent"):
+            life._commit_deferred_pr_state(expected, expected["fingerprint"], SHA, deferred)
+        value = json.loads((self.h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertNotIn("pr_number", value)
+
     def test_max_corrections_zero_allows_initial_publish_then_stops_first_fix(self):
         h = Harness(self.root / "budget-zero", self.state / "budget-zero", contract(max_corrections=0, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])
         h.lifecycle().preflight()
@@ -460,6 +560,53 @@ class LifecycleTests(unittest.TestCase):
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
         self.assertEqual(result[0]["state"], "PUBLISHED")
+
+    def test_p2_publication_reservation_blocks_concurrent_p3_transition(self):
+        h = Harness(self.root / "p2-blocks-p3", self.state / "p2-blocks-p3", contract())
+        h.lifecycle().preflight()
+        entered = threading.Event()
+        release = threading.Event()
+        original_runner = h.runner
+
+        def blocking_runner(command, cwd):
+            if command[1:2] == ["push"]:
+                entered.set()
+                self.assertTrue(release.wait(timeout=2))
+            return original_runner(command, cwd)
+
+        thread = threading.Thread(target=lambda: L.Lifecycle(h.root, "life-1", state_root=h.state, runner=blocking_runner, request=h.request).publish_head())
+        thread.start()
+        self.assertTrue(entered.wait(timeout=2))
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            h.lifecycle().ensure_pr()
+        release.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_p3_reservation_blocks_concurrent_p2_publication(self):
+        h = Harness(self.root / "p3-blocks-p2", self.state / "p3-blocks-p2", contract())
+        h.lifecycle().preflight()
+        h.lifecycle().publish_head()
+        entered = threading.Event()
+        release = threading.Event()
+        original_request = h.request
+
+        def blocking_request(method, path, payload=None):
+            if "pulls?state=all" in path:
+                entered.set()
+                self.assertTrue(release.wait(timeout=2))
+            return original_request(method, path, payload)
+
+        result = []
+        thread = threading.Thread(target=lambda: result.append(L.Lifecycle(h.root, "life-1", state_root=h.state, runner=h.runner, request=blocking_request).ensure_pr()))
+        thread.start()
+        self.assertTrue(entered.wait(timeout=2))
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            h.lifecycle().publish_head()
+        release.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result[0]["state"], "PR_OPEN")
 
     def test_correction_budget_allows_exact_limit_and_persists_count(self):
         h = Harness(self.root / "budget-exact", self.state / "budget-exact", contract(max_corrections=1, allowed_paths=["docs/EVIDENCE.md"]), committed=[("M", "docs/EVIDENCE.md")])

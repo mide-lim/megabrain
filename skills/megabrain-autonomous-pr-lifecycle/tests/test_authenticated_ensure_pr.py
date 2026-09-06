@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -74,6 +75,10 @@ class FakeLifecycle:
     def _guard(self):
         return copy.deepcopy(self.data), copy.deepcopy(self.current_state)
 
+    @contextmanager
+    def _publish_reservation(self):
+        yield
+
     def _validate_checkout(self, value):
         self.last_checkout_contract = value
         return SHA
@@ -108,6 +113,12 @@ class FakeLifecycle:
 
     def _write_state(self, value):
         type(self).state_writes.append(copy.deepcopy(value))
+
+    def _commit_deferred_pr_state(self, expected, fingerprint, head, value):
+        assert expected == self.current_state
+        assert fingerprint == self.current_state["fingerprint"]
+        assert head == SHA
+        self._write_state(value)
 
 
 class AuthenticatedEnsurePrTests(unittest.TestCase):
@@ -264,6 +275,32 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
             with self.subTest(method=method, path=path):
                 with self.assertRaisesRegex(ENSURE.LIFECYCLE.StopNeedsHuman, "api_request_rejected"):
                     request(method, path, payload)
+
+    def test_adapter_allows_only_one_post_after_the_latest_empty_same_head_search(self):
+        listing = f"/repos/{ENSURE.REPOSITORY}/pulls?state=all&head=mide-lim:{BRANCH}"
+        create = f"/repos/{ENSURE.REPOSITORY}/pulls"
+        payload = ENSURE._expected_create_payload(contract(), state())
+        responses = [(200, []), (201, pr())]
+        with mock.patch.object(ENSURE, "request_json", side_effect=responses) as api:
+            request = ENSURE.authenticated_pr_request("TOKEN_FIXTURE", contract(), state())
+            with self.assertRaisesRegex(ENSURE.LIFECYCLE.StopNeedsHuman, "api_request_rejected"):
+                request("POST", create, payload)
+            request("GET", listing)
+            request("POST", create, payload)
+            with self.assertRaisesRegex(ENSURE.LIFECYCLE.StopNeedsHuman, "api_request_rejected"):
+                request("POST", create, payload)
+        self.assertEqual(api.call_count, 2)
+
+    def test_adapter_rejects_post_when_the_latest_same_head_search_is_not_empty(self):
+        listing = f"/repos/{ENSURE.REPOSITORY}/pulls?state=all&head=mide-lim:{BRANCH}"
+        create = f"/repos/{ENSURE.REPOSITORY}/pulls"
+        payload = ENSURE._expected_create_payload(contract(), state())
+        with mock.patch.object(ENSURE, "request_json", side_effect=[(200, []), (200, [pr()])]):
+            request = ENSURE.authenticated_pr_request("TOKEN_FIXTURE", contract(), state())
+            request("GET", listing)
+            request("GET", listing)
+            with self.assertRaisesRegex(ENSURE.LIFECYCLE.StopNeedsHuman, "api_request_rejected"):
+                request("POST", create, payload)
 
     def test_post_api_remote_drift_and_teardown_failures_do_not_commit_state(self):
         FakeLifecycle.ensure_failure = "remote_head_drift"
