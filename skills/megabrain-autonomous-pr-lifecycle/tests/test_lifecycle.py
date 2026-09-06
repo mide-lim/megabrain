@@ -113,8 +113,13 @@ class LifecycleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "repo"; self.root.mkdir()
         self.state = Path(self.temp.name) / "state"
-        self.contract_root = Path(self.temp.name) / "external" / "b4.2"
+        self.contract_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-contracts" / "b4.2"
         self.contract_root.mkdir(parents=True)
+        self.control_directories = (
+            self.contract_root.parent.parent,
+            self.contract_root.parent,
+            self.contract_root,
+        )
         self.contract_metadata: dict[Path, dict[str, int]] = {}
         self.real_lstat = os.lstat
         self.real_fstat = os.fstat
@@ -135,10 +140,10 @@ class LifecycleTests(unittest.TestCase):
             return result
         target = Path(path)
         metadata = self.contract_metadata.get(target, {})
-        if target == self.contract_root or target.parent == self.contract_root:
+        if target in self.control_directories or target.parent == self.contract_root:
             values = list(result)
             values[4] = metadata.get("uid", 0)
-            default_mode = 0o755 if target == self.contract_root else 0o644
+            default_mode = 0o755 if target in self.control_directories else 0o644
             values[0] = (result.st_mode & ~0o777) | metadata.get("mode", default_mode)
             return os.stat_result(values)
         return result
@@ -216,6 +221,24 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
             self.preflight()
 
+    def test_symlink_intermediate_contract_directory_is_rejected(self):
+        intermediate = self.contract_root.parent
+        replacement = intermediate.with_name("replacement-contracts")
+        intermediate.rename(replacement)
+        intermediate.symlink_to(replacement, target_is_directory=True)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_non_root_owned_intermediate_contract_directory_is_rejected(self):
+        self.contract_metadata[self.contract_root.parent] = {"uid": 1000}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
+    def test_group_or_other_writable_intermediate_contract_directory_is_rejected(self):
+        self.contract_metadata[self.contract_root.parent] = {"mode": 0o775}
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_root_rejected"):
+            self.preflight()
+
     def test_non_root_owned_external_contract_is_rejected(self):
         self.contract_metadata[self.contract_root / "life-1.json"] = {"uid": 1000}
         with self.assertRaisesRegex(L.StopNeedsHuman, "contract_path_rejected"):
@@ -223,6 +246,9 @@ class LifecycleTests(unittest.TestCase):
 
     def test_root_owned_read_only_external_contract_is_accepted(self):
         self.contract_metadata[self.contract_root / "life-1.json"] = {"uid": 0, "mode": 0o444}
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
+
+    def test_fully_trusted_contract_directory_chain_is_accepted(self):
         self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
 
     def test_clean_committed_workflow_change_stops_publish(self):

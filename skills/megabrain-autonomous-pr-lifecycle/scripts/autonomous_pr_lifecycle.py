@@ -207,13 +207,14 @@ class Lifecycle:
             os.close(descriptor)
 
     def _trusted_contract_path(self) -> None:
-        try:
-            root_status = os.lstat(CONTRACT_ROOT)
-        except OSError as exc:
-            raise StopNeedsHuman("contract_root_rejected") from exc
-        if (stat.S_ISLNK(root_status.st_mode) or not stat.S_ISDIR(root_status.st_mode)
-                or root_status.st_uid != 0 or stat.S_IMODE(root_status.st_mode) & 0o022):
-            raise StopNeedsHuman("contract_root_rejected")
+        for control_directory in (CONTRACT_ROOT.parent.parent, CONTRACT_ROOT.parent, CONTRACT_ROOT):
+            try:
+                directory_status = os.lstat(control_directory)
+            except OSError as exc:
+                raise StopNeedsHuman("contract_root_rejected") from exc
+            if (stat.S_ISLNK(directory_status.st_mode) or not stat.S_ISDIR(directory_status.st_mode)
+                    or directory_status.st_uid != 0 or stat.S_IMODE(directory_status.st_mode) & 0o022):
+                raise StopNeedsHuman("contract_root_rejected")
         try:
             contract_status = os.lstat(self.contract_path)
         except OSError as exc:
