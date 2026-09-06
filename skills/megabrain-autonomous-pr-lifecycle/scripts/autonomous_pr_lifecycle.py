@@ -258,7 +258,10 @@ class Lifecycle:
             raise StopNeedsHuman("contract_sha_rejected")
         if not isinstance(data["allowed_paths"], list) or not all(isinstance(p, str) and _safe_relative(p) for p in data["allowed_paths"]):
             raise StopNeedsHuman("contract_paths_rejected")
-        if not isinstance(data["expected_ci_jobs"], list) or not data["expected_ci_jobs"] or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"]) or not all(isinstance(j, str) and j for j in data["expected_ci_jobs"]):                 raise StopNeedsHuman("contract_jobs_rejected")
+        if (not isinstance(data["expected_ci_jobs"], list) or not data["expected_ci_jobs"]
+                or len(set(data["expected_ci_jobs"])) != len(data["expected_ci_jobs"])
+                or not all(isinstance(job, str) and job for job in data["expected_ci_jobs"])):
+            raise StopNeedsHuman("contract_jobs_rejected")
 
         if type(data["allow_safe_refresh"]) is not bool or type(data["max_corrections"]) is not int or not 0 <= data["max_corrections"] <= 10:
             raise StopNeedsHuman("contract_types_rejected")
@@ -667,28 +670,85 @@ class Lifecycle:
         self._validate_remote_head(contract, current_head)
         self._write_state(deferred_state)
 
-    def observe_ci(self) -> dict[str, Any]:
-        _require_live_operations_enabled()
+    def _ci_candidates(self, runs: Any, sha: str, number: int) -> list[Mapping[str, Any]]:
+        if not isinstance(runs, Mapping) or not isinstance(runs.get("workflow_runs"), list):
+            raise StopNeedsHuman("workflow_run_ambiguous")
+        return [
+            run for run in runs["workflow_runs"]
+            if isinstance(run, Mapping) and run.get("event") == "pull_request" and run.get("head_sha") == sha
+            and isinstance(run.get("pull_requests"), list)
+            and any(isinstance(entry, Mapping) and entry.get("number") == number for entry in run["pull_requests"])
+        ]
+
+    def _validate_ci_jobs(self, jobs: Any, contract: Mapping[str, Any]) -> dict[str, str]:
+        if not isinstance(jobs, Mapping) or not isinstance(jobs.get("jobs"), list):
+            raise StopNeedsHuman("ci_not_green_for_head")
+        found: dict[str, str] = {}
+        for job in jobs["jobs"]:
+            if not isinstance(job, Mapping) or not isinstance(job.get("name"), str) or job["name"] in found:
+                raise StopNeedsHuman("ci_not_green_for_head")
+            if job.get("status") != "completed" or job.get("conclusion") != "success":
+                raise StopNeedsHuman("ci_not_green_for_head")
+            found[job["name"]] = "success"
+        if set(found) != set(contract["expected_ci_jobs"]):
+            raise StopNeedsHuman("ci_not_green_for_head")
+        return found
+
+    def _observe_ci_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+        """Observe only the exact PR head and defer any CI evidence state write."""
         contract, state = self._guard()
         sha = self._validate_checkout(contract)
         number = state.get("pr_number")
-        if not isinstance(number, int) or state.get("head_sha") != sha:
+        if (state.get("published_once") is not True or type(number) is not int or number <= 0
+                or state.get("head_sha") != sha):
             raise StopNeedsHuman("pr_or_head_missing")
+        self._validate_remote_head(contract, sha)
         pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{number}")
+        if not isinstance(pr, Mapping) or pr.get("number") != number:
+            raise StopNeedsHuman("pr_drift_rejected")
         self._validate_pr(pr, contract, sha)
+        self._validate_remote_head(contract, sha)
         runs = self._api("GET", f"/repos/{REPOSITORY}/actions/runs?event=pull_request&head_sha={sha}")
-        candidates = [run for run in runs.get("workflow_runs", []) if isinstance(run, Mapping) and run.get("head_sha") == sha and isinstance(run.get("pull_requests"), list) and number in [entry.get("number") for entry in run["pull_requests"] if isinstance(entry, Mapping)]] if isinstance(runs, Mapping) else []
-
+        candidates = self._ci_candidates(runs, sha, number)
         if len(candidates) != 1:
             raise StopNeedsHuman("workflow_run_ambiguous")
         run = candidates[0]
-        jobs = self._api("GET", f"/repos/{REPOSITORY}/actions/runs/{run.get('id')}/jobs")
-        found = {job.get("name"): job.get("conclusion") for job in jobs.get("jobs", []) if isinstance(job, Mapping) and isinstance(job.get("name"), str)} if isinstance(jobs, Mapping) else {}
-        if set(found) != set(contract["expected_ci_jobs"]) or any(found.get(name) != "success" for name in contract["expected_ci_jobs"]):
+        run_id = run.get("id")
+        if type(run_id) is not int or run_id <= 0 or run.get("status") != "completed" or run.get("conclusion") != "success":
             raise StopNeedsHuman("ci_not_green_for_head")
-        state["ci_sha"] = sha
-        self._write_state(state)
-        return {"state": "CI_GREEN", "head_sha": sha, "jobs": {name: found[name] for name in contract["expected_ci_jobs"]}}
+        self._validate_remote_head(contract, sha)
+        jobs = self._api("GET", f"/repos/{REPOSITORY}/actions/runs/{run_id}/jobs")
+        found = self._validate_ci_jobs(jobs, contract)
+        self._validate_remote_head(contract, sha)
+        deferred = dict(state)
+        deferred["ci_sha"] = sha
+        (self._write_state if state_writer is None else state_writer)(deferred)
+        return {"state": "CI_GREEN", "head_sha": sha, "workflow_run_id": run_id,
+                "jobs": {name: found[name] for name in contract["expected_ci_jobs"]}}
+
+    def _commit_deferred_ci_state(self, expected_state: Mapping[str, Any], expected_fingerprint: str,
+                                  expected_head: str, deferred_state: Mapping[str, Any]) -> None:
+        """CAS a P4 observation only after external token teardown succeeded."""
+        contract, current_state = self._guard()
+        if (current_state != expected_state
+                or current_state.get("fingerprint") != expected_fingerprint):
+            raise StopNeedsHuman("state_changed_before_commit")
+        current_head = self._validate_checkout(contract)
+        if (current_head != expected_head or current_state.get("published_once") is not True
+                or current_state.get("head_sha") != current_head
+                or type(current_state.get("pr_number")) is not int or current_state["pr_number"] <= 0):
+            raise StopNeedsHuman("publish_required")
+        self._validate_remote_head(contract, current_head)
+        expected_deferred = dict(current_state)
+        expected_deferred["ci_sha"] = current_head
+        if dict(deferred_state) != expected_deferred:
+            raise StopNeedsHuman("ci_state_commit_rejected")
+        self._write_state(expected_deferred)
+
+    def observe_ci(self) -> dict[str, Any]:
+        _require_live_operations_enabled()
+        with self._publish_reservation():
+            return self._observe_ci_locked()
 
     def refresh_from_dev(self) -> dict[str, str]:
         _require_live_operations_enabled()
