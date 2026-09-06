@@ -22,7 +22,7 @@ The fixed destination is `~/.hermes/skills/megabrain/megabrain-autonomous-pr-lif
 
 ## Contract and immutability
 
-A future approved operational contract is strict JSON at the fixed repository-relative path `contracts/b4.2/<lifecycle_id>.json`. It cannot be selected by arbitrary file path. `preflight` computes a SHA-256 canonical fingerprint and locks it in owner-only local state outside the repository. Every lifecycle operation reloads the contract and compares that fingerprint before validating or mutating anything. Any mismatch returns `STOP_NEEDS_HUMAN`; this capability never writes the contract.
+A future approved operational contract is strict JSON only at `/etc/megabrain/hermes-contracts/b4.2/<lifecycle_id>.json`; there is no repository-relative fallback or selectable contract root. The exact file and control directory must be regular/non-symlink, root-owned, and not group/other writable. `preflight` computes a SHA-256 canonical fingerprint and locks it in owner-only local state outside the repository. Every lifecycle operation reloads the contract and compares that fingerprint before validating or mutating anything. Any mismatch returns `STOP_NEEDS_HUMAN`; this capability never writes the contract.
 
 The permanent v1 denylist includes `.github/workflows/**`, both B4.2 and B4.1 source trees, `AGENTS.md`, `docs/RISK_POLICY.md`, `docs/DEFINITION_OF_DONE.md`, task-contract, lifecycle, workflow, bypass, merge, permission and policy control documents. `ACTIVE_TASK.md`, evidence, and operational documentation are allowed only when an exact contract `allowed_paths` entry permits them. Traversal and symlinks are rejected.
 

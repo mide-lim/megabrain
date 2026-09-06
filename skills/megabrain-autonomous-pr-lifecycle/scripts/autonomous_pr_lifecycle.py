@@ -19,7 +19,7 @@ from typing import Any, Callable, Mapping
 REPOSITORY = "mide-lim/megabrain"
 ORIGIN_URL = "https://github.com/mide-lim/megabrain.git"
 API_ROOT = "https://api.github.com"
-CONTRACT_DIRECTORY = Path("contracts/b4.2")
+CONTRACT_ROOT = Path("/etc/megabrain/hermes-contracts/b4.2")
 
 PUBLIC_OPERATIONS = frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready"})
 DENIED_PATHS = (
@@ -171,7 +171,7 @@ class Lifecycle:
             raise StopNeedsHuman("lifecycle_id_rejected")
         self.root = repository_root.resolve()
         self.lifecycle_id = lifecycle_id
-        self.contract_path = self.root / CONTRACT_DIRECTORY / f"{lifecycle_id}.json"
+        self.contract_path = CONTRACT_ROOT / f"{lifecycle_id}.json"
         root = (state_root or (Path.home() / ".local/state/megabrain/b4.2")).expanduser().absolute()
         candidate = root
         while candidate != candidate.parent:
@@ -206,12 +206,43 @@ class Lifecycle:
         finally:
             os.close(descriptor)
 
-    def _contract(self) -> tuple[dict[str, Any], str]:
-        self._safe_existing(self.contract_path.parent)
-        if self.contract_path.is_symlink() or not self.contract_path.is_file():
-            raise StopNeedsHuman("contract_path_rejected")
+    def _trusted_contract_path(self) -> None:
         try:
-            data = json.loads(self._read_regular_text(self.contract_path))
+            root_status = os.lstat(CONTRACT_ROOT)
+        except OSError as exc:
+            raise StopNeedsHuman("contract_root_rejected") from exc
+        if (stat.S_ISLNK(root_status.st_mode) or not stat.S_ISDIR(root_status.st_mode)
+                or root_status.st_uid != 0 or stat.S_IMODE(root_status.st_mode) & 0o022):
+            raise StopNeedsHuman("contract_root_rejected")
+        try:
+            contract_status = os.lstat(self.contract_path)
+        except OSError as exc:
+            raise StopNeedsHuman("contract_path_rejected") from exc
+        if (stat.S_ISLNK(contract_status.st_mode) or not stat.S_ISREG(contract_status.st_mode)
+                or contract_status.st_uid != 0 or stat.S_IMODE(contract_status.st_mode) & 0o022):
+            raise StopNeedsHuman("contract_path_rejected")
+
+    def _read_trusted_contract_text(self) -> str:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(self.contract_path, flags)
+        except OSError as exc:
+            raise StopNeedsHuman("contract_unreadable") from exc
+        try:
+            contract_status = os.fstat(descriptor)
+            if (not stat.S_ISREG(contract_status.st_mode) or contract_status.st_uid != 0
+                    or stat.S_IMODE(contract_status.st_mode) & 0o022):
+                raise StopNeedsHuman("contract_unreadable")
+            return os.read(descriptor, 1_000_000).decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise StopNeedsHuman("contract_unreadable") from exc
+        finally:
+            os.close(descriptor)
+
+    def _contract(self) -> tuple[dict[str, Any], str]:
+        self._trusted_contract_path()
+        try:
+            data = json.loads(self._read_trusted_contract_text())
         except (StopNeedsHuman, json.JSONDecodeError) as exc:
             raise StopNeedsHuman("contract_unreadable") from exc
         if not isinstance(data, dict) or set(data) != EXPECTED_FIELDS:
