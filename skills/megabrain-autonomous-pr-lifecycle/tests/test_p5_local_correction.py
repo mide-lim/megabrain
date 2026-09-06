@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,7 +87,20 @@ class JsonProfileTests(unittest.TestCase):
 
 
 class CommitJsonProfileTests(unittest.TestCase):
-    def test_profile_reads_only_fixed_exact_commit_objects(self):
+    def test_local_git_read_disables_replace_objects(self):
+        binary = mock.Mock(st_mode=stat.S_IFREG | 0o755, st_uid=0)
+        completed = mock.Mock(returncode=0, stdout=b"content")
+        with mock.patch.object(L.os, "lstat", return_value=binary), \
+                mock.patch.object(L.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(L._local_git_read(Path("/unused"), ["cat-file", "-e", f"{SHA}^{{commit}}"]), b"content")
+        self.assertEqual(run.call_args.kwargs["env"], {
+            "PATH": "/usr/bin:/bin",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+        })
+
+    def test_profile_reads_only_validated_exact_blob_objects(self):
         calls = []
         def read(root, arguments):
             calls.append(arguments)
@@ -94,8 +108,10 @@ class CommitJsonProfileTests(unittest.TestCase):
                 ("cat-file", "-e", f"{SHA}^{{commit}}"): b"",
                 ("ls-tree", "-z", SHA, "--", "workflows"): b"040000 tree " + b"c" * 40 + b"\tworkflows\0",
                 ("ls-tree", "-z", f"{SHA}:workflows"): b"100644 blob " + b"d" * 40 + b"\tP5_PROOF_FIXTURE.json\0",
-                ("cat-file", "blob", f"{SHA}:workflows/P5_PROOF_FIXTURE.json"): b"{",
+                ("cat-file", "blob", "d" * 40): b"{",
             }
+            if tuple(arguments) == ("cat-file", "blob", f"{SHA}:workflows/P5_PROOF_FIXTURE.json"):
+                raise AssertionError("committed-tree profile must not cat-file by commit:path")
             return values[tuple(arguments)]
         with mock.patch.object(L, "_local_git_read", side_effect=read):
             result = L.repository_validation_json_v1_for_commit(Path("/unused"), SHA, ["workflows/*.json"])
@@ -104,7 +120,7 @@ class CommitJsonProfileTests(unittest.TestCase):
         self.assertEqual(calls, [
             ["cat-file", "-e", f"{SHA}^{{commit}}"], ["ls-tree", "-z", SHA, "--", "workflows"],
             ["ls-tree", "-z", f"{SHA}:workflows"],
-            ["cat-file", "blob", f"{SHA}:workflows/P5_PROOF_FIXTURE.json"],
+            ["cat-file", "blob", "d" * 40],
         ])
 
 

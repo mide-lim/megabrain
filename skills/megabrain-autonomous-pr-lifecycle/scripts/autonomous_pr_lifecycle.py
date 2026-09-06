@@ -132,7 +132,8 @@ def _local_git_read(root: Path, arguments: list[str]) -> bytes:
         completed = subprocess.run(
             [LOCAL_GIT_BINARY, *arguments], cwd=root, check=False,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=False, timeout=10,
-            env={"PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"},
+            env={"PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+                 "GIT_NO_REPLACE_OBJECTS": "1"},
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise StopNeedsHuman("json_profile_git_read_rejected") from exc
@@ -189,10 +190,9 @@ def repository_validation_json_v1_for_commit(root: Path, sha: str, allowed_paths
         raise StopNeedsHuman("json_profile_file_limit_rejected")
     invalid: list[dict[str, Any]] = []
     for relative, object_sha in files:
-        # The blob ID was checked in the exact tree above; bind the byte read to
-        # that same validated commit as well, never to the current checkout.
-        del object_sha
-        content = _local_git_read(root, ["cat-file", "blob", f"{sha}:{relative}"])
+        # The blob ID was checked in the exact tree above; read that exact object,
+        # never a checkout path or a commit:path revision expression.
+        content = _local_git_read(root, ["cat-file", "blob", object_sha])
         if len(content) > MAX_JSON_FILE_BYTES:
             raise StopNeedsHuman("json_profile_file_rejected")
         try:
