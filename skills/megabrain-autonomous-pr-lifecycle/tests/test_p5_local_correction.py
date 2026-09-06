@@ -5,6 +5,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SKILL = Path(__file__).resolve().parents[1]
 MODULE_PATH = SKILL / "scripts" / "autonomous_pr_lifecycle.py"
@@ -70,6 +71,11 @@ class JsonProfileTests(unittest.TestCase):
         self.assertEqual(result["result"], "fail")
         self.assertFalse(L.profile_invalid_paths_allowed(result, self.root, ["docs/*.md"]))
 
+    def test_profile_fails_closed_when_no_workflow_json_files_exist(self):
+        result = L.repository_validation_json_v1(self.root, ["workflows/*.json"])
+        self.assertEqual(result, {"profile_id": "repository-validation-json-v1", "result": "fail",
+                                  "failure_code": "zero_workflow_json_files", "invalid_files": []})
+
     def test_legacy_state_defaults_are_read_only_values(self):
         legacy = {"head_sha": SHA}
         normalized = L.normalize_p5_state(legacy)
@@ -77,6 +83,29 @@ class JsonProfileTests(unittest.TestCase):
         self.assertIsNone(normalized["pending_correction_sha"])
         self.assertIs(normalized["pending_publish_attempted"], False)
         self.assertNotIn("ci_failure", legacy)
+
+
+class CommitJsonProfileTests(unittest.TestCase):
+    def test_profile_reads_only_fixed_exact_commit_objects(self):
+        calls = []
+        def read(root, arguments):
+            calls.append(arguments)
+            values = {
+                ("cat-file", "-e", f"{SHA}^{{commit}}"): b"",
+                ("ls-tree", "-z", SHA, "--", "workflows"): b"040000 tree " + b"c" * 40 + b"\tworkflows\0",
+                ("ls-tree", "-z", f"{SHA}:workflows"): b"100644 blob " + b"d" * 40 + b"\tP5_PROOF_FIXTURE.json\0",
+                ("cat-file", "blob", f"{SHA}:workflows/P5_PROOF_FIXTURE.json"): b"{",
+            }
+            return values[tuple(arguments)]
+        with mock.patch.object(L, "_local_git_read", side_effect=read):
+            result = L.repository_validation_json_v1_for_commit(Path("/unused"), SHA, ["workflows/*.json"])
+        self.assertEqual(result["result"], "fail")
+        self.assertEqual(result["invalid_files"][0]["path"], "workflows/P5_PROOF_FIXTURE.json")
+        self.assertEqual(calls, [
+            ["cat-file", "-e", f"{SHA}^{{commit}}"], ["ls-tree", "-z", SHA, "--", "workflows"],
+            ["ls-tree", "-z", f"{SHA}:workflows"],
+            ["cat-file", "blob", f"{SHA}:workflows/P5_PROOF_FIXTURE.json"],
+        ])
 
 
 class LocalGateTests(unittest.TestCase):
@@ -134,10 +163,34 @@ class LocalGateTests(unittest.TestCase):
                       ("diff", "--check", SHA, S2): ""}
             return values[args]
         life._git = git
+        invalid = {"profile_id": "repository-validation-json-v1", "result": "fail",
+                   "invalid_files": [{"path": "workflows/P5_PROOF_FIXTURE.json", "reason_code": "json_decode_error", "line": 1, "column": 1}]}
+        life._repository_validation_json_v1_for_commit = lambda sha, allowed: invalid if sha == SHA else {
+            "profile_id": "repository-validation-json-v1", "result": "pass", "invalid_files": []}
         result = life.finalize_correction()
         self.assertEqual(result, {"state": "CORRECTION_FINALIZED", "head_sha": S2})
         self.assertEqual(life.written["pending_correction_sha"], S2)
         self.assertFalse(life.written["pending_publish_attempted"])
+
+    def test_finalize_directly_reproduces_s1_without_authorize(self):
+        """Finalization cannot accept an S2 solely because authorize was skipped."""
+        def git(*args):
+            values = {("rev-parse", "HEAD^"): SHA, ("rev-list", "--count", f"{SHA}..{S2}"): "1",
+                      ("log", "-1", "--format=%B", S2): L.CORRECTION_COMMIT_MESSAGE,
+                      ("diff", "--check", SHA, S2): ""}
+            return values[args]
+
+        valid = {"profile_id": "repository-validation-json-v1", "result": "pass", "invalid_files": []}
+        life = self.lifecycle(head=S2); life._require_clean_checkout = lambda: None; life._git = git
+        life._repository_validation_json_v1_for_commit = lambda sha, allowed: valid
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_not_reproduced"):
+            life.finalize_correction()
+
+        malformed = {"profile_id": "repository-validation-json-v1", "result": "fail",
+                     "invalid_files": [{"path": "workflows/P5_PROOF_FIXTURE.json", "reason_code": "json_decode_error", "line": 1, "column": 1}]}
+        life = self.lifecycle(head=S2); life._require_clean_checkout = lambda: None; life._git = git
+        life._repository_validation_json_v1_for_commit = lambda sha, allowed: malformed if sha == SHA else valid
+        self.assertEqual(life.finalize_correction(), {"state": "CORRECTION_FINALIZED", "head_sha": S2})
 
     def test_finalize_rejects_wrong_message_or_second_commit(self):
         (self.root / "workflows" / "P5_PROOF_FIXTURE.json").write_text('{}', encoding="utf-8")

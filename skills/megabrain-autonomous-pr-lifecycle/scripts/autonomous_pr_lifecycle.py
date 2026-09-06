@@ -52,6 +52,7 @@ MAX_JSON_FILE_BYTES = 262144
 MAX_DIAGNOSTIC_ENTRIES = 8
 MAX_SAFE_RELATIVE_PATH_LENGTH = 128
 CORRECTION_COMMIT_MESSAGE = "fix(b4.2): correct repository validation"
+LOCAL_GIT_BINARY = "/usr/bin/git"
 
 Runner = Callable[[list[str], Path], str]
 Request = Callable[[str, str, Mapping[str, Any] | None], Any]
@@ -94,6 +95,9 @@ def repository_validation_json_v1(root: Path, allowed_paths: list[str]) -> dict[
     except OSError as exc:
         raise StopNeedsHuman("json_profile_directory_rejected") from exc
     files = [item for item in entries if item.name.endswith(".json")]
+    if not files:
+        return {"profile_id": "repository-validation-json-v1", "result": "fail",
+                "failure_code": "zero_workflow_json_files", "invalid_files": []}
     if len(files) > MAX_WORKFLOW_JSON_FILES:
         raise StopNeedsHuman("json_profile_file_limit_rejected")
     for item in files:
@@ -118,6 +122,92 @@ def repository_validation_json_v1(root: Path, allowed_paths: list[str]) -> dict[
     return {"profile_id": "repository-validation-json-v1", "result": "fail" if invalid else "pass", "invalid_files": invalid}
 
 
+def _local_git_read(root: Path, arguments: list[str]) -> bytes:
+    """Read a local Git object with the fixed system Git binary only."""
+    try:
+        binary_stat = os.lstat(LOCAL_GIT_BINARY)
+        if (stat.S_ISLNK(binary_stat.st_mode) or not stat.S_ISREG(binary_stat.st_mode)
+                or binary_stat.st_uid != 0 or stat.S_IMODE(binary_stat.st_mode) & 0o022):
+            raise OSError
+        completed = subprocess.run(
+            [LOCAL_GIT_BINARY, *arguments], cwd=root, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=False, timeout=10,
+            env={"PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1"},
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise StopNeedsHuman("json_profile_git_read_rejected") from exc
+    if completed.returncode != 0:
+        raise StopNeedsHuman("json_profile_git_read_rejected")
+    return completed.stdout
+
+
+def repository_validation_json_v1_for_commit(root: Path, sha: str, allowed_paths: list[str]) -> dict[str, Any]:
+    """Run the fixed profile against direct JSON blobs in one committed tree.
+
+    This intentionally reads Git objects rather than the checkout, so a local
+    worktree cannot stand in for either S1 or S2 during correction finalization.
+    """
+    del allowed_paths
+    if not SHA_RE.fullmatch(sha):
+        raise StopNeedsHuman("json_profile_commit_rejected")
+    _local_git_read(root, ["cat-file", "-e", f"{sha}^{{commit}}"])
+    workflow_entry = _local_git_read(root, ["ls-tree", "-z", sha, "--", "workflows"])
+    if not workflow_entry:
+        return {"profile_id": "repository-validation-json-v1", "result": "fail",
+                "failure_code": "zero_workflow_json_files", "invalid_files": []}
+    try:
+        metadata, path = workflow_entry.rstrip(b"\0").split(b"\t", 1)
+        mode, object_type, object_id = metadata.split(b" ")
+    except ValueError as exc:
+        raise StopNeedsHuman("json_profile_commit_rejected") from exc
+    if path != b"workflows" or mode != b"040000" or object_type != b"tree" or not SHA_RE.fullmatch(object_id.decode("ascii")):
+        raise StopNeedsHuman("json_profile_commit_rejected")
+    listing = _local_git_read(root, ["ls-tree", "-z", f"{sha}:workflows"])
+    records = listing.split(b"\0")
+    if records[-1] != b"":
+        raise StopNeedsHuman("json_profile_commit_rejected")
+    files: list[tuple[str, str]] = []
+    for record in records[:-1]:
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, object_type, object_id = metadata.split(b" ")
+            name = raw_path.decode("utf-8")
+            object_sha = object_id.decode("ascii")
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise StopNeedsHuman("json_profile_commit_rejected") from exc
+        relative = f"workflows/{name}"
+        if not name.endswith(".json"):
+            continue
+        if (not _safe_relative(relative) or "/" in name or len(relative) > MAX_SAFE_RELATIVE_PATH_LENGTH
+                or mode not in {b"100644", b"100755"} or object_type != b"blob" or not SHA_RE.fullmatch(object_sha)):
+            raise StopNeedsHuman("json_profile_commit_rejected")
+        files.append((relative, object_sha))
+    if not files:
+        return {"profile_id": "repository-validation-json-v1", "result": "fail",
+                "failure_code": "zero_workflow_json_files", "invalid_files": []}
+    if len(files) > MAX_WORKFLOW_JSON_FILES:
+        raise StopNeedsHuman("json_profile_file_limit_rejected")
+    invalid: list[dict[str, Any]] = []
+    for relative, object_sha in files:
+        # The blob ID was checked in the exact tree above; bind the byte read to
+        # that same validated commit as well, never to the current checkout.
+        del object_sha
+        content = _local_git_read(root, ["cat-file", "blob", f"{sha}:{relative}"])
+        if len(content) > MAX_JSON_FILE_BYTES:
+            raise StopNeedsHuman("json_profile_file_rejected")
+        try:
+            json.loads(content.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            if len(invalid) >= MAX_DIAGNOSTIC_ENTRIES:
+                raise StopNeedsHuman("json_profile_diagnostic_limit_rejected") from exc
+            invalid.append({"path": relative, "reason_code": "json_decode_error",
+                            "line": min(max(exc.lineno, 1), MAX_JSON_FILE_BYTES),
+                            "column": min(max(exc.colno, 1), MAX_JSON_FILE_BYTES)})
+        except UnicodeDecodeError as exc:
+            raise StopNeedsHuman("json_profile_file_rejected") from exc
+    return {"profile_id": "repository-validation-json-v1", "result": "fail" if invalid else "pass", "invalid_files": invalid}
+
+
 def profile_invalid_paths_allowed(profile: Mapping[str, Any], root: Path, allowed_paths: list[str]) -> bool:
     entries = profile.get("invalid_files")
     if not isinstance(entries, list) or len(entries) > MAX_DIAGNOSTIC_ENTRIES:
@@ -136,6 +226,22 @@ def profile_invalid_paths_allowed(profile: Mapping[str, Any], root: Path, allowe
         except OSError:
             return False
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or not any(fnmatch.fnmatchcase(path, allowed) for allowed in allowed_paths):
+            return False
+    return True
+
+
+def profile_invalid_paths_allowed_for_commit(profile: Mapping[str, Any], allowed_paths: list[str]) -> bool:
+    """Check bounded committed-tree diagnostics without consulting the checkout."""
+    entries = profile.get("invalid_files")
+    if not isinstance(entries, list) or not entries or len(entries) > MAX_DIAGNOSTIC_ENTRIES:
+        return False
+    for entry in entries:
+        if (not isinstance(entry, Mapping) or set(entry) != {"path", "reason_code", "line", "column"}
+                or not isinstance(entry.get("path"), str) or not _safe_relative(entry["path"])
+                or len(entry["path"]) > MAX_SAFE_RELATIVE_PATH_LENGTH
+                or entry.get("reason_code") != "json_decode_error" or type(entry.get("line")) is not int
+                or type(entry.get("column")) is not int or entry["line"] < 1 or entry["column"] < 1
+                or not any(fnmatch.fnmatchcase(entry["path"], allowed) for allowed in allowed_paths)):
             return False
     return True
 
@@ -635,9 +741,14 @@ class Lifecycle:
                 or not self._self_correctable_ci_failure(state.get("ci_failure"), contract, head, state.get("pr_number"))):
             raise StopNeedsHuman("correction_not_authorized")
         profile = repository_validation_json_v1(self.root, contract["allowed_paths"])
-        if profile.get("result") != "fail" or not profile_invalid_paths_allowed(profile, self.root, contract["allowed_paths"]):
+        if (profile.get("result") != "fail" or profile.get("failure_code") is not None
+                or not profile_invalid_paths_allowed(profile, self.root, contract["allowed_paths"])):
             raise StopNeedsHuman("correction_not_reproduced")
         return {"profile_id": profile["profile_id"], "result": profile["result"], "invalid_files": profile["invalid_files"]}
+
+    def _repository_validation_json_v1_for_commit(self, sha: str, allowed_paths: list[str]) -> dict[str, Any]:
+        """Capability-owned committed-tree validation seam for finalization."""
+        return repository_validation_json_v1_for_commit(self.root, sha, allowed_paths)
 
     def finalize_correction(self) -> dict[str, str]:
         """Locally bind one validated descendant correction SHA; no network calls."""
@@ -657,8 +768,12 @@ class Lifecycle:
             raise StopNeedsHuman("correction_commit_message_rejected")
         self._validate_committed_paths(contract, base, head)
         self._git("diff", "--check", base, head)
-        profile = repository_validation_json_v1(self.root, contract["allowed_paths"])
-        if profile.get("result") != "pass":
+        s1_profile = self._repository_validation_json_v1_for_commit(base, contract["allowed_paths"])
+        if (s1_profile.get("result") != "fail" or s1_profile.get("failure_code") is not None
+                or not profile_invalid_paths_allowed_for_commit(s1_profile, contract["allowed_paths"])):
+            raise StopNeedsHuman("correction_not_reproduced")
+        s2_profile = self._repository_validation_json_v1_for_commit(head, contract["allowed_paths"])
+        if s2_profile.get("result") != "pass":
             raise StopNeedsHuman("correction_validation_failed")
         _, current_state = self._guard()
         if current_state != expected_state:
@@ -681,12 +796,14 @@ class Lifecycle:
         contract, state = self._guard()
         head = self._validate_checkout(contract)
         previous_head = state.get("head_sha")
-        self._validate_committed_paths(contract, previous_head, head)
         corrections = self._correction_count(contract, state)
         published_once = state.get("published_once")
         if type(published_once) is not bool:
             raise StopNeedsHuman("publication_state_rejected")
         pending = state.get("pending_correction_sha")
+        if published_once and head != previous_head and pending is None:
+            raise StopNeedsHuman("correction_finalization_required")
+        self._validate_committed_paths(contract, previous_head, head)
         correction_mode = pending is not None
         if correction_mode:
             if (not isinstance(pending, str) or not SHA_RE.fullmatch(pending) or pending != head
@@ -699,11 +816,10 @@ class Lifecycle:
         self._validate_remote_before_publish(contract, state, published_once)
 
         if head != previous_head and published_once:
-            if corrections >= contract["max_corrections"]:
-                raise StopNeedsHuman("correction_budget_exhausted")
+            # Any changed post-initial publication was already required to be
+            # finalised above, so the one-shot latch and budget apply only here.
             state["corrections"] = corrections + 1
-            if correction_mode:
-                state["pending_publish_attempted"] = True
+            state["pending_publish_attempted"] = True
             self._write_state(state)
         elif correction_mode:
             raise StopNeedsHuman("correction_publish_rejected")

@@ -190,6 +190,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
         self.assertFalse(any(any(x in part for x in ("--force", "--delete", "tag")) for c in self.h.commands for part in c))
 
+    def test_changed_post_initial_head_requires_finalized_correction_before_push_or_budget_use(self):
+        self.preflight(); life = self.h.lifecycle()
+        self.assertEqual(life.publish_head()["state"], "PUBLISHED")  # Initial P2 behavior remains intact.
+        self.h.head = "b" * 40; self.h.committed = [("M", "docs/EVIDENCE.md")]
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_finalization_required"):
+            life.publish_head()
+        current = json.loads((self.h.state / "life-1/state.json").read_text(encoding="utf-8"))
+        self.assertEqual(current["corrections"], 0)
+        self.assertIsNone(current["pending_correction_sha"])
+        self.assertEqual(len([command for command in self.h.commands if command[1:2] == ["push"]]), 1)
+
     def test_default_installation_stops_all_authenticated_lifecycle_operations(self):
         self.live.stop()
         self.preflight()
@@ -406,6 +417,12 @@ class LifecycleTests(unittest.TestCase):
         self.h.remote_exists = False
         self.h.lifecycle().publish_head()
         self.h.head = "b" * 40
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update({"pr_number": 7, "pending_correction_sha": self.h.head, "pending_publish_attempted": False,
+                      "ci_failure": {"head_sha": SHA, "pr_number": 7, "workflow_run_id": 5,
+                                     "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}}})
+        state_path.write_text(json.dumps(state), encoding="utf-8")
         self.h.remote_sha = "c" * 40
         with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
             self.h.lifecycle().publish_head()
@@ -536,7 +553,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(state["published_once"])
 
         h.head = "c" * 40
-        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_finalization_required"):
             h.lifecycle().publish_head()
 
         pushes = [command for command in h.commands if command[1:2] == ["push"]]
@@ -634,6 +651,11 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(state["published_once"])
 
         h.head = "c" * 40
+        state.update({"pr_number": 7, "pending_correction_sha": h.head, "pending_publish_attempted": False,
+                      "ci_failure": {"head_sha": "b" * 40, "pr_number": 7, "workflow_run_id": 5,
+                                     "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}}})
+        (h.state / "life-1/state.json").write_text(json.dumps(state), encoding="utf-8")
+        h.pr = h.pr_body("b" * 40)
         self.assertEqual(h.lifecycle().publish_head()["state"], "PUBLISHED")
 
         state = json.loads((h.state / "life-1/state.json").read_text(encoding="utf-8"))
@@ -647,13 +669,23 @@ class LifecycleTests(unittest.TestCase):
         h.head = "b" * 40
         h.lifecycle().publish_head()
 
-        # First correction: allowed.
+        # First correction: a finalized pending state is required and allowed.
         h.head = "c" * 40
+        state_path = h.state / "life-1/state.json"; state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update({"pr_number": 7, "pending_correction_sha": h.head, "pending_publish_attempted": False,
+                      "ci_failure": {"head_sha": "b" * 40, "pr_number": 7, "workflow_run_id": 5,
+                                     "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}}})
+        state_path.write_text(json.dumps(state), encoding="utf-8"); h.pr = h.pr_body("b" * 40)
         h.lifecycle().publish_head()
 
-        # Second correction: exceeds max_corrections=1.
+        # Second finalized correction exceeds max_corrections=1.
         h.head = "d" * 40
-        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_budget_exhausted"):
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update({"pending_correction_sha": h.head, "pending_publish_attempted": False,
+                      "ci_failure": {"head_sha": "c" * 40, "pr_number": 7, "workflow_run_id": 6,
+                                     "jobs": {"Repository validation": "failure", "Enricher tests": "success", "Web tests": "success"}}})
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_publish_rejected"):
             h.lifecycle().publish_head()
 
         pushes = [command for command in h.commands if command[1:2] == ["push"]]

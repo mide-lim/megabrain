@@ -314,6 +314,8 @@ def create_isolated_staging_repository(source_root: Path, staging_root: Path, br
 def validate_source_for_staging(lifecycle: Any, contract: Mapping[str, Any], state: Mapping[str, Any]) -> str:
     """Complete every local contract, checkout, and committed-range check pre-token."""
     head = lifecycle._validate_checkout(contract)
+    if state.get("published_once") is True and head != state.get("head_sha") and state.get("pending_correction_sha") is None:
+        raise LIFECYCLE.StopNeedsHuman("correction_finalization_required")
     lifecycle._validate_committed_paths(contract, state.get("head_sha"), head)
     lifecycle._correction_count(contract, state)
     if state.get("pending_correction_sha") is not None:

@@ -115,6 +115,15 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             mock.patch.object(PUBLISH, "create_isolated_staging_repository", side_effect=stage),
         )
 
+    def test_source_staging_blocks_unfinalized_changed_head_before_any_token_path(self):
+        lifecycle = mock.Mock()
+        lifecycle._validate_checkout.return_value = "b" * 40
+        state = {"published_once": True, "head_sha": SHA, "pending_correction_sha": None, "corrections": 0}
+        with self.assertRaisesRegex(PUBLISH.LIFECYCLE.StopNeedsHuman, "correction_finalization_required"):
+            PUBLISH.validate_source_for_staging(lifecycle, {"branch": BRANCH}, state)
+        lifecycle._validate_committed_paths.assert_not_called()
+        lifecycle._correction_count.assert_not_called()
+
     def test_exact_contents_write_single_scope_exact_branch_and_sanitized_result(self):
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
