@@ -31,6 +31,8 @@ EXPECTED_INSTALLATION_PERMISSIONS = {
     "workflows": "write",
 }
 PUBLISH_TOKEN_REQUEST_PERMISSIONS = {"contents": "write"}
+GIT_BINARY = "/usr/bin/git"
+OPENSSL_BINARY = "/usr/bin/openssl"
 
 
 def _load_lifecycle() -> Any:
@@ -58,6 +60,23 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
+def validate_privileged_executable(path: str) -> None:
+    """Accept only a fixed root-owned, non-writable executable path."""
+    try:
+        executable_stat = os.lstat(path)
+    except OSError as exc:
+        raise SafeFailure("privileged_executable_invalid") from exc
+    executable_mode = executable_stat.st_mode
+    if (
+        stat.S_ISLNK(executable_mode)
+        or not stat.S_ISREG(executable_mode)
+        or executable_stat.st_uid != 0
+        or executable_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or not executable_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    ):
+        raise SafeFailure("privileged_executable_invalid")
+
+
 def _required_environment(environ: Mapping[str, str]) -> tuple[str, str, str]:
     names = (
         "MEGABRAIN_GITHUB_APP_ID",
@@ -71,8 +90,9 @@ def _required_environment(environ: Mapping[str, str]) -> tuple[str, str, str]:
 
 
 def configured_origin() -> str:
+    validate_privileged_executable(GIT_BINARY)
     completed = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
+        [GIT_BINARY, "remote", "get-url", "origin"],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -87,8 +107,9 @@ def configured_origin() -> str:
 def validate_push_destination() -> None:
     """Require one exact effective HTTPS push target before any mutation."""
     try:
+        validate_privileged_executable(GIT_BINARY)
         configured = subprocess.run(
-            ["git", "config", "--local", "--get-all", "remote.origin.pushurl"],
+            [GIT_BINARY, "config", "--local", "--get-all", "remote.origin.pushurl"],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -96,7 +117,7 @@ def validate_push_destination() -> None:
             timeout=10,
         )
         effective = subprocess.run(
-            ["git", "remote", "get-url", "--all", "--push", "origin"],
+            [GIT_BINARY, "remote", "get-url", "--all", "--push", "origin"],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -123,12 +144,13 @@ def validate_key_path(key_path: str) -> None:
 
 
 def make_jwt(app_id: str, key_path: str, now: int | None = None) -> str:
+    validate_privileged_executable(OPENSSL_BINARY)
     issued_at = int(time.time() if now is None else now)
     header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
     payload = _b64url(json.dumps({"iat": issued_at - 30, "exp": issued_at + 540, "iss": app_id}, separators=(",", ":")).encode())
     try:
         signed = subprocess.run(
-            ["openssl", "dgst", "-sha256", "-sign", key_path],
+            [OPENSSL_BINARY, "dgst", "-sha256", "-sign", key_path],
             input=f"{header}.{payload}".encode("ascii"),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -221,7 +243,7 @@ def _allowed_git_command(command: list[str], branch: str) -> bool:
 
 def _isolated_git_environment(home: str, token: str | None = None, askpass_path: str | None = None) -> dict[str, str]:
     environment = {
-        "PATH": os.environ.get("PATH", ""), "HOME": home,
+        "HOME": home,
         "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
@@ -233,8 +255,9 @@ def _isolated_git_environment(home: str, token: str | None = None, askpass_path:
 
 def _run_isolated_git(command: list[str], cwd: Path, home: str, *, token: str | None = None,
                       askpass_path: str | None = None) -> str:
+    validate_privileged_executable(GIT_BINARY)
     isolated_command = [
-        "git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true",
+        GIT_BINARY, "-c", "credential.helper=", "-c", "credential.useHttpPath=true",
         "-c", "credential.interactive=false", "-c", "core.hooksPath=/dev/null",
         *command[1:],
     ]
@@ -330,6 +353,8 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
     try:
         app_id, installation_id, key_path = _required_environment(environment)
+        validate_privileged_executable(GIT_BINARY)
+        validate_privileged_executable(OPENSSL_BINARY)
         if configured_origin() != ORIGIN:
             raise SafeFailure("origin_rejected")
         validate_push_destination()

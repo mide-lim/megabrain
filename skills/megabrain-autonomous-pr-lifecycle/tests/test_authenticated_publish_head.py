@@ -4,6 +4,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 import importlib.util
 import json
+import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -207,35 +209,95 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
 
     def test_exact_expected_push_target_is_accepted(self):
         def git(command, **_):
-            if command == ["git", "config", "--local", "--get-all", "remote.origin.pushurl"]:
+            if command == [PUBLISH.GIT_BINARY, "config", "--local", "--get-all", "remote.origin.pushurl"]:
                 return PUBLISH.subprocess.CompletedProcess(command, 1, "", "")
-            if command == ["git", "remote", "get-url", "--all", "--push", "origin"]:
+            if command == [PUBLISH.GIT_BINARY, "remote", "get-url", "--all", "--push", "origin"]:
                 return PUBLISH.subprocess.CompletedProcess(command, 0, f"{PUBLISH.ORIGIN}\n", "")
             self.fail(f"unexpected command: {command}")
         with mock.patch.object(PUBLISH.subprocess, "run", side_effect=git):
             PUBLISH.validate_push_destination()
 
     def test_unexpected_configured_pushurl_is_rejected(self):
-        command = ["git", "config", "--local", "--get-all", "remote.origin.pushurl"]
+        command = [PUBLISH.GIT_BINARY, "config", "--local", "--get-all", "remote.origin.pushurl"]
         with mock.patch.object(PUBLISH.subprocess, "run", return_value=PUBLISH.subprocess.CompletedProcess(command, 0, "https://example.invalid/repo.git\n", "")):
             with self.assertRaisesRegex(PUBLISH.SafeFailure, "push_destination_rejected"):
                 PUBLISH.validate_push_destination()
 
-    def test_controlled_runner_disables_repository_credential_helpers_and_hooks(self):
+    def test_controlled_runner_uses_fixed_git_without_path_and_disables_helpers_and_hooks(self):
         command = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
         completed = PUBLISH.subprocess.CompletedProcess(command, 0, "", "")
         staging = Path("/fixture/staging")
         runner = PUBLISH.controlled_runner("/fixture/temp", "/fixture/askpass", "TOKEN_FIXTURE", BRANCH, staging)
-        with mock.patch.object(PUBLISH.subprocess, "run", return_value=completed) as execute:
+        with mock.patch.dict(PUBLISH.os.environ, {"PATH": "/fixture/malicious-bin"}, clear=True), mock.patch.object(
+            PUBLISH.subprocess, "run", return_value=completed
+        ) as execute:
             self.assertEqual(runner(command, staging), "")
         invoked = execute.call_args.args[0]
         environment = execute.call_args.kwargs["env"]
         self.assertEqual(
             invoked,
-            ["git", "-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", "credential.interactive=false", "-c", "core.hooksPath=/dev/null", *command[1:]],
+            [PUBLISH.GIT_BINARY, "-c", "credential.helper=", "-c", "credential.useHttpPath=true", "-c", "credential.interactive=false", "-c", "core.hooksPath=/dev/null", *command[1:]],
         )
+        self.assertNotIn("PATH", environment)
         self.assertEqual(environment["GIT_ASKPASS"], "/fixture/askpass")
         self.assertEqual(environment["GIT_CONFIG_GLOBAL"], PUBLISH.os.devnull)
+
+    def test_jwt_signing_uses_fixed_openssl_binary(self):
+        completed = PUBLISH.subprocess.CompletedProcess([PUBLISH.OPENSSL_BINARY], 0, b"signature", b"")
+        with mock.patch.object(PUBLISH, "validate_privileged_executable") as validate, mock.patch.object(
+            PUBLISH.subprocess, "run", return_value=completed
+        ) as execute:
+            PUBLISH.make_jwt("123", "/fixture/key", now=1_700_000_000)
+        validate.assert_called_once_with(PUBLISH.OPENSSL_BINARY)
+        self.assertEqual(execute.call_args.args[0], [PUBLISH.OPENSSL_BINARY, "dgst", "-sha256", "-sign", "/fixture/key"])
+
+    def test_invalid_privileged_executable_fails_before_signing_or_token_mint(self):
+        invalid_stats = (
+            os.stat_result((stat.S_IFLNK | 0o777, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+            os.stat_result((stat.S_IFREG | 0o755, 0, 0, 0, 1000, 0, 0, 0, 0, 0)),
+            os.stat_result((stat.S_IFREG | 0o775, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+            os.stat_result((stat.S_IFREG | 0o644, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+        )
+        for invalid_stat in invalid_stats:
+            with self.subTest(mode=invalid_stat.st_mode, uid=invalid_stat.st_uid), mock.patch.object(
+                PUBLISH.os, "lstat", return_value=invalid_stat
+            ), mock.patch.object(PUBLISH, "make_jwt") as signer, mock.patch.object(PUBLISH, "request_json") as request:
+                result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            signer.assert_not_called()
+            request.assert_not_called()
+            self.assertEqual(result["failure_code"], "privileged_executable_invalid")
+
+        with mock.patch.object(PUBLISH.os, "lstat", side_effect=OSError("missing")), mock.patch.object(
+            PUBLISH, "make_jwt"
+        ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+        signer.assert_not_called()
+        request.assert_not_called()
+        self.assertEqual(result["failure_code"], "privileged_executable_invalid")
+
+    def test_invalid_openssl_fails_before_signing(self):
+        invalid_openssl = os.stat_result((stat.S_IFREG | 0o775, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        with mock.patch.object(PUBLISH.os, "lstat", return_value=invalid_openssl), mock.patch.object(
+            PUBLISH.subprocess, "run"
+        ) as execute:
+            with self.assertRaisesRegex(PUBLISH.SafeFailure, "privileged_executable_invalid"):
+                PUBLISH.make_jwt("123", "/fixture/key")
+        execute.assert_not_called()
+
+    def test_invalid_openssl_fails_before_token_mint(self):
+        valid_git = os.stat_result((stat.S_IFREG | 0o755, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        invalid_openssl = os.stat_result((stat.S_IFREG | 0o775, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
+        def lstat(path):
+            return valid_git if path == PUBLISH.GIT_BINARY else invalid_openssl
+
+        with mock.patch.object(PUBLISH.os, "lstat", side_effect=lstat), mock.patch.object(
+            PUBLISH, "make_jwt"
+        ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+        signer.assert_not_called()
+        request.assert_not_called()
+        self.assertEqual(result["failure_code"], "privileged_executable_invalid")
 
     def test_source_worktree_git_runner_never_receives_installation_token(self):
         command = ["git", "rev-parse", "HEAD"]
@@ -244,6 +306,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         with mock.patch.object(PUBLISH.subprocess, "run", return_value=completed) as execute:
             self.assertEqual(runner(command, Path("/fixture/source")), SHA)
         environment = execute.call_args.kwargs["env"]
+        self.assertEqual(execute.call_args.args[0][0], PUBLISH.GIT_BINARY)
         self.assertNotIn("MEGABRAIN_GITHUB_APP_TOKEN", environment)
         self.assertNotIn("GIT_ASKPASS", environment)
 
@@ -258,7 +321,10 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         execute.assert_not_called()
 
     def test_staging_rejects_a_commit_other_than_the_approved_head(self):
+        commands = []
+
         def git(command, **_):
+            commands.append(command)
             stdout = "b" * 40 if command[-2:] == ["rev-parse", "HEAD"] else ""
             return PUBLISH.subprocess.CompletedProcess(command, 0, stdout, "")
         with tempfile.TemporaryDirectory() as temporary, mock.patch.object(PUBLISH.subprocess, "run", side_effect=git):
@@ -266,6 +332,8 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 PUBLISH.create_isolated_staging_repository(
                     Path("/fixture/source"), Path(temporary) / "staging", BRANCH, SHA, temporary,
                 )
+        self.assertTrue(commands)
+        self.assertTrue(all(command[0] == PUBLISH.GIT_BINARY for command in commands))
 
     def test_only_exact_non_force_head_refspec_is_permitted(self):
         allowed = ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"]
