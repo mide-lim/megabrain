@@ -66,6 +66,10 @@ class Harness:
         self.same_head_responses: list[list[dict]] | None = None
         self.post_response: dict | None = None
         self.runs_sha = SHA
+        self.runs = None
+        self.run_status = "completed"
+        self.run_conclusion = "success"
+        self.jobs = None
 
     def pr_body(self, sha, *, base="dev"):
         return {"number": 7, "state": "open", "body": "B4.2-Contract-Fingerprint: " + L.fingerprint(self.data),
@@ -104,9 +108,11 @@ class Harness:
         if path.endswith("/pulls/7"):
             return (200, self.pr)
         if path.endswith("actions/runs?event=pull_request&head_sha=" + SHA):
-            return (200, {"workflow_runs": [{"id": 5, "head_sha": self.runs_sha, "pull_requests": [{"number": 7}]}]})
+            runs = self.runs if self.runs is not None else [{"id": 5, "head_sha": self.runs_sha, "status": self.run_status, "conclusion": self.run_conclusion, "pull_requests": [{"number": 7}]}]
+            return (200, {"workflow_runs": copy.deepcopy(runs)})
         if path.endswith("/actions/runs/5/jobs"):
-            return (200, {"jobs": [{"name": name, "conclusion": "success"} for name in self.data["expected_ci_jobs"]]})
+            jobs = self.jobs if self.jobs is not None else [{"name": name, "status": "completed", "conclusion": "success"} for name in self.data["expected_ci_jobs"]]
+            return (200, {"jobs": copy.deepcopy(jobs)})
         if method == "POST" and path.endswith("/pulls"):
             return (201, copy.deepcopy(self.post_response if self.post_response is not None else self.pr))
         raise AssertionError((method, path, payload))
@@ -709,6 +715,95 @@ class LifecycleTests(unittest.TestCase):
             return original_request(method, path, payload)
         self.h.request = extra_check
         with self.assertRaisesRegex(L.StopNeedsHuman, "ci_not_green_for_head"): self.h.lifecycle().observe_ci()
+
+    def test_p4_ci_preconditions_and_exact_pr_are_fail_closed(self):
+        for change, code in (({"pr_number": None}, "pr_or_head_missing"), ({"pr_number": "7"}, "pr_or_head_missing"), ({"head_sha": "b" * 40}, "pr_or_head_missing")):
+            with self.subTest(change=change):
+                self._published_state_with_stored_pr()
+                state_path = self.h.state / "life-1/state.json"
+                value = json.loads(state_path.read_text(encoding="utf-8")); value.update(change); state_path.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaisesRegex(L.StopNeedsHuman, code): self.h.lifecycle().observe_ci()
+                self.h = Harness(self.root / hashlib.sha1(repr(change).encode()).hexdigest(), self.state / hashlib.sha1(repr(change).encode()).hexdigest(), contract())
+        self._published_state_with_stored_pr()
+        for altered in (self.h.pr_body(SHA, base="main"), self.h.pr_body("b" * 40), self.h.pr_body(SHA) | {"state": "closed"}, self.h.pr_body(SHA) | {"merged": True}):
+            self.h.pr = altered
+            with self.subTest(pr=altered):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "pr_drift_rejected"):
+                    self.h.lifecycle().observe_ci()
+            self.h.pr = self.h.pr_body(SHA)
+
+    def test_p4_runs_and_jobs_require_exact_completed_success(self):
+        self._published_state_with_stored_pr()
+        run = {"id": 5, "head_sha": SHA, "status": "completed", "conclusion": "success", "pull_requests": [{"number": 7}]}
+        for runs, code in (([], "workflow_run_ambiguous"), ([run, run | {"id": 6}], "workflow_run_ambiguous"), ([run | {"head_sha": "b" * 40}], "workflow_run_ambiguous"), ([run | {"pull_requests": [{"number": 8}]}], "workflow_run_ambiguous"), ([run | {"status": "in_progress"}], "ci_not_green_for_head"), ([run | {"conclusion": "failure"}], "ci_not_green_for_head")):
+            with self.subTest(runs=runs):
+                self.h.runs = runs
+                with self.assertRaisesRegex(L.StopNeedsHuman, code): self.h.lifecycle().observe_ci()
+        self.h.runs = [run]
+        expected = self.h.data["expected_ci_jobs"]
+        green = [{"name": name, "status": "completed", "conclusion": "success"} for name in expected]
+        invalid_jobs = [green[:-1], green + [{"name": "extra", "status": "completed", "conclusion": "success"}], green + [green[0]],
+                        [{"name": name, "status": "queued", "conclusion": None} for name in expected],
+                        [{"name": name, "status": "in_progress", "conclusion": None} for name in expected]]
+        for conclusion in ("failure", "cancelled", "skipped", "timed_out"):
+            invalid_jobs.append([{"name": name, "status": "completed", "conclusion": conclusion} for name in expected])
+        for jobs in invalid_jobs:
+            with self.subTest(jobs=jobs):
+                self.h.jobs = jobs
+                with self.assertRaisesRegex(L.StopNeedsHuman, "ci_not_green_for_head"): self.h.lifecycle().observe_ci()
+        self.h.jobs = green
+        self.assertEqual(self.h.lifecycle().observe_ci()["state"], "CI_GREEN")
+        self.assertFalse(any("logs" in path for _, path, _ in self.h.requests))
+
+    def test_p4_deferred_cas_rejects_state_contract_and_remote_drift(self):
+        self._published_state_with_stored_pr()
+        life = self.h.lifecycle(); _, expected = life._guard(); deferred = dict(expected, ci_sha=SHA)
+        state_path = self.h.state / "life-1/state.json"
+        changed = dict(expected, ci_sha="b" * 40); state_path.write_text(json.dumps(changed), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "state_changed_before_commit"):
+            life._commit_deferred_ci_state(expected, expected["fingerprint"], SHA, deferred)
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8")), changed)
+        state_path.write_text(json.dumps(expected), encoding="utf-8")
+        altered = contract(pr_title="changed"); (self.contract_root / "life-1.json").write_text(json.dumps(altered), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "contract_fingerprint_divergent"):
+            life._commit_deferred_ci_state(expected, expected["fingerprint"], SHA, deferred)
+        (self.contract_root / "life-1.json").write_text(json.dumps(self.h.data), encoding="utf-8")
+        self.h.remote_sha = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "remote_head_drift"):
+            life._commit_deferred_ci_state(expected, expected["fingerprint"], SHA, deferred)
+
+    def test_p2_and_p4_share_one_reservation(self):
+        self._published_state_with_stored_pr()
+        entered, release = threading.Event(), threading.Event()
+        original = self.h.request
+        def blocking(method, path, payload=None):
+            if "actions/runs?" in path:
+                entered.set(); self.assertTrue(release.wait(timeout=2))
+            return original(method, path, payload)
+        result = []
+        thread = threading.Thread(target=lambda: result.append(L.Lifecycle(self.h.root, "life-1", state_root=self.h.state, runner=self.h.runner, request=blocking).observe_ci()))
+        thread.start(); self.assertTrue(entered.wait(timeout=2))
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            self.h.lifecycle().publish_head()
+        release.set(); thread.join(timeout=2)
+        self.assertFalse(thread.is_alive()); self.assertEqual(result[0]["state"], "CI_GREEN")
+
+    def test_p2_reservation_blocks_p4_observation(self):
+        h = Harness(self.root / "p2-blocks-p4", self.state / "p2-blocks-p4", contract())
+        h.lifecycle().preflight()
+        entered, release = threading.Event(), threading.Event()
+        original_runner = h.runner
+        def blocking_runner(command, cwd):
+            if command[1:2] == ["push"]:
+                entered.set(); self.assertTrue(release.wait(timeout=2))
+            return original_runner(command, cwd)
+        result = []
+        thread = threading.Thread(target=lambda: result.append(L.Lifecycle(h.root, "life-1", state_root=h.state, runner=blocking_runner, request=h.request).publish_head()))
+        thread.start(); self.assertTrue(entered.wait(timeout=2))
+        with self.assertRaisesRegex(L.StopNeedsHuman, "publish_reservation_locked"):
+            h.lifecycle().observe_ci()
+        release.set(); thread.join(timeout=2)
+        self.assertFalse(thread.is_alive()); self.assertEqual(result[0]["state"], "PUBLISHED")
 
     def test_refresh_requires_opt_in_and_conflict_stops(self):
         self.preflight()
