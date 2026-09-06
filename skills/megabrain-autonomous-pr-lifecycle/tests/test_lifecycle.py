@@ -136,11 +136,15 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
         self.assertFalse(any(any(x in part for x in ("--force", "--delete", "tag")) for c in self.h.commands for part in c))
 
-    def test_default_installation_stops_all_authenticated_operations(self):
+    def test_default_installation_stops_all_authenticated_lifecycle_operations(self):
         self.live.stop()
         self.preflight()
-        with self.assertRaisesRegex(L.StopNeedsHuman, "authenticated_operations_not_authorized"):
-            self.h.lifecycle().publish_head()
+        life = self.h.lifecycle()
+        for operation in (life.publish_head, life.ensure_pr, life.observe_ci, life.refresh_from_dev, life.report_ready):
+            with self.assertRaisesRegex(L.StopNeedsHuman, "authenticated_operations_not_authorized"):
+                operation()
+        self.assertFalse(any(command[1:2] == ["push"] for command in self.h.commands))
+        self.assertFalse(self.h.requests)
         self.live.start()
 
     def test_changed_contract_fingerprint_stops_every_operation(self):

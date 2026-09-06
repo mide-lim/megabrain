@@ -118,7 +118,7 @@ A capability deve recusar valores vazios, curingas em branch/base/repository, fi
 Nenhuma destas fases está autorizada por este documento rascunho. Cada fase exige decisão humana explícita e somente avança se a anterior produzir evidência sanitizada e cleanup íntegro.
 
 1. `P0` — testes herméticos, sem key/JWT/token/rede: validar recusa e cleanup injetado.
-2. `P1` — leitura autenticada: mint observer downscoped, verificar mapa/scope e ler PR/CI de alvo inócuo; revogar. Sem escrita.
+2. `P1` — leitura autenticada: após autorização humana nova e explícita, executar somente o adapter fechado de leitura para `mide-lim/megabrain` em `refs/heads/dev`; mint observer downscoped `contents: read`, verificar mapa/scope, validar SHA/ref exatos e revogar. Sem escrita. A implementação, instalação e testes herméticos não autorizam nem executam esta operação.
 3. `P2` — publicação controlada: um commit Green previamente revisado, push único para branch `agent/*` exata e read-back SHA. Sem PR mutation.
 4. `P3` — criar/reutilizar um PR controlado `agent/* -> dev`, read-back de head/base/estado; parar antes de merge.
 5. `P4` — observar uma execução CI desse PR e correlacionar SHA/jobs; somente leitura de logs falhos se houver; parar em READY/terminal.
