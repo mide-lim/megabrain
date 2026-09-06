@@ -63,12 +63,18 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
 - fonte canônica versionada em `skills/megabrain-autonomous-pr-lifecycle/`; a
   instalação em `~/.hermes/skills/megabrain/megabrain-autonomous-pr-lifecycle`
   é derivada, reconstruída atomicamente do conjunto exato de artefatos;
-- os 13 testes herméticos passaram sem JWT, installation token, rede, push ou
-  mutação de PR. Eles exercitam fingerprint imutável, denylist de control plane,
-  paths/symlinks, branch/ref segura, PR/CI drift, permissões e cleanup;
-- a primeira operação autenticada (inclusive leitura), publish, PR, observação
-  CI, refresh e correção continuam bloqueados por gate humano separado. Merge
-  em `dev` é exclusivamente humano;
+- os 47 testes herméticos atuais passaram sem JWT, installation token, rede, push
+  ou mutação de PR. Eles exercitam fingerprint imutável, denylist de control
+  plane, paths/symlinks, branch/ref segura, PR/CI drift, permissões e cleanup;
+- B4.2 P1 contém somente o adapter separado `validate-read-dev-ref`, fixo em
+  `mide-lim/megabrain` e `refs/heads/dev`: ele solicita somente token efêmero
+  `contents: read`, aceita no máximo `metadata: read` provider-returned, valida
+  baseline/permissões/escopo/SHA/ref, revoga e limpa fail-closed, e emite output
+  sanitizado. Não há operação P1 autenticada executada ou autorizada nesta
+  implementação; a primeira exige gate humano novo e explícito;
+- a primeira operação autenticada do lifecycle, publish, PR, observação CI,
+  refresh e correção continuam bloqueados por gate humano separado. Merge em
+  `dev` é exclusivamente humano;
 - `agent/*` é defesa local em profundidade, não ACL provider-enforced: um token
   `contents: write` ainda pode ter capacidade provider-side maior em refs não
   protegidas do que a interface fechada expõe;
