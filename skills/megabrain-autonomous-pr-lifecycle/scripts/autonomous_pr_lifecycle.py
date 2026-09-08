@@ -564,14 +564,18 @@ class Lifecycle:
                 raise StopNeedsHuman("run_authorization_missing")
             authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
         else:
-            required = ("run_authorization_id", "run_authorization_fingerprint", "run_status")
+            required = ("run_authorization_id", "run_authorization_binding_id", "run_authorization_fingerprint", "run_status")
             if any(field not in state for field in required):
                 raise StopNeedsHuman("run_authorization_state_missing")
             authorization_id = state.get("run_authorization_id")
+            binding_id = state.get("run_authorization_binding_id")
             stored = state.get("run_authorization_fingerprint")
             status = state.get("run_status")
-            if not isinstance(authorization_id, str) or not isinstance(stored, str) or not isinstance(status, str):
+            if (not isinstance(authorization_id, str) or not isinstance(binding_id, str)
+                    or not isinstance(stored, str) or not isinstance(status, str)):
                 raise StopNeedsHuman("run_authorization_state_missing")
+            if authorization_id != binding_id:
+                raise StopNeedsHuman("run_authorization_binding_divergent")
             authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
             if current != stored:
                 raise StopNeedsHuman("run_authorization_fingerprint_divergent")
@@ -847,6 +851,7 @@ class Lifecycle:
             "lifecycle_id": self.lifecycle_id,
             "fingerprint": contract_fingerprint,
             "run_authorization_id": authorization["authorization_id"],
+            "run_authorization_binding_id": authorization["authorization_id"],
             "run_authorization_fingerprint": authorization_fingerprint,
             "run_status": "ACTIVE",
             "head_sha": head,

@@ -1078,8 +1078,9 @@ class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
         (self.authorization_root / "run-authorization-2.json").write_text(json.dumps(replacement), encoding="utf-8")
         state["run_authorization_id"] = "run-authorization-2"
         state_path.write_text(json.dumps(state), encoding="utf-8")
-        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_fingerprint_divergent"):
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_binding_divergent"):
             self.h.lifecycle().publish_head()
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["run_authorization_id"], "run-authorization-2")
         state = {"lifecycle_id": "life-1", "fingerprint": L.fingerprint(self.h.data)}
         state_path.write_text(json.dumps(state), encoding="utf-8")
         with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_state_missing"):
