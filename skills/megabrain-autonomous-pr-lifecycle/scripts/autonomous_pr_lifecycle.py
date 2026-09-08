@@ -564,13 +564,20 @@ class Lifecycle:
                 raise StopNeedsHuman("run_authorization_missing")
             authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
         else:
+            # Terminal state is a permanent lifecycle boundary.  It deliberately
+            # precedes any mutable authorization identity, artifact, or TTL
+            # evaluation so no replacement can change the terminal verdict.
+            status = state.get("run_status")
+            if status == "READY":
+                raise StopNeedsHuman("run_replay_after_ready")
+            if status == "STOPPED":
+                raise StopNeedsHuman("run_replay_after_stop")
             required = ("run_authorization_id", "run_authorization_binding_id", "run_authorization_fingerprint", "run_status")
             if any(field not in state for field in required):
                 raise StopNeedsHuman("run_authorization_state_missing")
             authorization_id = state.get("run_authorization_id")
             binding_id = state.get("run_authorization_binding_id")
             stored = state.get("run_authorization_fingerprint")
-            status = state.get("run_status")
             if (not isinstance(authorization_id, str) or not isinstance(binding_id, str)
                     or not isinstance(stored, str) or not isinstance(status, str)):
                 raise StopNeedsHuman("run_authorization_state_missing")
@@ -579,10 +586,6 @@ class Lifecycle:
             authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
             if current != stored:
                 raise StopNeedsHuman("run_authorization_fingerprint_divergent")
-            if status == "READY":
-                raise StopNeedsHuman("run_replay_after_ready")
-            if status == "STOPPED":
-                raise StopNeedsHuman("run_replay_after_stop")
             if status != "ACTIVE":
                 raise StopNeedsHuman("run_not_active")
         if authorization.get("lifecycle_id") != self.lifecycle_id:
