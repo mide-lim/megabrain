@@ -2,24 +2,24 @@
 
 ## Tarefa atual
 
-**MegaBrain Engineering Enablement — Phase B**
+**Nenhum novo milestone de engenharia ou produto está selecionado.**
 
 ## Estado
 
 Engineering Enablement Phase A: COMPLETE.
 
-Phase B: ACTIVE.
+Engineering Enablement Phase B: COMPLETE / PROMOTED.
 
 B1 — Automation Architecture Discovery: COMPLETE.
 
-B2 — Public GitHub Foundation: COMPLETE com a integração deste cutover.
+B2 — Public GitHub Foundation: COMPLETE / PROMOTED.
 
 - B2.1 — Public Repository Preflight: COMPLETE.
 - B2.2 — Public Repository Remediation: COMPLETE.
 - B2.3 — Clean Public Baseline + Publication: COMPLETE.
 - B2.4 — GitHub identity, protected branches e source-of-truth cutover: COMPLETE com esta mudança.
 
-B3 — CI Foundation: COMPLETE.
+B3 — CI Foundation: COMPLETE / PROMOTED.
 
 - B3.1 — GitHub Actions CI Foundation: COMPLETE.
 - workflow inicial criado para validação de repositório, Enricher e Web;
@@ -34,7 +34,7 @@ B3 — CI Foundation: COMPLETE.
 - gate humano de merge e isolamento do Hermes preservados;
 - rollback documentado, independente e sujeito a gate humano.
 
-B4 — Hermes Autonomy Foundation: ACTIVE.
+B4 — Hermes Autonomy Foundation: COMPLETE / PROMOTED.
 
 - B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
 - checkpoint de Discovery, SDD e Task Contract versionado antes da instalação;
@@ -45,8 +45,9 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   12 testes validaram bytes SHA-256, modo executável `0700`, conjunto exato de
   artefatos e ausência de `.env`, `.pem` e `.key`, sem credencial, JWT, token,
   rede ou operação autenticada;
-- a capability contém somente `probe-read-dev` de leitura; B4.2, escrita Git,
-  push, PR, merge, ruleset, bypass, deploy e produção continuam excluídos;
+- a capability B4.1 contém somente `probe-read-dev` de leitura; escrita Git,
+  push, PR, merge, ruleset, bypass, deploy e produção permanecem excluídos do
+  seu escopo;
 - `--operational-gate-approved` é um guardrail de processo e não um limite de
   segurança técnico; toda operação autenticada futura ainda exige autorização
   humana nova e explícita;
@@ -54,35 +55,21 @@ B4 — Hermes Autonomy Foundation: ACTIVE.
   passou: GitHub provider-validou token read-only restrito a `contents: read`,
   sem write ou `administration`; escopo exclusivo `mide-lim/megabrain`; leitura
   de `refs/heads/dev`; revogação e cleanup confirmados. Não há nova operação
-  autenticada autorizada.
+  autenticada autorizada sob B4.1.
 - Pull Request #10 integrado manualmente em `dev`; B4.1 está promovida. A
-  capability permanece limitada à sua única operação read-only e não autoriza
-  nenhuma nova operação autenticada.
+  capability B4.1 permanece limitada à sua única operação read-only e não
+  autoriza nenhuma nova operação autenticada sob B4.1.
 
-- B4.2 — Autonomous PR Lifecycle: `IMPLEMENTED / HUMAN_GATE`.
-- fonte canônica versionada em `skills/megabrain-autonomous-pr-lifecycle/`; a
-  instalação em `~/.hermes/skills/megabrain/megabrain-autonomous-pr-lifecycle`
-  é derivada, reconstruída atomicamente do conjunto exato de artefatos;
-- os 47 testes herméticos atuais passaram sem JWT, installation token, rede, push
-  ou mutação de PR. Eles exercitam fingerprint imutável, denylist de control
-  plane, paths/symlinks, branch/ref segura, PR/CI drift, permissões e cleanup;
-- B4.2 P1 contém somente o adapter separado `validate-read-dev-ref`, fixo em
-  `mide-lim/megabrain` e `refs/heads/dev`: ele solicita somente token efêmero
-  `contents: read`, aceita no máximo `metadata: read` provider-returned, valida
-  baseline/permissões/escopo/SHA/ref, revoga e limpa fail-closed, e emite output
-  sanitizado. Não há operação P1 autenticada executada ou autorizada nesta
-  implementação; a primeira exige gate humano novo e explícito;
-- a primeira operação autenticada do lifecycle, publish, PR, observação CI,
-  refresh e correção continuam bloqueados por gate humano separado. Merge em
-  `dev` é exclusivamente humano;
-- `agent/*` é defesa local em profundidade, não ACL provider-enforced: um token
-  `contents: write` ainda pode ter capacidade provider-side maior em refs não
-  protegidas do que a interface fechada expõe;
-- `.github/workflows/**`, rulesets, bypass, Administration, permissões/instalação
-  App, produção, deploy e progressão para `main` continuam fora do escopo.
+- B4.2 — Autonomous PR Lifecycle: `COMPLETE / PROMOTED`.
+- B4.3 — Bounded Run Authorization: `COMPLETE / PROMOTED`.
+- Pull Request #20 foi integrado manualmente em `dev`. O candidato revisado
+  `5856ffdb7ede157fb335cd5da05456c55029e717` resultou no commit de `dev`
+  `32fe9751ef5f19e54d6fae4d5949dd2675a08b72`; o veredito final local foi
+  `B4_3_R1_STAGE2F_R2_READY`.
 
 A implementação de produto da Sprint 5 permanece não aprovada e adiada.
-Engineering Enablement continua separado do roadmap de produto.
+Engineering Enablement permanece separado do roadmap de produto; este closeout
+não seleciona nem autoriza o próximo milestone de engenharia ou produto.
 
 ## Resultado da Phase A
 
@@ -107,24 +94,12 @@ Engineering Enablement continua separado do roadmap de produto.
 - bundles estão aposentados do fluxo operacional;
 - produção continua human-gated.
 
-## Trabalho atual de engenharia
+## Próximo trabalho
 
-A primeira foundation de CI isolada concluiu validação local e remota.
-
-O Pull Request #4 executou com sucesso os jobs de validação do repositório,
-Enricher e Web e foi integrado em `dev` após aprovação humana.
-
-B3.1 está concluído.
-
-B3.2 — Required Status Checks está `COMPLETE / PROMOTED`. O ruleset
-`require-ci` está ativo para `dev` e `main`; os três checks da CI são
-obrigatórios, vinculados ao GitHub Actions integration ID `15368`, e a política
-strict foi comprovada por Pull Request real. O gate humano de merge e a ausência
-de autoridade administrativa, de merge e de produção para Hermes foram
-preservados.
-
-Staging, Playwright e qualquer progressão automática adicional permanecem
-entregas separadas e exigem seus próprios gates.
+Nenhum próximo milestone de engenharia ou produto foi selecionado por este
+closeout. Staging, Playwright, observabilidade, backup/restore, monitoramento,
+automação de deploy e funcionalidades de produto permanecem fora deste escopo e
+exigem aprovação e gates próprios.
 
 ## Restrições permanentes
 
@@ -133,7 +108,10 @@ entregas separadas e exigem seus próprios gates.
   n8n real ou o workspace de produção.
 - GitHub é a fonte de verdade de desenvolvimento.
 - Hermes trabalha em `agent/*` e pode publicar essas branches e abrir PRs.
-- Hermes não faz merge nem atualiza diretamente `dev` ou `main`.
-- Sem auto-merge ou deploy automático.
+- Hermes não tem autoridade para merge, auto-merge, force push, escrita direta
+  em `dev` ou `main`, mutação de workflows, rulesets ou permissões do GitHub App,
+  nem interfaces genéricas e irrestritas de Git, API ou shell.
+- Sem auto-merge, acesso à produção ou deploy automático. Merge humano permanece
+  uma fronteira de autoridade separada.
 - Toda ação de produção permanece human-gated.
 - A implementação de produto da Sprint 5 permanece não aprovada.

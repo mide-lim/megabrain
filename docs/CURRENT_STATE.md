@@ -46,14 +46,39 @@ concluída com sucesso.
 
 ### Engineering Enablement
 
-- B4.1 — GitHub Auth Bootstrap está `COMPLETE / PROMOTED`: a capability
-  reproduzível de autenticação GitHub App comprovou somente o probe read-only
-  de `dev`, com token efêmero, revogação e cleanup. Ela não autoriza escrita,
-  PR, merge ou mudanças administrativas.
-- B4.2 — Autonomous PR Lifecycle está `IMPLEMENTED / HUMAN_GATE`: a fonte
-  canônica e a instalação derivada passaram testes herméticos sem credenciais,
-  rede, push ou mutação de PR. A primeira operação autenticada continua
-  bloqueada; merge em `dev` permanece human-gated.
+- Engineering Enablement Phase A: `COMPLETE`.
+- Engineering Enablement Phase B: `COMPLETE / PROMOTED`.
+- B1 — Automation Architecture Discovery: `COMPLETE`.
+- B2 — Public GitHub Foundation: `COMPLETE / PROMOTED`.
+- B3 — CI Foundation: `COMPLETE / PROMOTED`.
+- B4 — Hermes Autonomy Foundation: `COMPLETE / PROMOTED`.
+- B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
+- B4.2 — Autonomous PR Lifecycle: `COMPLETE / PROMOTED`.
+- B4.3 — Bounded Run Authorization: `COMPLETE / PROMOTED`.
+
+#### Evidência de fechamento B4.3
+
+- Pull Request #20 foi integrado manualmente em `dev`; o candidato revisado foi
+  `5856ffdb7ede157fb335cd5da05456c55029e717` e o commit resultante em `dev` é
+  `32fe9751ef5f19e54d6fae4d5949dd2675a08b72`.
+- O veredito final local foi `B4_3_R1_STAGE2F_R2_READY`.
+- Foram validados snapshot coerente de CI, invalidação de publicação, precedência
+  de terminal replay, separação de operações, READY para SHA exato e geração do
+  relatório sem novo acesso de rede.
+- A cobertura direta de timing de autorização P2/P3/P4, os testes direcionados
+  R1, as regressões B4.2 e B4.1, a paridade do instalador, `py_compile` e
+  `git diff --check` passaram; o worktree final permaneceu limpo.
+
+Hermes agora suporta o lifecycle limitado: contrato de tarefa, implementação em
+`agent/*`, Run Authorization limitado, publicação e criação de PR controladas,
+observação de CI, autocorreção limitada, snapshot coerente de CI e READY para
+SHA exato antes de revisão/merge humano. READY é evidência para um único SHA e
+não concede autoridade de merge.
+
+Hermes não tem autoridade para merge, auto-merge, force push, escrita direta em
+`dev` ou `main`, mutação de workflows, rulesets ou permissões do GitHub App,
+interfaces genéricas e irrestritas de Git/API/shell, acesso à produção ou deploy.
+O merge humano permanece uma fronteira de autoridade separada.
 
 ### Downloader
 
