@@ -362,14 +362,11 @@ def _base_result() -> dict[str, Any]:
     }
 
 
-def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: bool, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Run only the exact contract-bound `publish-head` after a human gate."""
+def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Run only the exact contract-bound `publish-head` when state binds a Run Authorization."""
     result = _base_result()
     if operation != OPERATION:
         result["failure_code"] = "operation_rejected"
-        return result
-    if not operational_gate_approved:
-        result["failure_code"] = "operational_gate_required"
         return result
 
     environment = os.environ if environ is None else environ
@@ -378,6 +375,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
     lifecycle: Any = None
     correction_mode = False
     deferred_publish_state: dict[str, Any] | None = None
+    initial_publish_state: dict[str, Any] | None = None
     latched_publish_state: dict[str, Any] | None = None
     try:
         app_id, installation_id, key_path = _required_environment(environment)
@@ -389,7 +387,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         result["origin_valid"] = True
         source_root = Path.cwd().resolve()
         lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         branch = contract["branch"]
         validate_key_path(key_path)
         temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p2-")
@@ -405,6 +403,11 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
             result["installation_permissions_valid"] = False
             raise SafeFailure("installation_permissions_rejected")
         result["installation_permissions_valid"] = True
+        # The baseline request can consume the last valid instant. Re-check the
+        # bound authorization immediately before minting any credential.
+        refreshed_contract, refreshed_state = lifecycle._guard(OPERATION)
+        if refreshed_contract != contract or refreshed_state != state:
+            raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         requested_permissions = CORRECTION_PUBLISH_TOKEN_REQUEST_PERMISSIONS if correction_mode else PUBLISH_TOKEN_REQUEST_PERMISSIONS
         mint_status, minted = request_json("POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}", {"repositories": ["megabrain"], "permissions": requested_permissions})
         jwt = ""
@@ -434,9 +437,15 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
                     nonlocal deferred_publish_state
                     deferred_publish_state = copy.deepcopy(value)
                 published = staged_lifecycle._publish_head_locked(state_writer=defer_publish)
-                latched_publish_state = copy.deepcopy(lifecycle._guard()[1])
+                latched_publish_state = copy.deepcopy(lifecycle._guard(OPERATION)[1])
             else:
-                published = staged_lifecycle._publish_head_locked()
+                initial_publish_state = copy.deepcopy(state)
+
+                def defer_publish(value: dict[str, Any]) -> None:
+                    nonlocal deferred_publish_state
+                    deferred_publish_state = copy.deepcopy(value)
+
+                published = staged_lifecycle._publish_head_locked(state_writer=defer_publish)
         result["publish"] = True
         result["remote_sha_verified"] = published.get("head_sha") if isinstance(published.get("head_sha"), str) else None
         if result["remote_sha_verified"] is None:
@@ -465,12 +474,24 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
                 result["temporary_cleanup"] = False
                 result["failure_code"] = "cleanup_failed"
         token = None
-    if result["failure_code"] is None and correction_mode:
-        if lifecycle is None or latched_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
+    if result["failure_code"] is None:
+        if correction_mode:
+            if lifecycle is None or latched_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
+                result["failure_code"] = "publish_state_commit_rejected"
+            else:
+                try:
+                    lifecycle._commit_deferred_correction_publish(latched_publish_state, result["remote_sha_verified"], deferred_publish_state)
+                except LIFECYCLE.StopNeedsHuman as exc:
+                    result["failure_code"] = str(exc)
+                except Exception:
+                    result["failure_code"] = "publish_state_commit_rejected"
+        elif lifecycle is None or initial_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
             result["failure_code"] = "publish_state_commit_rejected"
         else:
             try:
-                lifecycle._commit_deferred_correction_publish(latched_publish_state, result["remote_sha_verified"], deferred_publish_state)
+                lifecycle._commit_deferred_initial_publish_state(
+                    initial_publish_state, result["remote_sha_verified"], deferred_publish_state,
+                )
             except LIFECYCLE.StopNeedsHuman as exc:
                 result["failure_code"] = str(exc)
             except Exception:
@@ -484,9 +505,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the fixed B4.2 P2 controlled publish-head adapter.")
     parser.add_argument("--operation", required=True, choices=[OPERATION])
     parser.add_argument("--lifecycle-id", required=True)
-    parser.add_argument("--operational-gate-approved", action="store_true")
     arguments = parser.parse_args()
-    result = run_operation(arguments.operation, arguments.lifecycle_id, arguments.operational_gate_approved)
+    result = run_operation(arguments.operation, arguments.lifecycle_id)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["status"] == "ok" else 1
 

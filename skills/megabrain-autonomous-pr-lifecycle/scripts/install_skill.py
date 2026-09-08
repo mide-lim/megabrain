@@ -26,6 +26,7 @@ VERSIONED_SOURCE_FILES = set(ARTIFACTS) | {
     Path("tests/test_authenticated_ensure_pr.py"),
     Path("tests/test_authenticated_observe_ci.py"),
     Path("tests/test_p5_local_correction.py"),
+    Path("tests/test_stage2e_closure.py"),
 }
 
 

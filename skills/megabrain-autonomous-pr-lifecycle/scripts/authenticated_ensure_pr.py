@@ -301,15 +301,11 @@ def _base_result() -> dict[str, Any]:
     }
 
 
-def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: bool,
-                  environ: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Run only the exact contract-bound ensure-pr after a separate human gate."""
+def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Run only the exact contract-bound ensure-pr when state binds a Run Authorization."""
     result = _base_result()
     if operation != OPERATION:
         result["failure_code"] = "operation_rejected"
-        return result
-    if not operational_gate_approved:
-        result["failure_code"] = "operational_gate_required"
         return result
 
     environment = os.environ if environ is None else environ
@@ -335,7 +331,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         reservation = lifecycle._publish_reservation()
         reservation.__enter__()
         reservation_acquired = True
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         expected_state = copy.deepcopy(state)
         expected_fingerprint = state.get("fingerprint")
         if not isinstance(expected_fingerprint, str):
@@ -349,7 +345,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         result["origin_valid"] = True
         # Reload under the reservation immediately before minting the JWT.
         # This prevents a P2 state transition from being validated as P3 input.
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         if state != expected_state or state.get("fingerprint") != expected_fingerprint:
             raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         head = validate_source_for_ensure_pr(lifecycle, contract, state)
@@ -361,6 +357,11 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
             result["installation_permissions_valid"] = False
             raise SafeFailure("installation_permissions_rejected")
         result["installation_permissions_valid"] = True
+        # The baseline request can consume the last valid instant. Re-check the
+        # bound authorization immediately before minting any credential.
+        refreshed_contract, refreshed_state = lifecycle._guard(OPERATION)
+        if refreshed_contract != contract or refreshed_state != state:
+            raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         mint_status, minted = request_json(
             "POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}",
             {"repositories": ["megabrain"], "permissions": PR_TOKEN_REQUEST_PERMISSIONS},
@@ -447,9 +448,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the fixed B4.2 P3 controlled ensure-pr adapter.")
     parser.add_argument("--operation", required=True, choices=[OPERATION])
     parser.add_argument("--lifecycle-id", required=True)
-    parser.add_argument("--operational-gate-approved", action="store_true")
     arguments = parser.parse_args()
-    result = run_operation(arguments.operation, arguments.lifecycle_id, arguments.operational_gate_approved)
+    result = run_operation(arguments.operation, arguments.lifecycle_id)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["status"] == "ok" else 1
 

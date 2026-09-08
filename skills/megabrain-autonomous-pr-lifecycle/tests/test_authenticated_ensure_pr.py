@@ -72,7 +72,7 @@ class FakeLifecycle:
         self.runner = None
         self.request = None
 
-    def _guard(self):
+    def _guard(self, *args):
         return copy.deepcopy(self.data), copy.deepcopy(self.current_state)
 
     @contextmanager
@@ -172,7 +172,7 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
     def run_success(self, api=None):
         patches = self.patches(api)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
-            return ENSURE.run_operation(ENSURE.OPERATION, "life-1", True, self.environment)
+            return ENSURE.run_operation(ENSURE.OPERATION, "life-1", self.environment)
 
     def test_exact_pr_token_scope_create_payload_and_sanitized_result(self):
         result = self.run_success()
@@ -193,10 +193,10 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
 
     def test_missing_gate_and_wrong_operation_do_not_authenticate(self):
         with mock.patch.object(ENSURE, "configured_origin") as origin:
-            gated = ENSURE.run_operation(ENSURE.OPERATION, "life-1", False, self.environment)
-            wrong = ENSURE.run_operation("publish-head", "life-1", True, self.environment)
+            gated = ENSURE.run_operation("not-authorized", "life-1", self.environment)
+            wrong = ENSURE.run_operation("publish-head", "life-1", self.environment)
         origin.assert_not_called()
-        self.assertEqual(gated["failure_code"], "operational_gate_required")
+        self.assertEqual(gated["failure_code"], "operation_rejected")
         self.assertEqual(wrong["failure_code"], "operation_rejected")
 
     def test_wrong_or_extra_permissions_and_scope_are_rejected(self):
@@ -219,14 +219,14 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
                 FakeLifecycle.current_state = state(**changed)
                 patches = self.patches()
                 with patches[0], patches[1], patches[2], patches[3] as signer, patches[4], patches[5]:
-                    result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", True, self.environment)
+                    result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", self.environment)
                 signer.assert_not_called()
                 self.assertEqual(result["failure_code"], expected)
                 self.assertFalse(FakeLifecycle.state_writes)
 
     def test_remote_drift_stops_before_authentication(self):
         with mock.patch.object(ENSURE, "validate_source_for_ensure_pr", side_effect=ENSURE.LIFECYCLE.StopNeedsHuman("remote_head_drift")), mock.patch.object(ENSURE, "make_jwt") as signer, mock.patch.object(ENSURE.LIFECYCLE, "Lifecycle", FakeLifecycle), mock.patch.object(ENSURE, "configured_origin", return_value=ENSURE.ORIGIN), mock.patch.object(ENSURE, "validate_privileged_executable"), mock.patch.object(ENSURE, "validate_key_path"):
-            result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", True, self.environment)
+            result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         self.assertEqual(result["failure_code"], "remote_head_drift")
 
@@ -323,7 +323,7 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
                 raise OSError("fixture")
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(ENSURE.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
-            result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", True, self.environment)
+            result = ENSURE.run_operation(ENSURE.OPERATION, "life-1", self.environment)
         self.assertEqual(result["failure_code"], "cleanup_failed")
         self.assertFalse(FakeLifecycle.state_writes)
 

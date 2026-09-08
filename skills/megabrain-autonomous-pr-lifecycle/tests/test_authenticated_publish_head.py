@@ -35,6 +35,7 @@ class FakeLifecycle:
     published_sha = SHA
     commands: list[list[str]] = []
     roots: list[Path] = []
+    deferred_initial_commits: list[tuple[dict, str, dict]] = []
 
     def __init__(self, root, lifecycle_id):
         self.root = root
@@ -42,7 +43,7 @@ class FakeLifecycle:
         self.lifecycle_id = lifecycle_id
         self.runner = None
 
-    def _guard(self):
+    def _guard(self, *args):
         return {"branch": self.branch}, {"head_sha": SHA, "published_once": False, "corrections": 0}
 
     def _state(self):
@@ -61,12 +62,18 @@ class FakeLifecycle:
     def _publish_reservation(self):
         yield
 
-    def _publish_head_locked(self):
+    def _publish_head_locked(self, *, state_writer=None):
         assert self.runner is not None
         command = ["git", "push", "origin", f"HEAD:refs/heads/{self.branch}"]
         self.commands.append(command)
         self.runner(command, self.root)
+        deferred = {"head_sha": self.published_sha, "published_once": True, "corrections": 0}
+        if state_writer is not None:
+            state_writer(deferred)
         return {"state": "PUBLISHED", "head_sha": self.published_sha}
+
+    def _commit_deferred_initial_publish_state(self, expected_state, expected_head, deferred_state):
+        self.deferred_initial_commits.append((expected_state, expected_head, deferred_state))
 
 
 class AuthenticatedPublishHeadTests(unittest.TestCase):
@@ -80,6 +87,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         FakeLifecycle.published_sha = SHA
         FakeLifecycle.commands = []
         FakeLifecycle.roots = []
+        FakeLifecycle.deferred_initial_commits = []
 
     def api_success(self, method, path, authorization, payload=None):
         if method == "GET" and path == "/app/installations/456":
@@ -127,7 +135,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
     def test_exact_contents_write_single_scope_exact_branch_and_sanitized_result(self):
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["origin_valid"])
         self.assertTrue(result["installation_permissions_valid"])
@@ -143,6 +151,22 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         self.assertNotIn("JWT_FIXTURE", encoded)
         self.assertNotIn(self.environment["MEGABRAIN_GITHUB_APP_KEY_PATH"], encoded)
 
+    def test_initial_publish_defers_success_state_until_after_token_teardown(self):
+        events = []
+
+        def api(method, path, authorization, payload=None):
+            if method == "DELETE" and path == "/installation/token":
+                events.append("revoked")
+            return self.api_success(method, path, authorization, payload)
+
+        patches = self.patches(api)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(FakeLifecycle.deferred_initial_commits), 1)
+        self.assertEqual(events, ["revoked"])
+        self.assertEqual(FakeLifecycle.deferred_initial_commits[0][1], SHA)
+
     def test_isolated_staging_directory_is_removed_after_authenticated_publish(self):
         staging_parents = []
 
@@ -152,7 +176,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
 
         patches = self.patches(stage=stage)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["temporary_cleanup"])
         self.assertEqual(len(staging_parents), 1)
@@ -169,7 +193,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             self.fail("scope and push must not run")
         patches = self.patches(api)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(result["failure_code"], "token_permissions_rejected")
         self.assertIs(result["publish_token_permissions_valid"], False)
         self.assertEqual(result["revocation"], "ok")
@@ -188,21 +212,21 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             self.fail("push must not run")
         patches = self.patches(api)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(result["failure_code"], "scope_rejected")
         self.assertIs(result["scope_valid"], False)
         self.assertEqual(result["revocation"], "ok")
 
     def test_wrong_origin_gate_and_wrong_operation_do_not_authenticate(self):
         with mock.patch.object(PUBLISH, "configured_origin", return_value="https://example.invalid/repo.git"), mock.patch.object(PUBLISH, "make_jwt") as signer:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         self.assertEqual(result["failure_code"], "origin_rejected")
         with mock.patch.object(PUBLISH, "configured_origin") as origin:
-            gated = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", False, self.environment)
-            unknown = PUBLISH.run_operation("ensure-pr", "life-1", True, self.environment)
+            gated = PUBLISH.run_operation("not-authorized", "life-1", self.environment)
+            unknown = PUBLISH.run_operation("ensure-pr", "life-1", self.environment)
         origin.assert_not_called()
-        self.assertEqual(gated["failure_code"], "operational_gate_required")
+        self.assertEqual(gated["failure_code"], "operation_rejected")
         self.assertEqual(unknown["failure_code"], "operation_rejected")
 
     def test_unexpected_pushurl_is_rejected_before_authentication_or_push(self):
@@ -211,7 +235,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             mock.patch.object(PUBLISH, "validate_push_destination", side_effect=PUBLISH.SafeFailure("push_destination_rejected")),
             mock.patch.object(PUBLISH, "make_jwt") as signer,
         ):
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         self.assertEqual(result["failure_code"], "push_destination_rejected")
         self.assertFalse(FakeLifecycle.commands)
@@ -271,7 +295,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             with self.subTest(mode=invalid_stat.st_mode, uid=invalid_stat.st_uid), mock.patch.object(
                 PUBLISH.os, "lstat", return_value=invalid_stat
             ), mock.patch.object(PUBLISH, "make_jwt") as signer, mock.patch.object(PUBLISH, "request_json") as request:
-                result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+                result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
             signer.assert_not_called()
             request.assert_not_called()
             self.assertEqual(result["failure_code"], "privileged_executable_invalid")
@@ -279,7 +303,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         with mock.patch.object(PUBLISH.os, "lstat", side_effect=OSError("missing")), mock.patch.object(
             PUBLISH, "make_jwt"
         ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         request.assert_not_called()
         self.assertEqual(result["failure_code"], "privileged_executable_invalid")
@@ -303,7 +327,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         with mock.patch.object(PUBLISH.os, "lstat", side_effect=lstat), mock.patch.object(
             PUBLISH, "make_jwt"
         ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         request.assert_not_called()
         self.assertEqual(result["failure_code"], "privileged_executable_invalid")
@@ -363,7 +387,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
             return self.api_success(method, path, authorization, payload)
         patches = self.patches(revocation_fails)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
-            revoked = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            revoked = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(revoked["failure_code"], "revocation_failed")
         self.assertEqual(revoked["revocation"], "failed")
 
@@ -373,7 +397,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
                 raise OSError("fixture")
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
-            cleaned = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            cleaned = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(cleaned["failure_code"], "cleanup_failed")
         self.assertEqual(cleaned["revocation"], "ok")
         self.assertIs(cleaned["temporary_cleanup"], False)
@@ -400,7 +424,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
 
         patches = self.patches(api)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], mock.patch.object(PUBLISH.urllib.request, "urlopen", return_value=EmptyResponse()):
-            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", True, self.environment)
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         self.assertEqual(result["status"], "ok")
         self.assertIsNone(result["failure_code"])
         self.assertEqual(result["revocation"], "ok")

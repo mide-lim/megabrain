@@ -55,7 +55,7 @@ class FakeLifecycle:
     def _publish_reservation(self):
         yield
 
-    def _guard(self):
+    def _guard(self, *args):
         return copy.deepcopy(self.data), copy.deepcopy(self.current_state)
 
     def _validate_checkout(self, value):
@@ -116,7 +116,7 @@ class ObserveAdapterTests(unittest.TestCase):
     def run_adapter(self, api=None):
         patches = self.patches(api)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
-            return OBSERVE.run_operation("observe-ci", "life-1", True, self.environment)
+            return OBSERVE.run_operation("observe-ci", "life-1", self.environment)
 
     def test_exact_observe_scope_and_deferred_commit_after_teardown(self):
         result = self.run_adapter()
@@ -147,12 +147,12 @@ class ObserveAdapterTests(unittest.TestCase):
         self.assertFalse(FakeLifecycle.writes)
 
     def test_operation_gate_and_preconditions_stop_before_authentication(self):
-        self.assertEqual(OBSERVE.run_operation("ensure-pr", "life-1", True, self.environment)["failure_code"], "operation_rejected")
-        self.assertEqual(OBSERVE.run_operation("observe-ci", "life-1", False, self.environment)["failure_code"], "operational_gate_required")
+        self.assertEqual(OBSERVE.run_operation("ensure-pr", "life-1", self.environment)["failure_code"], "operation_rejected")
+        self.assertEqual(OBSERVE.run_operation("not-authorized", "life-1", self.environment)["failure_code"], "operation_rejected")
         FakeLifecycle.current_state = state(pr_number=None)
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3] as signer, patches[4], patches[5]:
-            result = OBSERVE.run_operation("observe-ci", "life-1", True, self.environment)
+            result = OBSERVE.run_operation("observe-ci", "life-1", self.environment)
         signer.assert_not_called(); self.assertEqual(result["failure_code"], "pr_or_head_missing"); self.assertFalse(FakeLifecycle.writes)
 
     def test_no_commit_on_observation_revocation_or_cleanup_failure(self):
@@ -168,7 +168,7 @@ class ObserveAdapterTests(unittest.TestCase):
             def cleanup(self): raise OSError("fixture")
         patches = self.patches()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], mock.patch.object(OBSERVE.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
-            result = OBSERVE.run_operation("observe-ci", "life-1", True, self.environment)
+            result = OBSERVE.run_operation("observe-ci", "life-1", self.environment)
         self.assertEqual(result["failure_code"], "cleanup_failed"); self.assertFalse(FakeLifecycle.writes)
 
     def test_api_boundary_allows_only_exact_gets_and_never_logs_or_actions_mutations(self):

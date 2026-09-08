@@ -46,6 +46,17 @@ def contract(lifecycle_id="life-1", **changes):
     return data
 
 
+def run_authorization(data, authorization_id="run-authorization-1", **changes):
+    value = {
+        "version": 1, "authorization_id": authorization_id, "lifecycle_id": data["lifecycle_id"],
+        "task_contract_fingerprint": L.fingerprint(data),
+        "allowed_operations": ["preflight", "publish-head", "ensure-pr", "observe-ci", "authorize-correction", "finalize-correction", "report-ready"],
+        "issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z",
+    }
+    value.update(changes)
+    return value
+
+
 class Harness:
     def __init__(self, root: Path, state: Path, data: dict, *, changed=(), committed=(), branch=None, head=SHA):
         self.root, self.state, self.data = root, state, data
@@ -62,6 +73,8 @@ class Harness:
         path = L.CONTRACT_ROOT
         path.mkdir(parents=True, exist_ok=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
+        authorization = run_authorization(data)
+        (L.RUN_AUTHORIZATION_ROOT / f"{authorization['authorization_id']}.json").write_text(json.dumps(authorization), encoding="utf-8")
         self.pr = self.pr_body(SHA)
         self.same_head_responses: list[list[dict]] | None = None
         self.post_response: dict | None = None
@@ -118,7 +131,10 @@ class Harness:
         raise AssertionError((method, path, payload))
 
     def lifecycle(self):
-        return L.Lifecycle(self.root, self.data["lifecycle_id"], state_root=self.state, runner=self.runner, request=self.request)
+        lifecycle = L.Lifecycle(self.root, self.data["lifecycle_id"], state_root=self.state, runner=self.runner, request=self.request)
+        original_preflight = lifecycle.preflight
+        lifecycle.preflight = lambda authorization_id="run-authorization-1": original_preflight(authorization_id)
+        return lifecycle
 
 
 class LifecycleTests(unittest.TestCase):
@@ -127,25 +143,29 @@ class LifecycleTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "repo"; self.root.mkdir()
         self.state = Path(self.temp.name) / "state"
         self.contract_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-contracts" / "b4.2"
+        self.authorization_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-authorizations" / "b4.3"
         self.contract_root.mkdir(parents=True)
+        self.authorization_root.mkdir(parents=True)
         self.control_directories = (
-            self.contract_root.parent.parent,
-            self.contract_root.parent,
-            self.contract_root,
+            self.contract_root.parent.parent, self.contract_root.parent, self.contract_root,
+            self.authorization_root.parent.parent.parent, self.authorization_root.parent.parent,
+            self.authorization_root.parent, self.authorization_root,
         )
         self.contract_metadata: dict[Path, dict[str, int]] = {}
         self.real_lstat = os.lstat
         self.real_fstat = os.fstat
         self.contract_root_patch = mock.patch.object(L, "CONTRACT_ROOT", self.contract_root)
+        self.authorization_root_patch = mock.patch.object(L, "RUN_AUTHORIZATION_ROOT", self.authorization_root)
+        self.now_patch = mock.patch.object(L, "_trusted_utc_now", return_value=L.dt.datetime(2026, 1, 1, 12, tzinfo=L.dt.timezone.utc))
         self.lstat_patch = mock.patch.object(L.os, "lstat", side_effect=self.trusted_lstat)
         self.fstat_patch = mock.patch.object(L.os, "fstat", side_effect=self.trusted_fstat)
-        self.contract_root_patch.start(); self.lstat_patch.start(); self.fstat_patch.start()
+        self.contract_root_patch.start(); self.authorization_root_patch.start(); self.now_patch.start(); self.lstat_patch.start(); self.fstat_patch.start()
         self.h = Harness(self.root, self.state, contract())
         self.live = mock.patch.object(L, "_require_live_operations_enabled", return_value=None)
         self.live.start()
 
     def tearDown(self):
-        self.live.stop(); self.fstat_patch.stop(); self.lstat_patch.stop(); self.contract_root_patch.stop(); self.temp.cleanup()
+        self.live.stop(); self.fstat_patch.stop(); self.lstat_patch.stop(); self.now_patch.stop(); self.authorization_root_patch.stop(); self.contract_root_patch.stop(); self.temp.cleanup()
 
     def trusted_lstat(self, path, *args, **kwargs):
         result = self.real_lstat(path, *args, **kwargs)
@@ -153,7 +173,7 @@ class LifecycleTests(unittest.TestCase):
             return result
         target = Path(path)
         metadata = self.contract_metadata.get(target, {})
-        if target in self.control_directories or target.parent == self.contract_root:
+        if target in self.control_directories or target.parent in {self.contract_root, self.authorization_root}:
             values = list(result)
             values[4] = metadata.get("uid", 0)
             default_mode = 0o755 if target in self.control_directories else 0o644
@@ -165,13 +185,31 @@ class LifecycleTests(unittest.TestCase):
         result = self.real_fstat(descriptor)
         target = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
         metadata = self.contract_metadata.get(target, {})
-        if stat.S_ISREG(result.st_mode) and target.parent == self.contract_root:
+        if stat.S_ISREG(result.st_mode) and target.parent in {self.contract_root, self.authorization_root}:
             values = list(result); values[0] = (result.st_mode & ~0o777) | metadata.get("mode", 0o644); values[4] = metadata.get("uid", 0)
             return os.stat_result(values)
         return result
 
     def preflight(self):
-        return self.h.lifecycle().preflight()
+        return self.h.lifecycle().preflight("run-authorization-1")
+
+    def test_preflight_requires_run_authorization(self):
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_missing"):
+            self.h.lifecycle().preflight("missing-authorization")
+
+    def test_run_authorization_requires_integer_schema_version(self):
+        authorization = run_authorization(self.h.data, version=True)
+        path = self.authorization_root / "run-authorization-1.json"
+        path.write_text(json.dumps(authorization), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+            self.preflight()
+
+    def test_run_authorization_wrong_lifecycle_has_precise_failure(self):
+        authorization = run_authorization(self.h.data, lifecycle_id="other-life")
+        path = self.authorization_root / "run-authorization-1.json"
+        path.write_text(json.dumps(authorization), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_lifecycle_mismatch"):
+            self.preflight()
 
     def test_closed_operations_are_exactly_required(self):
         self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"}))
@@ -185,10 +223,24 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(life.publish_head()["state"], "PUBLISHED")
         self.assertEqual(life.ensure_pr()["state"], "PR_OPEN")
         self.assertEqual(life.observe_ci()["state"], "CI_GREEN_FOR_HEAD")
-        self.assertEqual(life.report_ready()["state"], "READY")
+        self.assertEqual(life.report_ready()["state"], "READY_FOR_HUMAN_MERGE_FOR_SHA=" + SHA)
         push = next(c for c in self.h.commands if c[1] == "push")
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
         self.assertFalse(any(any(x in part for x in ("--force", "--delete", "tag")) for c in self.h.commands for part in c))
+
+    def test_report_ready_rejects_exhausted_correction_budget_before_ready_state(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        life.ensure_pr()
+        life.observe_ci()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["corrections"] = self.h.data["max_corrections"] + 1
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_state_rejected"):
+            life.report_ready()
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["run_status"], "ACTIVE")
 
     def test_changed_post_initial_head_requires_finalized_correction_before_push_or_budget_use(self):
         self.preflight(); life = self.h.lifecycle()
@@ -205,7 +257,7 @@ class LifecycleTests(unittest.TestCase):
         self.live.stop()
         self.preflight()
         life = self.h.lifecycle()
-        for operation in (life.publish_head, life.ensure_pr, life.observe_ci, life.refresh_from_dev, life.report_ready):
+        for operation in (life.publish_head, life.ensure_pr, life.observe_ci, life.refresh_from_dev):
             with self.assertRaisesRegex(L.StopNeedsHuman, "authenticated_operations_not_authorized"):
                 operation()
         self.assertFalse(any(command[1:2] == ["push"] for command in self.h.commands))
@@ -379,7 +431,7 @@ class LifecycleTests(unittest.TestCase):
         h = Harness(self.root / "branch", self.state / "branch", contract(), branch="agent/b4-2-autonomous-pr-lifecycle-x")
         with self.assertRaisesRegex(L.StopNeedsHuman, "local_branch_rejected"): h.lifecycle().preflight()
         linkroot = self.root / "link"; linkroot.mkdir(); (linkroot / "contracts").symlink_to(self.root / "contracts")
-        self.assertEqual(L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight()["state"], "PREFLIGHT_OK")
+        self.assertEqual(L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight("run-authorization-1")["state"], "PREFLIGHT_OK")
         state_target = self.root / "state-target"; state_target.mkdir()
         state_link = self.root / "state-link"; state_link.symlink_to(state_target, target_is_directory=True)
         with self.assertRaisesRegex(L.StopNeedsHuman, "state_root_rejected"):
@@ -923,9 +975,185 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("$(rm -rf /)?", value); self.assertEqual(len(value), 2000)
 
 
+class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+    tearDown = LifecycleTests.tearDown
+    preflight = LifecycleTests.preflight
+    trusted_lstat = LifecycleTests.trusted_lstat
+    trusted_fstat = LifecycleTests.trusted_fstat
+
+    def _authorization_path(self) -> Path:
+        return self.authorization_root / "run-authorization-1.json"
+
+    def _write_authorization(self, **changes):
+        value = run_authorization(self.h.data, **changes)
+        self._authorization_path().write_text(json.dumps(value), encoding="utf-8")
+        return value
+
+    def test_run_authorization_ttl_and_timestamp_boundaries(self):
+        cases = (
+            ({"issued_at": "2026-01-01T12:00:00Z", "expires_at": "2026-01-02T12:00:01Z"}, "run_authorization_ttl_exceeded"),
+            ({"issued_at": "2026-01-01T12:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:01Z", "expires_at": "2026-01-01T13:00:00Z"}, "run_authorization_not_yet_valid"),
+            ({"issued_at": "2026-01-01T11:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_expired"),
+            ({"issued_at": "2026-01-01T13:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00+00:00"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00.000Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "not-a-time"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-02-30T12:00:00Z"}, "run_authorization_time_rejected"),
+        )
+        for changes, code in cases:
+            with self.subTest(changes=changes):
+                self._write_authorization(**changes)
+                with self.assertRaisesRegex(L.StopNeedsHuman, code):
+                    self.preflight()
+        self._write_authorization(issued_at="2025-12-31T12:00:01Z", expires_at="2026-01-01T12:00:01Z")
+        self.h.lifecycle()._read_authorization("run-authorization-1", L.fingerprint(self.h.data))
+        self._write_authorization(issued_at="2026-01-01T12:00:00Z", expires_at="2026-01-02T12:00:00Z")
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
+
+    def test_run_authorization_trust_chain_and_identifier_rejection(self):
+        lifecycle = self.h.lifecycle()
+        self.assertEqual(lifecycle._trusted_authorization_path("run-authorization-1"), self._authorization_path())
+        for parent, mode in ((self.authorization_root.parent, 0o775), (self.authorization_root.parent, 0o777),
+                             (self.authorization_root, 0o775)):
+            with self.subTest(parent=parent, mode=oct(mode)):
+                self.contract_metadata[parent] = {"mode": mode}
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+                    lifecycle._trusted_authorization_path("run-authorization-1")
+                self.contract_metadata.pop(parent)
+        for metadata in ({"mode": 0o664}, {"uid": 1000}):
+            with self.subTest(metadata=metadata):
+                self.contract_metadata[self._authorization_path()] = metadata
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+                    lifecycle._trusted_authorization_path("run-authorization-1")
+                self.contract_metadata.pop(self._authorization_path())
+        intermediate = self.authorization_root.parent
+        replacement = intermediate.with_name("authorization-parent-real")
+        intermediate.rename(replacement)
+        intermediate.symlink_to(replacement, target_is_directory=True)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        intermediate.unlink()
+        replacement.rename(intermediate)
+        target = self.authorization_root / "target.json"
+        target.write_text(json.dumps(run_authorization(self.h.data)), encoding="utf-8")
+        self._authorization_path().unlink()
+        self._authorization_path().symlink_to(target)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        self._authorization_path().unlink()
+        self._authorization_path().mkdir()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        for identifier in ("../run", "run/authorization", "", "A" * 65):
+            with self.subTest(identifier=identifier):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+                    lifecycle._authorization_path(identifier)
+
+    def test_run_authorization_strict_json_and_operation_schema(self):
+        cases = (
+            ({"extra": "denied"}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": []}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": ["preflight", "preflight"]}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": ["preflight", "merge"]}, "run_authorization_schema_rejected"),
+            ({"authorization_id": 1}, "run_authorization_schema_rejected"),
+            ({"lifecycle_id": 1}, "run_authorization_schema_rejected"),
+            ({"task_contract_fingerprint": 1}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": "preflight"}, "run_authorization_schema_rejected"),
+            ({"issued_at": 1}, "run_authorization_time_rejected"),
+            ({"expires_at": 1}, "run_authorization_time_rejected"),
+        )
+        for changes, code in cases:
+            with self.subTest(changes=changes):
+                self._write_authorization(**changes)
+                with self.assertRaisesRegex(L.StopNeedsHuman, code):
+                    self.preflight()
+        duplicate = json.dumps(run_authorization(self.h.data), separators=(",", ":"))
+        duplicate = duplicate.replace('"version":1', '"version":1,"version":1', 1)
+        self._authorization_path().write_text(duplicate, encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+            self.preflight()
+    def test_run_authorization_contract_fingerprint_mismatch_is_precise(self):
+        altered = contract(pr_title="changed-contract")
+        (self.contract_root / "life-1.json").write_text(json.dumps(altered), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_contract_mismatch"):
+            self.h.lifecycle()._read_authorization("run-authorization-1", L.fingerprint(altered))
+        self.assertFalse((self.h.state / "life-1/state.json").exists())
+
+    def test_fingerprint_contract_legacy_and_rebind_fail_closed(self):
+        self.preflight()
+        authorization = self._write_authorization(allowed_operations=["report-ready", "preflight"])
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_fingerprint_divergent"):
+            self.h.lifecycle().report_ready()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        replacement = run_authorization(self.h.data, authorization_id="run-authorization-2")
+        (self.authorization_root / "run-authorization-2.json").write_text(json.dumps(replacement), encoding="utf-8")
+        state["run_authorization_id"] = "run-authorization-2"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_binding_divergent"):
+            self.h.lifecycle().publish_head()
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["run_authorization_id"], "run-authorization-2")
+        state = {"lifecycle_id": "life-1", "fingerprint": L.fingerprint(self.h.data)}
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_state_missing"):
+            self.h.lifecycle().publish_head()
+
+    def test_authorization_operation_separation_and_ready_stop_replay(self):
+        self._write_authorization(allowed_operations=["preflight", "authorize-correction", "finalize-correction"])
+        self.preflight()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_operation_denied"):
+            self.h.lifecycle().publish_head()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["run_status"] = "READY"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        for operation in (self.h.lifecycle().report_ready, self.h.lifecycle().publish_head,
+                          self.h.lifecycle().ensure_pr, self.h.lifecycle().observe_ci,
+                          self.h.lifecycle().authorize_correction, self.h.lifecycle().finalize_correction):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_replay_after_ready"):
+                    operation()
+        state["run_status"] = "STOPPED"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        for operation in (self.h.lifecycle().report_ready, self.h.lifecycle().publish_head):
+            with self.subTest(stopped=operation.__name__):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_replay_after_stop"):
+                    operation()
+
+    def test_ready_uses_local_snapshot_and_no_network_entrypoint(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head(); life.ensure_pr(); life.observe_ci()
+        original_runner = self.h.runner
+
+        def local_only(command, cwd):
+            if command[1] in {"ls-remote", "fetch", "push"}:
+                raise AssertionError("network_git_called")
+            return original_runner(command, cwd)
+
+        life.runner = local_only
+        life.request = lambda *_: (_ for _ in ()).throw(AssertionError("api_called"))
+        with mock.patch.object(L, "_run_ephemeral_token_operation", side_effect=AssertionError("token_called")):
+            ready = life.report_ready()
+        self.assertEqual(ready["state"], "READY_FOR_HUMAN_MERGE_FOR_SHA=" + SHA)
+        self.assertEqual(json.loads((self.h.state / "life-1/state.json").read_text())["run_status"], "READY")
+
+    def test_old_snapshot_cannot_make_new_head_ready(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head(); life.ensure_pr(); life.observe_ci()
+        self.h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "ci_evidence_stale"):
+            life.report_ready()
+
+
 class InstallationTests(unittest.TestCase):
     def test_clean_install_reinstall_hashes_modes_and_no_unsafe_files(self):
         installer = load("b42_installer", INSTALLER_PATH)
+        self.assertIn(Path("tests/test_stage2e_closure.py"), installer.VERSIONED_SOURCE_FILES)
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp) / "profile" / "megabrain-autonomous-pr-lifecycle"
             installer.install(destination, test_only=True); (destination / "stale").write_text("x")

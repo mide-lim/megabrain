@@ -1,7 +1,7 @@
 ---
 name: megabrain-autonomous-pr-lifecycle
 description: "Run an approved bounded B4.2 PR lifecycle."
-version: 1.0.0
+version: 1.1.0
 ---
 
 # MegaBrain B4.2 Autonomous PR Lifecycle
