@@ -975,6 +975,165 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("$(rm -rf /)?", value); self.assertEqual(len(value), 2000)
 
 
+class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+    tearDown = LifecycleTests.tearDown
+    preflight = LifecycleTests.preflight
+    trusted_lstat = LifecycleTests.trusted_lstat
+    trusted_fstat = LifecycleTests.trusted_fstat
+
+    def _authorization_path(self) -> Path:
+        return self.authorization_root / "run-authorization-1.json"
+
+    def _write_authorization(self, **changes):
+        value = run_authorization(self.h.data, **changes)
+        self._authorization_path().write_text(json.dumps(value), encoding="utf-8")
+        return value
+
+    def test_run_authorization_ttl_and_timestamp_boundaries(self):
+        cases = (
+            ({"issued_at": "2026-01-01T12:00:00Z", "expires_at": "2026-01-02T12:00:01Z"}, "run_authorization_ttl_exceeded"),
+            ({"issued_at": "2026-01-01T12:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:01Z", "expires_at": "2026-01-01T13:00:00Z"}, "run_authorization_not_yet_valid"),
+            ({"issued_at": "2026-01-01T11:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_expired"),
+            ({"issued_at": "2026-01-01T13:00:00Z", "expires_at": "2026-01-01T12:00:00Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00+00:00"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-01-01T12:00:00.000Z"}, "run_authorization_time_rejected"),
+            ({"issued_at": "not-a-time"}, "run_authorization_time_rejected"),
+            ({"issued_at": "2026-02-30T12:00:00Z"}, "run_authorization_time_rejected"),
+        )
+        for changes, code in cases:
+            with self.subTest(changes=changes):
+                self._write_authorization(**changes)
+                with self.assertRaisesRegex(L.StopNeedsHuman, code):
+                    self.preflight()
+        self._write_authorization(issued_at="2025-12-31T12:00:01Z", expires_at="2026-01-01T12:00:01Z")
+        self.h.lifecycle()._read_authorization("run-authorization-1", L.fingerprint(self.h.data))
+        self._write_authorization(issued_at="2026-01-01T12:00:00Z", expires_at="2026-01-02T12:00:00Z")
+        self.assertEqual(self.preflight()["state"], "PREFLIGHT_OK")
+
+    def test_run_authorization_trust_chain_and_identifier_rejection(self):
+        lifecycle = self.h.lifecycle()
+        self.assertEqual(lifecycle._trusted_authorization_path("run-authorization-1"), self._authorization_path())
+        for parent, mode in ((self.authorization_root.parent, 0o775), (self.authorization_root.parent, 0o777),
+                             (self.authorization_root, 0o775)):
+            with self.subTest(parent=parent, mode=oct(mode)):
+                self.contract_metadata[parent] = {"mode": mode}
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+                    lifecycle._trusted_authorization_path("run-authorization-1")
+                self.contract_metadata.pop(parent)
+        for metadata in ({"mode": 0o664}, {"uid": 1000}):
+            with self.subTest(metadata=metadata):
+                self.contract_metadata[self._authorization_path()] = metadata
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+                    lifecycle._trusted_authorization_path("run-authorization-1")
+                self.contract_metadata.pop(self._authorization_path())
+        target = self.authorization_root / "target.json"
+        target.write_text(json.dumps(run_authorization(self.h.data)), encoding="utf-8")
+        self._authorization_path().unlink()
+        self._authorization_path().symlink_to(target)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        self._authorization_path().unlink()
+        self._authorization_path().mkdir()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        for identifier in ("../run", "run/authorization", "", "A" * 65):
+            with self.subTest(identifier=identifier):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+                    lifecycle._authorization_path(identifier)
+
+    def test_run_authorization_strict_json_and_operation_schema(self):
+        cases = (
+            ({"extra": "denied"}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": []}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": ["preflight", "preflight"]}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": ["preflight", "merge"]}, "run_authorization_schema_rejected"),
+            ({"authorization_id": 1}, "run_authorization_schema_rejected"),
+            ({"lifecycle_id": 1}, "run_authorization_schema_rejected"),
+            ({"task_contract_fingerprint": 1}, "run_authorization_schema_rejected"),
+            ({"allowed_operations": "preflight"}, "run_authorization_schema_rejected"),
+            ({"issued_at": 1}, "run_authorization_time_rejected"),
+            ({"expires_at": 1}, "run_authorization_time_rejected"),
+        )
+        for changes, code in cases:
+            with self.subTest(changes=changes):
+                self._write_authorization(**changes)
+                with self.assertRaisesRegex(L.StopNeedsHuman, code):
+                    self.preflight()
+        duplicate = json.dumps(run_authorization(self.h.data), separators=(",", ":"))
+        duplicate = duplicate.replace('"version":1', '"version":1,"version":1', 1)
+        self._authorization_path().write_text(duplicate, encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+            self.preflight()
+    def test_fingerprint_contract_legacy_and_rebind_fail_closed(self):
+        self.preflight()
+        authorization = self._write_authorization(allowed_operations=["report-ready", "preflight"])
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_fingerprint_divergent"):
+            self.h.lifecycle().report_ready()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        replacement = run_authorization(self.h.data, authorization_id="run-authorization-2")
+        (self.authorization_root / "run-authorization-2.json").write_text(json.dumps(replacement), encoding="utf-8")
+        state["run_authorization_id"] = "run-authorization-2"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_fingerprint_divergent"):
+            self.h.lifecycle().publish_head()
+        state = {"lifecycle_id": "life-1", "fingerprint": L.fingerprint(self.h.data)}
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_state_missing"):
+            self.h.lifecycle().publish_head()
+
+    def test_authorization_operation_separation_and_ready_stop_replay(self):
+        self._write_authorization(allowed_operations=["preflight", "authorize-correction", "finalize-correction"])
+        self.preflight()
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_operation_denied"):
+            self.h.lifecycle().publish_head()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["run_status"] = "READY"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        for operation in (self.h.lifecycle().report_ready, self.h.lifecycle().publish_head,
+                          self.h.lifecycle().ensure_pr, self.h.lifecycle().observe_ci,
+                          self.h.lifecycle().authorize_correction, self.h.lifecycle().finalize_correction):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_replay_after_ready"):
+                    operation()
+        state["run_status"] = "STOPPED"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        for operation in (self.h.lifecycle().report_ready, self.h.lifecycle().publish_head):
+            with self.subTest(stopped=operation.__name__):
+                with self.assertRaisesRegex(L.StopNeedsHuman, "run_replay_after_stop"):
+                    operation()
+
+    def test_ready_uses_local_snapshot_and_no_network_entrypoint(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head(); life.ensure_pr(); life.observe_ci()
+        original_runner = self.h.runner
+
+        def local_only(command, cwd):
+            if command[1] in {"ls-remote", "fetch", "push"}:
+                raise AssertionError("network_git_called")
+            return original_runner(command, cwd)
+
+        life.runner = local_only
+        life.request = lambda *_: (_ for _ in ()).throw(AssertionError("api_called"))
+        with mock.patch.object(L, "_run_ephemeral_token_operation", side_effect=AssertionError("token_called")):
+            ready = life.report_ready()
+        self.assertEqual(ready["state"], "READY_FOR_HUMAN_MERGE_FOR_SHA=" + SHA)
+        self.assertEqual(json.loads((self.h.state / "life-1/state.json").read_text())["run_status"], "READY")
+
+    def test_old_snapshot_cannot_make_new_head_ready(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head(); life.ensure_pr(); life.observe_ci()
+        self.h.head = "b" * 40
+        with self.assertRaisesRegex(L.StopNeedsHuman, "ci_evidence_stale"):
+            life.report_ready()
+
+
 class InstallationTests(unittest.TestCase):
     def test_clean_install_reinstall_hashes_modes_and_no_unsafe_files(self):
         installer = load("b42_installer", INSTALLER_PATH)
