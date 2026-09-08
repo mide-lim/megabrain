@@ -357,6 +357,11 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
             result["installation_permissions_valid"] = False
             raise SafeFailure("installation_permissions_rejected")
         result["installation_permissions_valid"] = True
+        # The baseline request can consume the last valid instant. Re-check the
+        # bound authorization immediately before minting any credential.
+        refreshed_contract, refreshed_state = lifecycle._guard(OPERATION)
+        if refreshed_contract != contract or refreshed_state != state:
+            raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         mint_status, minted = request_json(
             "POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}",
             {"repositories": ["megabrain"], "permissions": PR_TOKEN_REQUEST_PERMISSIONS},
