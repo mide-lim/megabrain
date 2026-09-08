@@ -35,6 +35,7 @@ class FakeLifecycle:
     published_sha = SHA
     commands: list[list[str]] = []
     roots: list[Path] = []
+    deferred_initial_commits: list[tuple[dict, str, dict]] = []
 
     def __init__(self, root, lifecycle_id):
         self.root = root
@@ -61,12 +62,18 @@ class FakeLifecycle:
     def _publish_reservation(self):
         yield
 
-    def _publish_head_locked(self):
+    def _publish_head_locked(self, *, state_writer=None):
         assert self.runner is not None
         command = ["git", "push", "origin", f"HEAD:refs/heads/{self.branch}"]
         self.commands.append(command)
         self.runner(command, self.root)
+        deferred = {"head_sha": self.published_sha, "published_once": True, "corrections": 0}
+        if state_writer is not None:
+            state_writer(deferred)
         return {"state": "PUBLISHED", "head_sha": self.published_sha}
+
+    def _commit_deferred_initial_publish_state(self, expected_state, expected_head, deferred_state):
+        self.deferred_initial_commits.append((expected_state, expected_head, deferred_state))
 
 
 class AuthenticatedPublishHeadTests(unittest.TestCase):
@@ -80,6 +87,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         FakeLifecycle.published_sha = SHA
         FakeLifecycle.commands = []
         FakeLifecycle.roots = []
+        FakeLifecycle.deferred_initial_commits = []
 
     def api_success(self, method, path, authorization, payload=None):
         if method == "GET" and path == "/app/installations/456":
@@ -142,6 +150,22 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         self.assertNotIn("TOKEN_FIXTURE", encoded)
         self.assertNotIn("JWT_FIXTURE", encoded)
         self.assertNotIn(self.environment["MEGABRAIN_GITHUB_APP_KEY_PATH"], encoded)
+
+    def test_initial_publish_defers_success_state_until_after_token_teardown(self):
+        events = []
+
+        def api(method, path, authorization, payload=None):
+            if method == "DELETE" and path == "/installation/token":
+                events.append("revoked")
+            return self.api_success(method, path, authorization, payload)
+
+        patches = self.patches(api)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8]:
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(FakeLifecycle.deferred_initial_commits), 1)
+        self.assertEqual(events, ["revoked"])
+        self.assertEqual(FakeLifecycle.deferred_initial_commits[0][1], SHA)
 
     def test_isolated_staging_directory_is_removed_after_authenticated_publish(self):
         staging_parents = []

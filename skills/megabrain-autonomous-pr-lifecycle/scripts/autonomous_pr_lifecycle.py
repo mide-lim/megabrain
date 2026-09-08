@@ -525,7 +525,8 @@ class Lifecycle:
             raise
         except (ValueError, json.JSONDecodeError) as exc:
             raise StopNeedsHuman("run_authorization_schema_rejected") from exc
-        if set(data) != RUN_AUTHORIZATION_FIELDS or data.get("version") != 1:
+        if (set(data) != RUN_AUTHORIZATION_FIELDS or type(data.get("version")) is not int
+                or data["version"] != 1):
             raise StopNeedsHuman("run_authorization_schema_rejected")
         if (data.get("authorization_id") != authorization_id or data.get("lifecycle_id") != self.lifecycle_id
                 or not isinstance(data.get("task_contract_fingerprint"), str)
@@ -982,6 +983,21 @@ class Lifecycle:
         (self._write_state if state_writer is None else state_writer)(state)
         return {"state": "PUBLISHED", "head_sha": head}
 
+    def _commit_deferred_initial_publish_state(self, expected_state: Mapping[str, Any], expected_head: str,
+                                               deferred_state: Mapping[str, Any]) -> None:
+        """Persist initial P2 success only after token teardown and revalidation."""
+        contract, current = self._guard("publish-head")
+        if current != expected_state:
+            raise StopNeedsHuman("state_changed_before_commit")
+        if self._validate_checkout(contract) != expected_head:
+            raise StopNeedsHuman("publish_state_commit_rejected")
+        self._validate_remote_head(contract, expected_head)
+        expected = dict(current)
+        expected.update({"head_sha": expected_head, "ci_sha": None, "published_once": True})
+        if dict(deferred_state) != expected:
+            raise StopNeedsHuman("publish_state_commit_rejected")
+        self._write_state(expected)
+
     def _commit_deferred_correction_publish(self, expected_latched: Mapping[str, Any], expected_head: str,
                                             deferred_state: Mapping[str, Any]) -> None:
         """Persist correction publish success only after the adapter tore down its token."""
@@ -1257,6 +1273,7 @@ class Lifecycle:
         """Seal bounded P4 snapshot evidence; this method has no network surface."""
         contract, state = self._guard("report-ready")
         sha = self._validate_checkout(contract)
+        corrections = self._correction_count(contract, state)
         jobs = state.get("ci_jobs")
         if (state.get("published_once") is not True or state.get("ci_sha") != sha or state.get("ci_failure") is not None
                 or type(state.get("pr_number")) is not int or state["pr_number"] <= 0
@@ -1278,7 +1295,7 @@ class Lifecycle:
                 "pr_number": state["pr_number"], "branch": contract["branch"], "head_sha": sha,
                 "workflow_run_id": state["workflow_run_id"],
                 "jobs": {name: jobs[name] for name in contract["expected_ci_jobs"]},
-                "corrections": self._correction_count(contract, state), "max_corrections": contract["max_corrections"],
+                "corrections": corrections, "max_corrections": contract["max_corrections"],
                 "merge_authority": "human_only"}
 
 

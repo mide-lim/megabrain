@@ -197,6 +197,13 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_missing"):
             self.h.lifecycle().preflight("missing-authorization")
 
+    def test_run_authorization_requires_integer_schema_version(self):
+        authorization = run_authorization(self.h.data, version=True)
+        path = self.authorization_root / "run-authorization-1.json"
+        path.write_text(json.dumps(authorization), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
+            self.preflight()
+
     def test_closed_operations_are_exactly_required(self):
         self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"}))
         self.assertEqual(
@@ -213,6 +220,20 @@ class LifecycleTests(unittest.TestCase):
         push = next(c for c in self.h.commands if c[1] == "push")
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
         self.assertFalse(any(any(x in part for x in ("--force", "--delete", "tag")) for c in self.h.commands for part in c))
+
+    def test_report_ready_rejects_exhausted_correction_budget_before_ready_state(self):
+        self.preflight()
+        life = self.h.lifecycle()
+        life.publish_head()
+        life.ensure_pr()
+        life.observe_ci()
+        state_path = self.h.state / "life-1/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["corrections"] = self.h.data["max_corrections"] + 1
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "correction_state_rejected"):
+            life.report_ready()
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["run_status"], "ACTIVE")
 
     def test_changed_post_initial_head_requires_finalized_correction_before_push_or_budget_use(self):
         self.preflight(); life = self.h.lifecycle()

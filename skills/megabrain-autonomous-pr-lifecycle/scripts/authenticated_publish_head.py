@@ -375,6 +375,7 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
     lifecycle: Any = None
     correction_mode = False
     deferred_publish_state: dict[str, Any] | None = None
+    initial_publish_state: dict[str, Any] | None = None
     latched_publish_state: dict[str, Any] | None = None
     try:
         app_id, installation_id, key_path = _required_environment(environment)
@@ -431,9 +432,15 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
                     nonlocal deferred_publish_state
                     deferred_publish_state = copy.deepcopy(value)
                 published = staged_lifecycle._publish_head_locked(state_writer=defer_publish)
-                latched_publish_state = copy.deepcopy(lifecycle._guard()[1])
+                latched_publish_state = copy.deepcopy(lifecycle._guard(OPERATION)[1])
             else:
-                published = staged_lifecycle._publish_head_locked()
+                initial_publish_state = copy.deepcopy(state)
+
+                def defer_publish(value: dict[str, Any]) -> None:
+                    nonlocal deferred_publish_state
+                    deferred_publish_state = copy.deepcopy(value)
+
+                published = staged_lifecycle._publish_head_locked(state_writer=defer_publish)
         result["publish"] = True
         result["remote_sha_verified"] = published.get("head_sha") if isinstance(published.get("head_sha"), str) else None
         if result["remote_sha_verified"] is None:
@@ -462,12 +469,24 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
                 result["temporary_cleanup"] = False
                 result["failure_code"] = "cleanup_failed"
         token = None
-    if result["failure_code"] is None and correction_mode:
-        if lifecycle is None or latched_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
+    if result["failure_code"] is None:
+        if correction_mode:
+            if lifecycle is None or latched_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
+                result["failure_code"] = "publish_state_commit_rejected"
+            else:
+                try:
+                    lifecycle._commit_deferred_correction_publish(latched_publish_state, result["remote_sha_verified"], deferred_publish_state)
+                except LIFECYCLE.StopNeedsHuman as exc:
+                    result["failure_code"] = str(exc)
+                except Exception:
+                    result["failure_code"] = "publish_state_commit_rejected"
+        elif lifecycle is None or initial_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
             result["failure_code"] = "publish_state_commit_rejected"
         else:
             try:
-                lifecycle._commit_deferred_correction_publish(latched_publish_state, result["remote_sha_verified"], deferred_publish_state)
+                lifecycle._commit_deferred_initial_publish_state(
+                    initial_publish_state, result["remote_sha_verified"], deferred_publish_state,
+                )
             except LIFECYCLE.StopNeedsHuman as exc:
                 result["failure_code"] = str(exc)
             except Exception:
