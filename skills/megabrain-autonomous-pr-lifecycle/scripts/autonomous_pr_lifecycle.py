@@ -863,6 +863,7 @@ class Lifecycle:
             "ci_jobs": None,
             "workflow_run_id": None,
             "observation_generation": 0,
+            "ci_snapshot": None,
             "pending_correction_sha": None,
             "pending_publish_attempted": False,
             "corrections": 0,
@@ -989,7 +990,11 @@ class Lifecycle:
         remote = self._git("ls-remote", "origin", ref).split()
         if len(remote) != 2 or remote[0] != head or remote[1] != ref:
             raise StopNeedsHuman("remote_head_mismatch")
-        state.update({"head_sha": head, "ci_sha": None, "published_once": True})
+        # A publish starts a new head epoch.  No green observation evidence,
+        # including the coherent snapshot seal, may cross that boundary.
+        state.update({"head_sha": head, "ci_sha": None, "ci_failure": None,
+                      "ci_jobs": None, "workflow_run_id": None,
+                      "ci_snapshot": None, "published_once": True})
         if correction_mode:
             state.update({"ci_failure": None, "pending_correction_sha": None, "pending_publish_attempted": False})
         (self._write_state if state_writer is None else state_writer)(state)
@@ -1005,7 +1010,9 @@ class Lifecycle:
             raise StopNeedsHuman("publish_state_commit_rejected")
         self._validate_remote_head(contract, expected_head)
         expected = dict(current)
-        expected.update({"head_sha": expected_head, "ci_sha": None, "published_once": True})
+        expected.update({"head_sha": expected_head, "ci_sha": None, "ci_failure": None,
+                         "ci_jobs": None, "workflow_run_id": None,
+                         "ci_snapshot": None, "published_once": True})
         if dict(deferred_state) != expected:
             raise StopNeedsHuman("publish_state_commit_rejected")
         self._write_state(expected)
@@ -1021,6 +1028,7 @@ class Lifecycle:
         self._require_clean_checkout()
         expected = dict(current)
         expected.update({"head_sha": expected_head, "ci_sha": None, "ci_failure": None,
+                         "ci_jobs": None, "workflow_run_id": None, "ci_snapshot": None,
                          "pending_correction_sha": None, "pending_publish_attempted": False,
                          "published_once": True})
         if dict(deferred_state) != expected:
@@ -1195,14 +1203,25 @@ class Lifecycle:
         self._validate_remote_head(contract, sha)
         deferred = dict(state)
         if is_green:
+            generation = state.get("observation_generation", 0) + 1
+            exact_jobs = {name: found[name] for name in contract["expected_ci_jobs"]}
             deferred["ci_sha"] = sha
             deferred["ci_failure"] = None
-            deferred["ci_jobs"] = {name: found[name] for name in contract["expected_ci_jobs"]}
+            deferred["ci_jobs"] = exact_jobs
             deferred["workflow_run_id"] = run_id
-            deferred["observation_generation"] = state.get("observation_generation", 0) + 1
+            deferred["observation_generation"] = generation
+            deferred["ci_snapshot"] = {
+                "pr_number": number, "branch": contract["branch"], "head_sha": sha,
+                "ci_sha": sha, "ci_jobs": exact_jobs, "workflow_run_id": run_id,
+                "observation_generation": generation,
+                "job_generations": {name: generation for name in contract["expected_ci_jobs"]},
+            }
             result_state = "CI_GREEN_FOR_HEAD"
         else:
             deferred["ci_sha"] = None
+            deferred["ci_jobs"] = None
+            deferred["workflow_run_id"] = None
+            deferred["ci_snapshot"] = None
             deferred["ci_failure"] = {"head_sha": sha, "pr_number": number, "workflow_run_id": run_id,
                                       "jobs": {name: found[name] for name in contract["expected_ci_jobs"]}}
             result_state = "CI_FAILED_FOR_HEAD"
@@ -1233,11 +1252,21 @@ class Lifecycle:
                     or type(run_id) is not int or run_id <= 0 or type(generation) is not int
                     or generation != current_state.get("observation_generation", 0) + 1):
                 raise StopNeedsHuman("ci_state_commit_rejected")
+            exact_jobs = {name: jobs[name] for name in contract["expected_ci_jobs"]}
+            snapshot = {
+                "pr_number": current_state["pr_number"], "branch": contract["branch"],
+                "head_sha": current_head, "ci_sha": current_head, "ci_jobs": exact_jobs,
+                "workflow_run_id": run_id, "observation_generation": generation,
+                "job_generations": {name: generation for name in contract["expected_ci_jobs"]},
+            }
+            if dict(deferred_state).get("ci_snapshot") != snapshot:
+                raise StopNeedsHuman("ci_state_commit_rejected")
             expected_deferred["ci_sha"] = current_head
             expected_deferred["ci_failure"] = None
-            expected_deferred["ci_jobs"] = {name: jobs[name] for name in contract["expected_ci_jobs"]}
+            expected_deferred["ci_jobs"] = exact_jobs
             expected_deferred["workflow_run_id"] = run_id
             expected_deferred["observation_generation"] = generation
+            expected_deferred["ci_snapshot"] = snapshot
         elif (dict(deferred_state).get("ci_sha") is None
                 and isinstance(dict(deferred_state).get("ci_failure"), Mapping)):
             evidence = dict(deferred_state)["ci_failure"]
@@ -1250,6 +1279,9 @@ class Lifecycle:
                     or all(value == "success" for value in jobs.values())):
                 raise StopNeedsHuman("ci_state_commit_rejected")
             expected_deferred["ci_sha"] = None
+            expected_deferred["ci_jobs"] = None
+            expected_deferred["workflow_run_id"] = None
+            expected_deferred["ci_snapshot"] = None
             expected_deferred["ci_failure"] = {"head_sha": current_head, "pr_number": current_state["pr_number"],
                                                 "workflow_run_id": evidence["workflow_run_id"],
                                                 "jobs": {name: jobs[name] for name in contract["expected_ci_jobs"]}}
@@ -1287,13 +1319,24 @@ class Lifecycle:
         sha = self._validate_checkout(contract)
         corrections = self._correction_count(contract, state)
         jobs = state.get("ci_jobs")
-        if (state.get("published_once") is not True or state.get("ci_sha") != sha or state.get("ci_failure") is not None
+        snapshot = state.get("ci_snapshot")
+        if (state.get("published_once") is not True or state.get("head_sha") != sha
+                or state.get("ci_sha") != sha or state.get("ci_failure") is not None
                 or type(state.get("pr_number")) is not int or state["pr_number"] <= 0
                 or type(state.get("workflow_run_id")) is not int or state["workflow_run_id"] <= 0
                 or type(state.get("observation_generation")) is not int or state["observation_generation"] < 1
                 or state.get("pending_correction_sha") is not None or state.get("pending_publish_attempted") is not False
                 or not isinstance(jobs, Mapping) or set(jobs) != set(contract["expected_ci_jobs"])
                 or any(jobs.get(name) != "success" for name in contract["expected_ci_jobs"])):
+            raise StopNeedsHuman("ci_evidence_stale")
+        expected_snapshot = {
+            "pr_number": state["pr_number"], "branch": contract["branch"], "head_sha": sha,
+            "ci_sha": sha, "ci_jobs": {name: jobs[name] for name in contract["expected_ci_jobs"]},
+            "workflow_run_id": state["workflow_run_id"],
+            "observation_generation": state["observation_generation"],
+            "job_generations": {name: state["observation_generation"] for name in contract["expected_ci_jobs"]},
+        }
+        if snapshot != expected_snapshot:
             raise StopNeedsHuman("ci_evidence_stale")
         self._require_clean_checkout()
         _, current = self._guard("report-ready")
