@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import importlib.util
 import json
 import os
@@ -31,6 +32,7 @@ EXPECTED_INSTALLATION_PERMISSIONS = {
     "workflows": "write",
 }
 PUBLISH_TOKEN_REQUEST_PERMISSIONS = {"contents": "write"}
+CORRECTION_PUBLISH_TOKEN_REQUEST_PERMISSIONS = {"contents": "write", "pull_requests": "read", "metadata": "read"}
 GIT_BINARY = "/usr/bin/git"
 OPENSSL_BINARY = "/usr/bin/openssl"
 
@@ -164,7 +166,7 @@ def make_jwt(app_id: str, key_path: str, now: int | None = None) -> str:
     return f"{header}.{payload}.{_b64url(signed.stdout)}"
 
 
-def request_json(method: str, path: str, authorization: str, payload: Mapping[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+def request_json(method: str, path: str, authorization: str, payload: Mapping[str, Any] | None = None) -> tuple[int, Any]:
     body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         f"{API_ROOT}{path}", data=body, method=method,
@@ -178,7 +180,7 @@ def request_json(method: str, path: str, authorization: str, payload: Mapping[st
         with urllib.request.urlopen(request, timeout=20) as response:
             body_value = response.read()
             decoded = json.loads(body_value.decode("utf-8")) if body_value else {}
-            return response.status, decoded if isinstance(decoded, dict) else {}
+            return response.status, decoded
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as exc:
         raise SafeFailure("api_request_failed") from exc
 
@@ -187,13 +189,13 @@ def _valid_installation_permissions(value: Any) -> bool:
     return isinstance(value, dict) and "administration" not in value and value == EXPECTED_INSTALLATION_PERMISSIONS
 
 
-def _valid_publish_token_permissions(value: Any) -> bool:
-    return (
-        isinstance(value, dict)
-        and value.get("contents") == "write"
-        and set(value).issubset({"contents", "metadata"})
-        and value.get("metadata", "read") == "read"
-    )
+def _valid_publish_token_permissions(value: Any, *, correction_mode: bool = False) -> bool:
+    if not isinstance(value, dict):
+        return False
+    expected = CORRECTION_PUBLISH_TOKEN_REQUEST_PERMISSIONS if correction_mode else PUBLISH_TOKEN_REQUEST_PERMISSIONS
+    if correction_mode:
+        return value == expected
+    return value.get("contents") == "write" and set(value).issubset({"contents", "metadata"}) and value.get("metadata", "read") == "read"
 
 
 def _valid_scope(value: Any) -> bool:
@@ -312,8 +314,12 @@ def create_isolated_staging_repository(source_root: Path, staging_root: Path, br
 def validate_source_for_staging(lifecycle: Any, contract: Mapping[str, Any], state: Mapping[str, Any]) -> str:
     """Complete every local contract, checkout, and committed-range check pre-token."""
     head = lifecycle._validate_checkout(contract)
+    if state.get("published_once") is True and head != state.get("head_sha") and state.get("pending_correction_sha") is None:
+        raise LIFECYCLE.StopNeedsHuman("correction_finalization_required")
     lifecycle._validate_committed_paths(contract, state.get("head_sha"), head)
     lifecycle._correction_count(contract, state)
+    if state.get("pending_correction_sha") is not None:
+        lifecycle._require_clean_checkout()
     if type(state.get("published_once")) is not bool:
         raise LIFECYCLE.StopNeedsHuman("publication_state_rejected")
     return head
@@ -326,6 +332,24 @@ def controlled_runner(temp_directory: str, askpass_path: str, token: str, branch
             raise LIFECYCLE.StopNeedsHuman("git_command_rejected")
         return _run_isolated_git(command, cwd, temp_directory, token=token, askpass_path=askpass_path)
     return run
+
+
+def correction_publish_request(token: str, state: Mapping[str, Any], branch: str):
+    """Expose only same-head collection and stored-PR reads for correction P2."""
+    number = state.get("pr_number")
+    if type(number) is not int or number <= 0:
+        raise LIFECYCLE.StopNeedsHuman("pr_number_rejected")
+    collection = f"/repos/{REPOSITORY}/pulls?state=all&head=mide-lim:{branch}"
+    detail = f"/repos/{REPOSITORY}/pulls/{number}"
+
+    def request(method: str, path: str, payload: Mapping[str, Any] | None = None) -> Any:
+        if method != "GET" or payload is not None or path not in {collection, detail}:
+            raise LIFECYCLE.StopNeedsHuman("api_request_rejected")
+        status, body = request_json(method, path, f"token {token}")
+        if status != 200:
+            raise LIFECYCLE.StopNeedsHuman("api_response_rejected")
+        return body
+    return request
 
 
 def _base_result() -> dict[str, Any]:
@@ -351,6 +375,10 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
     environment = os.environ if environ is None else environ
     token: str | None = None
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
+    lifecycle: Any = None
+    correction_mode = False
+    deferred_publish_state: dict[str, Any] | None = None
+    latched_publish_state: dict[str, Any] | None = None
     try:
         app_id, installation_id, key_path = _required_environment(environment)
         validate_privileged_executable(GIT_BINARY)
@@ -368,6 +396,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         result["temporary_cleanup"] = False
         lifecycle.runner = source_runner(temporary_directory.name, branch)
         approved_head = validate_source_for_staging(lifecycle, contract, state)
+        correction_mode = state.get("pending_correction_sha") is not None
         staging_root = Path(temporary_directory.name) / "staging"
         create_isolated_staging_repository(source_root, staging_root, branch, approved_head, temporary_directory.name)
         jwt = make_jwt(app_id, key_path)
@@ -376,13 +405,14 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
             result["installation_permissions_valid"] = False
             raise SafeFailure("installation_permissions_rejected")
         result["installation_permissions_valid"] = True
-        mint_status, minted = request_json("POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}", {"repositories": ["megabrain"], "permissions": PUBLISH_TOKEN_REQUEST_PERMISSIONS})
+        requested_permissions = CORRECTION_PUBLISH_TOKEN_REQUEST_PERMISSIONS if correction_mode else PUBLISH_TOKEN_REQUEST_PERMISSIONS
+        mint_status, minted = request_json("POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}", {"repositories": ["megabrain"], "permissions": requested_permissions})
         jwt = ""
-        candidate = minted.get("token") if mint_status == 201 else None
+        candidate = minted.get("token") if mint_status == 201 and isinstance(minted, Mapping) else None
         if not isinstance(candidate, str) or not candidate:
             raise SafeFailure("token_mint_failed")
         token = candidate
-        if not _valid_publish_token_permissions(minted.get("permissions")):
+        if not isinstance(minted, Mapping) or not _valid_publish_token_permissions(minted.get("permissions"), correction_mode=correction_mode):
             result["publish_token_permissions_valid"] = False
             raise SafeFailure("token_permissions_rejected")
         result["publish_token_permissions_valid"] = True
@@ -396,8 +426,17 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         )
         staged_lifecycle = LIFECYCLE.Lifecycle(staging_root, lifecycle_id)
         staged_lifecycle.runner = runner
+        if correction_mode:
+            staged_lifecycle.request = correction_publish_request(token, state, branch)
         with staged_lifecycle._publish_reservation():
-            published = staged_lifecycle._publish_head_locked()
+            if correction_mode:
+                def defer_publish(value: dict[str, Any]) -> None:
+                    nonlocal deferred_publish_state
+                    deferred_publish_state = copy.deepcopy(value)
+                published = staged_lifecycle._publish_head_locked(state_writer=defer_publish)
+                latched_publish_state = copy.deepcopy(lifecycle._guard()[1])
+            else:
+                published = staged_lifecycle._publish_head_locked()
         result["publish"] = True
         result["remote_sha_verified"] = published.get("head_sha") if isinstance(published.get("head_sha"), str) else None
         if result["remote_sha_verified"] is None:
@@ -426,6 +465,16 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
                 result["temporary_cleanup"] = False
                 result["failure_code"] = "cleanup_failed"
         token = None
+    if result["failure_code"] is None and correction_mode:
+        if lifecycle is None or latched_publish_state is None or deferred_publish_state is None or result["remote_sha_verified"] is None:
+            result["failure_code"] = "publish_state_commit_rejected"
+        else:
+            try:
+                lifecycle._commit_deferred_correction_publish(latched_publish_state, result["remote_sha_verified"], deferred_publish_state)
+            except LIFECYCLE.StopNeedsHuman as exc:
+                result["failure_code"] = str(exc)
+            except Exception:
+                result["failure_code"] = "publish_state_commit_rejected"
     if result["failure_code"] is None:
         result["status"] = "ok"
     return result

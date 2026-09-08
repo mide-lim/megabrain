@@ -220,19 +220,21 @@ def validate_source_for_observe_ci(lifecycle: Any, contract: Mapping[str, Any], 
     """Complete all contract/state/local/ref validation before JWT creation."""
     head = lifecycle._validate_checkout(contract)
     number = state.get("pr_number")
-    if state.get("published_once") is not True or type(number) is not int or number <= 0 or state.get("head_sha") != head:
+    if (state.get("published_once") is not True or type(number) is not int or number <= 0 or state.get("head_sha") != head
+            or state.get("pending_correction_sha") is not None):
         raise LIFECYCLE.StopNeedsHuman("pr_or_head_missing")
     lifecycle._validate_remote_head(contract, head)
     return head
 
 
 def validated_jobs_evidence(observed: Mapping[str, Any], contract: Mapping[str, Any]) -> dict[str, str]:
+    """Accept only exact completed success/failure conclusions; no provider text."""
     expected = contract.get("expected_ci_jobs")
     jobs = observed.get("jobs")
     if (not isinstance(expected, list) or not isinstance(jobs, Mapping) or set(jobs) != set(expected)
-            or any(jobs.get(name) != "success" for name in expected)):
+            or any(jobs.get(name) not in {"success", "failure"} for name in expected)):
         raise SafeFailure("ci_result_rejected")
-    return {name: "success" for name in expected}
+    return {name: jobs[name] for name in expected}
 
 
 def _base_result() -> dict[str, Any]:
