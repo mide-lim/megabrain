@@ -1153,6 +1153,7 @@ class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
 class InstallationTests(unittest.TestCase):
     def test_clean_install_reinstall_hashes_modes_and_no_unsafe_files(self):
         installer = load("b42_installer", INSTALLER_PATH)
+        self.assertIn(Path("tests/test_stage2e_closure.py"), installer.VERSIONED_SOURCE_FILES)
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp) / "profile" / "megabrain-autonomous-pr-lifecycle"
             installer.install(destination, test_only=True); (destination / "stale").write_text("x")
