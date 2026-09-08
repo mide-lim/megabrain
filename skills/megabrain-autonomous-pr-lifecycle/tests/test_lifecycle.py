@@ -204,6 +204,13 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
             self.preflight()
 
+    def test_run_authorization_wrong_lifecycle_has_precise_failure(self):
+        authorization = run_authorization(self.h.data, lifecycle_id="other-life")
+        path = self.authorization_root / "run-authorization-1.json"
+        path.write_text(json.dumps(authorization), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_lifecycle_mismatch"):
+            self.preflight()
+
     def test_closed_operations_are_exactly_required(self):
         self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"}))
         self.assertEqual(

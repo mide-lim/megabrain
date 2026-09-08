@@ -528,10 +528,14 @@ class Lifecycle:
         if (set(data) != RUN_AUTHORIZATION_FIELDS or type(data.get("version")) is not int
                 or data["version"] != 1):
             raise StopNeedsHuman("run_authorization_schema_rejected")
-        if (data.get("authorization_id") != authorization_id or data.get("lifecycle_id") != self.lifecycle_id
+        if (data.get("authorization_id") != authorization_id
+                or not isinstance(data.get("lifecycle_id"), str)
+                or not LIFECYCLE_RE.fullmatch(data["lifecycle_id"])
                 or not isinstance(data.get("task_contract_fingerprint"), str)
                 or not FINGERPRINT_RE.fullmatch(data["task_contract_fingerprint"])):
             raise StopNeedsHuman("run_authorization_schema_rejected")
+        if data["lifecycle_id"] != self.lifecycle_id:
+            raise StopNeedsHuman("run_authorization_lifecycle_mismatch")
         operations = data.get("allowed_operations")
         if (not isinstance(operations, list) or not operations or len(set(operations)) != len(operations)
                 or any(not isinstance(value, str) or value not in RUN_AUTHORIZATION_OPERATIONS for value in operations)):
