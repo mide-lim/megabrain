@@ -1,6 +1,8 @@
 # Fluxo de desenvolvimento
 
-Este documento descreve o ciclo de engenharia alvo e o fluxo de transição que vale hoje. Ele não altera permissões nem cria CI, staging, Git write access ou promoção autônoma.
+Este documento descreve o ciclo de engenharia alvo e o fluxo de transição
+implementado. Ele não altera permissões nem autoriza nova CI, staging, produção
+ou promoção autônoma fora de um Task Contract aprovado.
 
 ## Ciclo alvo
 
@@ -62,13 +64,38 @@ Hoje:
 Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação atual
 usa CI disponível, evidência local, inspeção, pull requests e gates humanos. A
 existência do GitHub App não concede autoridade de produção, merge ou deploy.
+
+### Lifecycle Hermes implementado
+
+```text
+INTENT / TASK CONTRACT
+  -> agent/* implementation
+  -> bounded Run Authorization
+  -> controlled publish
+  -> controlled PR creation
+  -> CI observation
+  -> bounded self-correction
+  -> coherent CI snapshot
+  -> exact-SHA READY
+  -> HUMAN REVIEW / MERGE
+```
+
+`READY` é evidência limitada a um SHA exato; não concede autoridade de merge.
+Hermes não tem autoridade para merge, auto-merge, force push, escrita direta em
+`dev` ou `main`, mutação de workflows, rulesets ou permissões do GitHub App,
+interfaces genéricas e irrestritas de Git/API/shell, acesso à produção ou deploy.
+O merge humano permanece uma fronteira separada.
+
 ## Direção futura
 
-A CI isolada e as primeiras evidências determinísticas já existem. B4.2
-Autonomous PR Lifecycle está `IMPLEMENTED / HUMAN_GATE`: a capability local foi
-validada hermeticamente e instalada como artefato derivado, mas nenhuma operação
-GitHub autenticada foi executada. B4.1 está `COMPLETE / PROMOTED` e fornece
-somente autenticação GitHub App read-only comprovada; não habilita escrita nova.
-B4.2 mantém a concessão no Task Contract aprovado, sem auto-merge, deploy
+A CI isolada e o lifecycle Hermes limitado estão implementados. B4.1 — GitHub
+Auth Bootstrap, B4.2 — Autonomous PR Lifecycle e B4.3 — Bounded Run
+Authorization estão `COMPLETE / PROMOTED`; as provas autenticadas limitadas e a
+promoção confirmaram publicação controlada, criação de PR, observação de CI e
+autocorreção limitada até o estado READY de SHA exato.
+
+A concessão continua vinculada ao Task Contract aprovado, sem auto-merge, deploy
 automático ou promoção autônoma para `dev`, `main` ou produção. A validação local
-de `agent/*` é defesa em profundidade e não ACL provider-enforced.
+de `agent/*` é defesa em profundidade e não ACL provider-enforced. Staging ainda
+não está implementado; Sprint 5 continua não aprovada e Engineering Enablement
+permanece separado do roadmap de produto.
