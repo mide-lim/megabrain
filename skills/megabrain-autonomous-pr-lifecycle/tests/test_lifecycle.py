@@ -1029,6 +1029,14 @@ class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
                 with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
                     lifecycle._trusted_authorization_path("run-authorization-1")
                 self.contract_metadata.pop(self._authorization_path())
+        intermediate = self.authorization_root.parent
+        replacement = intermediate.with_name("authorization-parent-real")
+        intermediate.rename(replacement)
+        intermediate.symlink_to(replacement, target_is_directory=True)
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_trust_rejected"):
+            lifecycle._trusted_authorization_path("run-authorization-1")
+        intermediate.unlink()
+        replacement.rename(intermediate)
         target = self.authorization_root / "target.json"
         target.write_text(json.dumps(run_authorization(self.h.data)), encoding="utf-8")
         self._authorization_path().unlink()
@@ -1067,6 +1075,13 @@ class RunAuthorizationSecurityCoverageTests(unittest.TestCase):
         self._authorization_path().write_text(duplicate, encoding="utf-8")
         with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_schema_rejected"):
             self.preflight()
+    def test_run_authorization_contract_fingerprint_mismatch_is_precise(self):
+        altered = contract(pr_title="changed-contract")
+        (self.contract_root / "life-1.json").write_text(json.dumps(altered), encoding="utf-8")
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_contract_mismatch"):
+            self.h.lifecycle()._read_authorization("run-authorization-1", L.fingerprint(altered))
+        self.assertFalse((self.h.state / "life-1/state.json").exists())
+
     def test_fingerprint_contract_legacy_and_rebind_fail_closed(self):
         self.preflight()
         authorization = self._write_authorization(allowed_operations=["report-ready", "preflight"])
