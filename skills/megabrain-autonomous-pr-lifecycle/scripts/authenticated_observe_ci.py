@@ -244,15 +244,11 @@ def _base_result() -> dict[str, Any]:
             "head_sha": None, "workflow_run_id": None, "revocation": "not_attempted", "temporary_cleanup": None}
 
 
-def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: bool,
-                  environ: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Run only the fixed contract-bound `observe-ci` after a separate human gate."""
+def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Run only fixed observe-ci when state binds a Run Authorization."""
     result = _base_result()
     if operation != OPERATION:
         result["failure_code"] = "operation_rejected"
-        return result
-    if not operational_gate_approved:
-        result["failure_code"] = "operational_gate_required"
         return result
     environment = os.environ if environ is None else environ
     token: str | None = None
@@ -274,7 +270,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         reservation = lifecycle._publish_reservation()
         reservation.__enter__()
         reservation_acquired = True
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         expected_state = copy.deepcopy(state)
         expected_fingerprint = state.get("fingerprint")
         if not isinstance(expected_fingerprint, str):
@@ -286,7 +282,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         if configured_origin(source_root, temporary_directory.name) != ORIGIN:
             raise SafeFailure("origin_rejected")
         result["origin_valid"] = True
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         if state != expected_state or state.get("fingerprint") != expected_fingerprint:
             raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         head = validate_source_for_observe_ci(lifecycle, contract, state)
@@ -375,9 +371,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the fixed B4.2 P4 controlled CI observation adapter.")
     parser.add_argument("--operation", required=True, choices=[OPERATION])
     parser.add_argument("--lifecycle-id", required=True)
-    parser.add_argument("--operational-gate-approved", action="store_true")
     arguments = parser.parse_args()
-    result = run_operation(arguments.operation, arguments.lifecycle_id, arguments.operational_gate_approved)
+    result = run_operation(arguments.operation, arguments.lifecycle_id)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["status"] == "ok" else 1
 

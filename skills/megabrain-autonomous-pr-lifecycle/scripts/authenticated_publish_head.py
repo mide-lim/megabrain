@@ -362,14 +362,11 @@ def _base_result() -> dict[str, Any]:
     }
 
 
-def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: bool, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """Run only the exact contract-bound `publish-head` after a human gate."""
+def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Run only the exact contract-bound `publish-head` when state binds a Run Authorization."""
     result = _base_result()
     if operation != OPERATION:
         result["failure_code"] = "operation_rejected"
-        return result
-    if not operational_gate_approved:
-        result["failure_code"] = "operational_gate_required"
         return result
 
     environment = os.environ if environ is None else environ
@@ -389,7 +386,7 @@ def run_operation(operation: str, lifecycle_id: str, operational_gate_approved: 
         result["origin_valid"] = True
         source_root = Path.cwd().resolve()
         lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
-        contract, state = lifecycle._guard()
+        contract, state = lifecycle._guard(OPERATION)
         branch = contract["branch"]
         validate_key_path(key_path)
         temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p2-")
@@ -484,9 +481,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the fixed B4.2 P2 controlled publish-head adapter.")
     parser.add_argument("--operation", required=True, choices=[OPERATION])
     parser.add_argument("--lifecycle-id", required=True)
-    parser.add_argument("--operational-gate-approved", action="store_true")
     arguments = parser.parse_args()
-    result = run_operation(arguments.operation, arguments.lifecycle_id, arguments.operational_gate_approved)
+    result = run_operation(arguments.operation, arguments.lifecycle_id)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["status"] == "ok" else 1
 

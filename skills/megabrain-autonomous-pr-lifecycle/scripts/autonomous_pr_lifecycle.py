@@ -20,6 +20,18 @@ REPOSITORY = "mide-lim/megabrain"
 ORIGIN_URL = "https://github.com/mide-lim/megabrain.git"
 API_ROOT = "https://api.github.com"
 CONTRACT_ROOT = Path("/etc/megabrain/hermes-contracts/b4.2")
+RUN_AUTHORIZATION_ROOT = Path("/etc/megabrain/hermes-authorizations/b4.3")
+MAX_RUN_AUTHORIZATION_TTL = dt.timedelta(hours=24)
+RUN_AUTHORIZATION_OPERATIONS = frozenset({
+    "preflight", "publish-head", "ensure-pr", "observe-ci",
+    "authorize-correction", "finalize-correction", "report-ready",
+})
+RUN_AUTHORIZATION_FIELDS = frozenset({
+    "version", "authorization_id", "lifecycle_id", "task_contract_fingerprint",
+    "allowed_operations", "issued_at", "expires_at",
+})
+RUN_AUTHORIZATION_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 PUBLIC_OPERATIONS = frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"})
 DENIED_PATHS = (
@@ -45,6 +57,7 @@ EXPECTED_FIELDS = frozenset({
     "pr_title", "pr_body",
 })
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 LIFECYCLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 BRANCH_RE = re.compile(r"^agent/[a-z0-9][a-z0-9._-]{0,62}$")
 MAX_WORKFLOW_JSON_FILES = 32
@@ -69,6 +82,33 @@ def canonical_json(value: Mapping[str, Any]) -> bytes:
 
 def fingerprint(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _trusted_utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _strict_json(text: str) -> dict[str, Any]:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate_key")
+            result[key] = value
+        return result
+    value = json.loads(text, object_pairs_hook=reject_duplicates)
+    if not isinstance(value, dict):
+        raise ValueError("object_required")
+    return value
+
+
+def _parse_utc_timestamp(value: Any) -> dt.datetime:
+    if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
+        raise StopNeedsHuman("run_authorization_time_rejected")
+    try:
+        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError as exc:
+        raise StopNeedsHuman("run_authorization_time_rejected") from exc
 
 
 def _safe_relative(value: str) -> bool:
@@ -451,6 +491,97 @@ class Lifecycle:
             raise StopNeedsHuman("contract_expired") from exc
         return data, fingerprint(data)
 
+    def _authorization_path(self, authorization_id: str) -> Path:
+        if not isinstance(authorization_id, str) or not RUN_AUTHORIZATION_RE.fullmatch(authorization_id):
+            raise StopNeedsHuman("run_authorization_schema_rejected")
+        return RUN_AUTHORIZATION_ROOT / f"{authorization_id}.json"
+
+    def _trusted_authorization_path(self, authorization_id: str) -> Path:
+        path = self._authorization_path(authorization_id)
+        directories = (RUN_AUTHORIZATION_ROOT.parent.parent.parent, RUN_AUTHORIZATION_ROOT.parent.parent,
+                       RUN_AUTHORIZATION_ROOT.parent, RUN_AUTHORIZATION_ROOT)
+        for directory in directories:
+            try:
+                status = os.lstat(directory)
+            except OSError as exc:
+                raise StopNeedsHuman("run_authorization_trust_rejected") from exc
+            if (stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode)
+                    or status.st_uid != 0 or stat.S_IMODE(status.st_mode) & 0o022):
+                raise StopNeedsHuman("run_authorization_trust_rejected")
+        try:
+            status = os.lstat(path)
+        except OSError as exc:
+            raise StopNeedsHuman("run_authorization_missing") from exc
+        if (stat.S_ISLNK(status.st_mode) or not stat.S_ISREG(status.st_mode)
+                or status.st_uid != 0 or stat.S_IMODE(status.st_mode) & 0o022):
+            raise StopNeedsHuman("run_authorization_trust_rejected")
+        return path
+
+    def _read_authorization(self, authorization_id: str, contract_fingerprint: str) -> tuple[dict[str, Any], str]:
+        path = self._trusted_authorization_path(authorization_id)
+        try:
+            data = _strict_json(self._read_regular_text(path))
+        except StopNeedsHuman:
+            raise
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise StopNeedsHuman("run_authorization_schema_rejected") from exc
+        if set(data) != RUN_AUTHORIZATION_FIELDS or data.get("version") != 1:
+            raise StopNeedsHuman("run_authorization_schema_rejected")
+        if (data.get("authorization_id") != authorization_id or data.get("lifecycle_id") != self.lifecycle_id
+                or not isinstance(data.get("task_contract_fingerprint"), str)
+                or not FINGERPRINT_RE.fullmatch(data["task_contract_fingerprint"])):
+            raise StopNeedsHuman("run_authorization_schema_rejected")
+        operations = data.get("allowed_operations")
+        if (not isinstance(operations, list) or not operations or len(set(operations)) != len(operations)
+                or any(not isinstance(value, str) or value not in RUN_AUTHORIZATION_OPERATIONS for value in operations)):
+            raise StopNeedsHuman("run_authorization_schema_rejected")
+        issued_at = _parse_utc_timestamp(data.get("issued_at"))
+        expires_at = _parse_utc_timestamp(data.get("expires_at"))
+        if expires_at <= issued_at:
+            raise StopNeedsHuman("run_authorization_time_rejected")
+        if expires_at - issued_at > MAX_RUN_AUTHORIZATION_TTL:
+            raise StopNeedsHuman("run_authorization_ttl_exceeded")
+        now = _trusted_utc_now()
+        if issued_at > now:
+            raise StopNeedsHuman("run_authorization_not_yet_valid")
+        if now >= expires_at:
+            raise StopNeedsHuman("run_authorization_expired")
+        if data["task_contract_fingerprint"] != contract_fingerprint:
+            raise StopNeedsHuman("run_authorization_contract_mismatch")
+        return data, fingerprint(data)
+
+    def _validate_run_authorization(self, contract_fingerprint: str, state: Mapping[str, Any] | None,
+                                    operation: str, authorization_id: str | None = None) -> tuple[dict[str, Any], str]:
+        if operation not in RUN_AUTHORIZATION_OPERATIONS:
+            raise StopNeedsHuman("run_authorization_operation_denied")
+        if state is None:
+            if authorization_id is None:
+                raise StopNeedsHuman("run_authorization_missing")
+            authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
+        else:
+            required = ("run_authorization_id", "run_authorization_fingerprint", "run_status")
+            if any(field not in state for field in required):
+                raise StopNeedsHuman("run_authorization_state_missing")
+            authorization_id = state.get("run_authorization_id")
+            stored = state.get("run_authorization_fingerprint")
+            status = state.get("run_status")
+            if not isinstance(authorization_id, str) or not isinstance(stored, str) or not isinstance(status, str):
+                raise StopNeedsHuman("run_authorization_state_missing")
+            authorization, current = self._read_authorization(authorization_id, contract_fingerprint)
+            if current != stored:
+                raise StopNeedsHuman("run_authorization_fingerprint_divergent")
+            if status == "READY":
+                raise StopNeedsHuman("run_replay_after_ready")
+            if status == "STOPPED":
+                raise StopNeedsHuman("run_replay_after_stop")
+            if status != "ACTIVE":
+                raise StopNeedsHuman("run_not_active")
+        if authorization.get("lifecycle_id") != self.lifecycle_id:
+            raise StopNeedsHuman("run_authorization_lifecycle_mismatch")
+        if operation not in authorization["allowed_operations"]:
+            raise StopNeedsHuman("run_authorization_operation_denied")
+        return authorization, current
+
     def _state_path(self) -> Path:
         return self.state_root / self.lifecycle_id / "state.json"
 
@@ -549,11 +680,13 @@ class Lifecycle:
             raise StopNeedsHuman("state_unavailable")
         return normalize_p5_state(value)
 
-    def _guard(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _guard(self, operation: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         contract, current = self._contract()
         state = self._state()
         if state.get("fingerprint") != current or state.get("lifecycle_id") != self.lifecycle_id:
             raise StopNeedsHuman("contract_fingerprint_divergent")
+        if operation is not None:
+            self._validate_run_authorization(current, state, operation)
         return contract, state
 
     def _git(self, *arguments: str) -> str:
@@ -697,17 +830,26 @@ class Lifecycle:
             raise StopNeedsHuman("pr_fingerprint_rejected")
         self._validate_pr(pr, contract, published_head)
 
-    def preflight(self) -> dict[str, str]:
+    def preflight(self, authorization_id: str | None = None) -> dict[str, str]:
         contract, contract_fingerprint = self._contract()
+        authorization, authorization_fingerprint = self._validate_run_authorization(
+            contract_fingerprint, None, "preflight", authorization_id,
+        )
         head = self._validate_checkout(contract)
         if head != contract["head_sha_initial"]:
             raise StopNeedsHuman("initial_head_mismatch")
         self._write_state({
             "lifecycle_id": self.lifecycle_id,
             "fingerprint": contract_fingerprint,
+            "run_authorization_id": authorization["authorization_id"],
+            "run_authorization_fingerprint": authorization_fingerprint,
+            "run_status": "ACTIVE",
             "head_sha": head,
             "ci_sha": None,
             "ci_failure": None,
+            "ci_jobs": None,
+            "workflow_run_id": None,
+            "observation_generation": 0,
             "pending_correction_sha": None,
             "pending_publish_attempted": False,
             "corrections": 0,
@@ -732,7 +874,7 @@ class Lifecycle:
 
     def authorize_correction(self) -> dict[str, Any]:
         """Local-only reproduction gate; it never contacts GitHub or a remote."""
-        contract, state = self._guard()
+        contract, state = self._guard("authorize-correction")
         self._require_clean_checkout()
         head = self._validate_checkout(contract)
         if (state.get("published_once") is not True or state.get("head_sha") != head or state.get("ci_sha") is not None
@@ -752,7 +894,7 @@ class Lifecycle:
 
     def finalize_correction(self) -> dict[str, str]:
         """Locally bind one validated descendant correction SHA; no network calls."""
-        contract, expected_state = self._guard()
+        contract, expected_state = self._guard("finalize-correction")
         self._require_clean_checkout()
         head = self._validate_checkout(contract)
         base = expected_state.get("head_sha")
@@ -793,7 +935,7 @@ class Lifecycle:
             return self._publish_head_locked()
 
     def _publish_head_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, str]:
-        contract, state = self._guard()
+        contract, state = self._guard("publish-head")
         head = self._validate_checkout(contract)
         previous_head = state.get("head_sha")
         corrections = self._correction_count(contract, state)
@@ -826,7 +968,7 @@ class Lifecycle:
         # Fresh contract and committed-range verification immediately precede the
         # only Git mutation. Correction mode repeats complete-clean enforcement
         # after latching, preventing an uncommitted local mutation before push.
-        self._guard()
+        self._guard("publish-head")
         if correction_mode:
             self._require_clean_checkout()
         ref = f"refs/heads/{contract['branch']}"
@@ -843,7 +985,7 @@ class Lifecycle:
     def _commit_deferred_correction_publish(self, expected_latched: Mapping[str, Any], expected_head: str,
                                             deferred_state: Mapping[str, Any]) -> None:
         """Persist correction publish success only after the adapter tore down its token."""
-        contract, current = self._guard()
+        contract, current = self._guard("publish-head")
         if current != expected_latched or current.get("pending_correction_sha") != expected_head or current.get("pending_publish_attempted") is not True:
             raise StopNeedsHuman("state_changed_before_commit")
         if self._validate_checkout(contract) != expected_head:
@@ -869,7 +1011,7 @@ class Lifecycle:
         PR number is persisted only after its independent token teardown has
         completed.  Public lifecycle callers use the normal atomic writer.
         """
-        contract, state = self._guard()
+        contract, state = self._guard("ensure-pr")
         sha = self._validate_checkout(contract)
         if state.get("published_once") is not True:
             raise StopNeedsHuman("publication_required")
@@ -913,7 +1055,7 @@ class Lifecycle:
         else:
             # The adapter independently permits this one POST only while the
             # immediately preceding same-head collection is known to be empty.
-            self._guard()
+            self._guard("ensure-pr")
             self._validate_remote_head(contract, sha)
             pr = self._api("POST", f"/repos/{REPOSITORY}/pulls", {"title": contract["pr_title"], "head": contract["branch"], "base": "dev", "body": f"{contract['pr_body']}\n\n{marker}"})
             if not isinstance(pr, Mapping):
@@ -955,7 +1097,7 @@ class Lifecycle:
         inputs so an out-of-band state, contract, local-HEAD, or remote-ref
         change cannot overwrite a newer lifecycle state.
         """
-        contract, current_state = self._guard()
+        contract, current_state = self._guard("ensure-pr")
         if (current_state != expected_state
                 or current_state.get("fingerprint") != expected_fingerprint):
             raise StopNeedsHuman("state_changed_before_commit")
@@ -993,7 +1135,7 @@ class Lifecycle:
 
     def _observe_ci_locked(self, *, state_writer: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Observe only the exact PR head and defer any CI evidence state write."""
-        contract, state = self._guard()
+        contract, state = self._guard("observe-ci")
         sha = self._validate_checkout(contract)
         number = state.get("pr_number")
         if (state.get("published_once") is not True or type(number) is not int or number <= 0
@@ -1027,6 +1169,9 @@ class Lifecycle:
         if is_green:
             deferred["ci_sha"] = sha
             deferred["ci_failure"] = None
+            deferred["ci_jobs"] = {name: found[name] for name in contract["expected_ci_jobs"]}
+            deferred["workflow_run_id"] = run_id
+            deferred["observation_generation"] = state.get("observation_generation", 0) + 1
             result_state = "CI_GREEN_FOR_HEAD"
         else:
             deferred["ci_sha"] = None
@@ -1040,7 +1185,7 @@ class Lifecycle:
     def _commit_deferred_ci_state(self, expected_state: Mapping[str, Any], expected_fingerprint: str,
                                   expected_head: str, deferred_state: Mapping[str, Any]) -> None:
         """CAS a P4 observation only after external token teardown succeeded."""
-        contract, current_state = self._guard()
+        contract, current_state = self._guard("observe-ci")
         if (current_state != expected_state
                 or current_state.get("fingerprint") != expected_fingerprint):
             raise StopNeedsHuman("state_changed_before_commit")
@@ -1052,8 +1197,19 @@ class Lifecycle:
         self._validate_remote_head(contract, current_head)
         expected_deferred = dict(current_state)
         if dict(deferred_state).get("ci_sha") == current_head and dict(deferred_state).get("ci_failure") is None:
+            jobs = dict(deferred_state).get("ci_jobs")
+            run_id = dict(deferred_state).get("workflow_run_id")
+            generation = dict(deferred_state).get("observation_generation")
+            if (not isinstance(jobs, Mapping) or set(jobs) != set(contract["expected_ci_jobs"])
+                    or any(jobs.get(name) != "success" for name in contract["expected_ci_jobs"])
+                    or type(run_id) is not int or run_id <= 0 or type(generation) is not int
+                    or generation != current_state.get("observation_generation", 0) + 1):
+                raise StopNeedsHuman("ci_state_commit_rejected")
             expected_deferred["ci_sha"] = current_head
             expected_deferred["ci_failure"] = None
+            expected_deferred["ci_jobs"] = {name: jobs[name] for name in contract["expected_ci_jobs"]}
+            expected_deferred["workflow_run_id"] = run_id
+            expected_deferred["observation_generation"] = generation
         elif (dict(deferred_state).get("ci_sha") is None
                 and isinstance(dict(deferred_state).get("ci_failure"), Mapping)):
             evidence = dict(deferred_state)["ci_failure"]
@@ -1098,15 +1254,32 @@ class Lifecycle:
         return {"state": "REFRESHED", "head_sha": head}
 
     def report_ready(self) -> dict[str, Any]:
-        _require_live_operations_enabled()
-        contract, state = self._guard()
+        """Seal bounded P4 snapshot evidence; this method has no network surface."""
+        contract, state = self._guard("report-ready")
         sha = self._validate_checkout(contract)
-        if state.get("ci_sha") != sha or not isinstance(state.get("pr_number"), int):
+        jobs = state.get("ci_jobs")
+        if (state.get("published_once") is not True or state.get("ci_sha") != sha or state.get("ci_failure") is not None
+                or type(state.get("pr_number")) is not int or state["pr_number"] <= 0
+                or type(state.get("workflow_run_id")) is not int or state["workflow_run_id"] <= 0
+                or type(state.get("observation_generation")) is not int or state["observation_generation"] < 1
+                or state.get("pending_correction_sha") is not None or state.get("pending_publish_attempted") is not False
+                or not isinstance(jobs, Mapping) or set(jobs) != set(contract["expected_ci_jobs"])
+                or any(jobs.get(name) != "success" for name in contract["expected_ci_jobs"])):
             raise StopNeedsHuman("ci_evidence_stale")
-        pr = self._api("GET", f"/repos/{REPOSITORY}/pulls/{state['pr_number']}")
-        self._validate_pr(pr, contract, sha)
-        evidence = self.observe_ci()
-        return {"state": "READY", "pr_number": state["pr_number"], "head_sha": sha, "jobs": evidence["jobs"]}
+        self._require_clean_checkout()
+        _, current = self._guard("report-ready")
+        if current != state:
+            raise StopNeedsHuman("state_changed_before_commit")
+        state["run_status"] = "READY"
+        self._write_state(state)
+        return {"state": f"READY_FOR_HUMAN_MERGE_FOR_SHA={sha}", "lifecycle_id": self.lifecycle_id,
+                "contract_fingerprint_prefix": state["fingerprint"][:12],
+                "authorization_fingerprint_prefix": state["run_authorization_fingerprint"][:12],
+                "pr_number": state["pr_number"], "branch": contract["branch"], "head_sha": sha,
+                "workflow_run_id": state["workflow_run_id"],
+                "jobs": {name: jobs[name] for name in contract["expected_ci_jobs"]},
+                "corrections": self._correction_count(contract, state), "max_corrections": contract["max_corrections"],
+                "merge_authority": "human_only"}
 
 
 def sanitize_log(value: str) -> str:

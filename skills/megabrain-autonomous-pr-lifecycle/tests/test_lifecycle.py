@@ -46,6 +46,17 @@ def contract(lifecycle_id="life-1", **changes):
     return data
 
 
+def run_authorization(data, authorization_id="run-authorization-1", **changes):
+    value = {
+        "version": 1, "authorization_id": authorization_id, "lifecycle_id": data["lifecycle_id"],
+        "task_contract_fingerprint": L.fingerprint(data),
+        "allowed_operations": ["preflight", "publish-head", "ensure-pr", "observe-ci", "authorize-correction", "finalize-correction", "report-ready"],
+        "issued_at": "2026-01-01T00:00:00Z", "expires_at": "2026-01-02T00:00:00Z",
+    }
+    value.update(changes)
+    return value
+
+
 class Harness:
     def __init__(self, root: Path, state: Path, data: dict, *, changed=(), committed=(), branch=None, head=SHA):
         self.root, self.state, self.data = root, state, data
@@ -62,6 +73,8 @@ class Harness:
         path = L.CONTRACT_ROOT
         path.mkdir(parents=True, exist_ok=True)
         (path / f"{data['lifecycle_id']}.json").write_text(json.dumps(data), encoding="utf-8")
+        authorization = run_authorization(data)
+        (L.RUN_AUTHORIZATION_ROOT / f"{authorization['authorization_id']}.json").write_text(json.dumps(authorization), encoding="utf-8")
         self.pr = self.pr_body(SHA)
         self.same_head_responses: list[list[dict]] | None = None
         self.post_response: dict | None = None
@@ -118,7 +131,10 @@ class Harness:
         raise AssertionError((method, path, payload))
 
     def lifecycle(self):
-        return L.Lifecycle(self.root, self.data["lifecycle_id"], state_root=self.state, runner=self.runner, request=self.request)
+        lifecycle = L.Lifecycle(self.root, self.data["lifecycle_id"], state_root=self.state, runner=self.runner, request=self.request)
+        original_preflight = lifecycle.preflight
+        lifecycle.preflight = lambda authorization_id="run-authorization-1": original_preflight(authorization_id)
+        return lifecycle
 
 
 class LifecycleTests(unittest.TestCase):
@@ -127,25 +143,29 @@ class LifecycleTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "repo"; self.root.mkdir()
         self.state = Path(self.temp.name) / "state"
         self.contract_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-contracts" / "b4.2"
+        self.authorization_root = Path(self.temp.name) / "external" / "megabrain" / "hermes-authorizations" / "b4.3"
         self.contract_root.mkdir(parents=True)
+        self.authorization_root.mkdir(parents=True)
         self.control_directories = (
-            self.contract_root.parent.parent,
-            self.contract_root.parent,
-            self.contract_root,
+            self.contract_root.parent.parent, self.contract_root.parent, self.contract_root,
+            self.authorization_root.parent.parent.parent, self.authorization_root.parent.parent,
+            self.authorization_root.parent, self.authorization_root,
         )
         self.contract_metadata: dict[Path, dict[str, int]] = {}
         self.real_lstat = os.lstat
         self.real_fstat = os.fstat
         self.contract_root_patch = mock.patch.object(L, "CONTRACT_ROOT", self.contract_root)
+        self.authorization_root_patch = mock.patch.object(L, "RUN_AUTHORIZATION_ROOT", self.authorization_root)
+        self.now_patch = mock.patch.object(L, "_trusted_utc_now", return_value=L.dt.datetime(2026, 1, 1, 12, tzinfo=L.dt.timezone.utc))
         self.lstat_patch = mock.patch.object(L.os, "lstat", side_effect=self.trusted_lstat)
         self.fstat_patch = mock.patch.object(L.os, "fstat", side_effect=self.trusted_fstat)
-        self.contract_root_patch.start(); self.lstat_patch.start(); self.fstat_patch.start()
+        self.contract_root_patch.start(); self.authorization_root_patch.start(); self.now_patch.start(); self.lstat_patch.start(); self.fstat_patch.start()
         self.h = Harness(self.root, self.state, contract())
         self.live = mock.patch.object(L, "_require_live_operations_enabled", return_value=None)
         self.live.start()
 
     def tearDown(self):
-        self.live.stop(); self.fstat_patch.stop(); self.lstat_patch.stop(); self.contract_root_patch.stop(); self.temp.cleanup()
+        self.live.stop(); self.fstat_patch.stop(); self.lstat_patch.stop(); self.now_patch.stop(); self.authorization_root_patch.stop(); self.contract_root_patch.stop(); self.temp.cleanup()
 
     def trusted_lstat(self, path, *args, **kwargs):
         result = self.real_lstat(path, *args, **kwargs)
@@ -153,7 +173,7 @@ class LifecycleTests(unittest.TestCase):
             return result
         target = Path(path)
         metadata = self.contract_metadata.get(target, {})
-        if target in self.control_directories or target.parent == self.contract_root:
+        if target in self.control_directories or target.parent in {self.contract_root, self.authorization_root}:
             values = list(result)
             values[4] = metadata.get("uid", 0)
             default_mode = 0o755 if target in self.control_directories else 0o644
@@ -165,13 +185,17 @@ class LifecycleTests(unittest.TestCase):
         result = self.real_fstat(descriptor)
         target = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
         metadata = self.contract_metadata.get(target, {})
-        if stat.S_ISREG(result.st_mode) and target.parent == self.contract_root:
+        if stat.S_ISREG(result.st_mode) and target.parent in {self.contract_root, self.authorization_root}:
             values = list(result); values[0] = (result.st_mode & ~0o777) | metadata.get("mode", 0o644); values[4] = metadata.get("uid", 0)
             return os.stat_result(values)
         return result
 
     def preflight(self):
-        return self.h.lifecycle().preflight()
+        return self.h.lifecycle().preflight("run-authorization-1")
+
+    def test_preflight_requires_run_authorization(self):
+        with self.assertRaisesRegex(L.StopNeedsHuman, "run_authorization_missing"):
+            self.h.lifecycle().preflight("missing-authorization")
 
     def test_closed_operations_are_exactly_required(self):
         self.assertEqual(L.PUBLIC_OPERATIONS, frozenset({"preflight", "publish-head", "ensure-pr", "observe-ci", "refresh-from-dev", "report-ready", "authorize-correction", "finalize-correction"}))
@@ -185,7 +209,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(life.publish_head()["state"], "PUBLISHED")
         self.assertEqual(life.ensure_pr()["state"], "PR_OPEN")
         self.assertEqual(life.observe_ci()["state"], "CI_GREEN_FOR_HEAD")
-        self.assertEqual(life.report_ready()["state"], "READY")
+        self.assertEqual(life.report_ready()["state"], "READY_FOR_HUMAN_MERGE_FOR_SHA=" + SHA)
         push = next(c for c in self.h.commands if c[1] == "push")
         self.assertEqual(push, ["git", "push", "origin", "HEAD:refs/heads/agent/b4-2-autonomous-pr-lifecycle"])
         self.assertFalse(any(any(x in part for x in ("--force", "--delete", "tag")) for c in self.h.commands for part in c))
@@ -205,7 +229,7 @@ class LifecycleTests(unittest.TestCase):
         self.live.stop()
         self.preflight()
         life = self.h.lifecycle()
-        for operation in (life.publish_head, life.ensure_pr, life.observe_ci, life.refresh_from_dev, life.report_ready):
+        for operation in (life.publish_head, life.ensure_pr, life.observe_ci, life.refresh_from_dev):
             with self.assertRaisesRegex(L.StopNeedsHuman, "authenticated_operations_not_authorized"):
                 operation()
         self.assertFalse(any(command[1:2] == ["push"] for command in self.h.commands))
@@ -379,7 +403,7 @@ class LifecycleTests(unittest.TestCase):
         h = Harness(self.root / "branch", self.state / "branch", contract(), branch="agent/b4-2-autonomous-pr-lifecycle-x")
         with self.assertRaisesRegex(L.StopNeedsHuman, "local_branch_rejected"): h.lifecycle().preflight()
         linkroot = self.root / "link"; linkroot.mkdir(); (linkroot / "contracts").symlink_to(self.root / "contracts")
-        self.assertEqual(L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight()["state"], "PREFLIGHT_OK")
+        self.assertEqual(L.Lifecycle(linkroot, "life-1", state_root=self.state, runner=self.h.runner).preflight("run-authorization-1")["state"], "PREFLIGHT_OK")
         state_target = self.root / "state-target"; state_target.mkdir()
         state_link = self.root / "state-link"; state_link.symlink_to(state_target, target_is_directory=True)
         with self.assertRaisesRegex(L.StopNeedsHuman, "state_root_rejected"):

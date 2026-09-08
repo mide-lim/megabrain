@@ -137,7 +137,7 @@ class LocalGateTests(unittest.TestCase):
         life = object.__new__(L.Lifecycle)
         life.root = self.root
         data, current = data or contract(), current or state()
-        life._guard = lambda: (data, dict(current))
+        life._guard = lambda *args: (data, dict(current))
         life._validate_checkout = lambda _: head
         life._correction_count = lambda _, value: value["corrections"]
         life._validate_committed_paths = lambda *_: None
