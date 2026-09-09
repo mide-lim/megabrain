@@ -2,15 +2,14 @@
 
 ## Tarefa atual
 
-**Frontend Agent Skills Bootstrap: ACTIVE / HUMAN-GATED.**
+**F1 — Authentication Foundation: IMPLEMENTING.**
 
-F0 — Frontend Foundation: **COMPLETE / MERGED** at merge commit
-`74d6025a7e00081cfec79c0e8f1884c290328738`.
+Frontend Agent Skills Bootstrap: **COMPLETE / MERGED** at merge commit
+`1ece90c2e07e3c61e4661b4e370595c468a6e721`.
 
-This task establishes only deterministic, version-controlled frontend guidance
-for Hermes/Codex. It does not implement authentication or product UI, and it
-does not authorize B4.2 publication. The next product milestone is F1 —
-Authentication Foundation; F1 has not started.
+The current implementation scope is F1A — Authentication Core. This status does
+not declare F1 authentication behavior complete and does not authorize B4.2
+publication.
 
 ## Estado
 
@@ -75,7 +74,7 @@ B4 — Hermes Autonomy Foundation: COMPLETE / PROMOTED.
   `32fe9751ef5f19e54d6fae4d5949dd2675a08b72`; o veredito final local foi
   `B4_3_R1_STAGE2F_R2_READY`.
 
-A implementação de produto da Sprint 5 permanece não aprovada e adiada.
+No product implementation beyond F1 — Authentication Foundation is approved.
 Engineering Enablement permanece separado do roadmap de produto; este closeout
 não seleciona nem autoriza o próximo milestone de engenharia ou produto.
 
@@ -104,10 +103,10 @@ não seleciona nem autoriza o próximo milestone de engenharia ou produto.
 
 ## Próximo trabalho
 
-Frontend Agent Skills Bootstrap é a tarefa atual human-gated. O próximo marco de
-produto é F1 — Authentication Foundation; ele ainda não iniciou. Staging,
-Playwright, observabilidade, backup/restore, monitoramento, automação de deploy
-e funcionalidades adicionais de produto permanecem fora deste escopo e exigem
+F1 — Authentication Foundation is IMPLEMENTING, beginning with the limited F1A
+Authentication Core scope. F1 behavior is not yet complete. Staging, Playwright,
+observability, backup/restore, monitoramento, automação de deploy e
+funcionalidades adicionais de produto permanecem fora deste escopo e exigem
 aprovação e gates próprios.
 
 ## Restrições permanentes
@@ -123,4 +122,4 @@ aprovação e gates próprios.
 - Sem auto-merge, acesso à produção ou deploy automático. Merge humano permanece
   uma fronteira de autoridade separada.
 - Toda ação de produção permanece human-gated.
-- A implementação de produto da Sprint 5 permanece não aprovada.
+- Nenhuma implementação de produto além de F1 — Authentication Foundation está aprovada.
