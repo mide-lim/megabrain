@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from starlette.templating import Jinja2Templates
 
 from app import database
+from app.auth.routes import auth_router
 from app.categories import (
     associate_category,
     create_and_associate_category,
@@ -43,6 +44,7 @@ def _csrf_token(request: Request) -> tuple[str, bool]:
 app = FastAPI(title="MegaBrain Web", version=VERSION)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
+app.include_router(auth_router)
 
 
 LIBRARY_QUERY = """
