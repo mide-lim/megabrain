@@ -2,12 +2,15 @@
 
 ## Tarefa atual
 
-**F0 — Next.js Frontend Foundation: READY FOR HUMAN REVIEW.**
+**Frontend Agent Skills Bootstrap: ACTIVE / HUMAN-GATED.**
 
-A fundação aprovada está limitada ao App Router em `apps/web`, tokens semânticos,
-serviço Docker interno e documentação. Login, OAuth/OIDC, migração da Reel
-Library, roteamento público de Next e alterações de Caddy permanecem fora do
-escopo. O próximo marco de produto é F1 — Authentication Foundation.
+F0 — Frontend Foundation: **COMPLETE / MERGED** at merge commit
+`74d6025a7e00081cfec79c0e8f1884c290328738`.
+
+This task establishes only deterministic, version-controlled frontend guidance
+for Hermes/Codex. It does not implement authentication or product UI, and it
+does not authorize B4.2 publication. The next product milestone is F1 —
+Authentication Foundation; F1 has not started.
 
 ## Estado
 
@@ -101,10 +104,11 @@ não seleciona nem autoriza o próximo milestone de engenharia ou produto.
 
 ## Próximo trabalho
 
-Nenhum próximo milestone de engenharia ou produto foi selecionado por este
-closeout. Staging, Playwright, observabilidade, backup/restore, monitoramento,
-automação de deploy e funcionalidades de produto permanecem fora deste escopo e
-exigem aprovação e gates próprios.
+Frontend Agent Skills Bootstrap é a tarefa atual human-gated. O próximo marco de
+produto é F1 — Authentication Foundation; ele ainda não iniciou. Staging,
+Playwright, observabilidade, backup/restore, monitoramento, automação de deploy
+e funcionalidades adicionais de produto permanecem fora deste escopo e exigem
+aprovação e gates próprios.
 
 ## Restrições permanentes
 
