@@ -31,6 +31,10 @@ registrados neste repositório.
 
 ## Serviços internos
 
+- **MegaBrain Frontend Foundation:** aplicação Next.js/App Router em
+  `apps/web`, responsável somente por UI e rendering da futura experiência. No
+  F0 ela oferece uma página de fundação e um health endpoint interno; não recebe
+  tráfego público, não implementa autenticação e não substitui a Web SSR atual.
 - **n8n:** valida entradas do Telegram e orquestra ingestão, download e fluxos
   relacionados.
 - **downloader:** recupera vídeo de Reel público e grava a mídia no R2.
@@ -44,6 +48,10 @@ registrados neste repositório.
 
 Downloader, enricher, PostgreSQL, n8n e Web usam a rede Docker interna.
 A Web não publica porta no host; Caddy é sua única entrada de rede externa.
+
+O serviço `frontend` também usa a rede Docker interna na porta 3000, sem porta
+publicada. O Caddy continua encaminhando a Web pública somente para `web:8000`;
+o roteamento de produção para Next permanece explicitamente fora do F0.
 
 ## Fluxo da biblioteca Web
 

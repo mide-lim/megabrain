@@ -30,6 +30,20 @@ concluída com sucesso.
   de Reel, paginação, busca, categorias manuais, reprodução por URL R2 assinada
   e proteção de produção.
 
+## F0 — Next.js Frontend Foundation
+
+- `apps/web` estabelece Next.js App Router, React, TypeScript strict, Tailwind
+  CSS e uma fundação compatível com shadcn/ui usando tokens semânticos do
+  MegaBrain.
+- A imagem standalone do Next é preparada para self-hosting no serviço Docker
+  interno `frontend` (porta 3000), com health endpoint próprio.
+- A migração é gradual: FastAPI continua responsável por autenticação,
+  autorização, domínio, dados, R2 e a Web SSR/Jinja existente. Caddy, Basic Auth
+  e o roteamento de produção permanecem inalterados.
+- Nenhuma interface de login, OAuth/OIDC, migração da Reel Library ou rota
+  pública de Next foi implementada. O próximo marco de produto é F1 —
+  Authentication Foundation.
+
 ## Capacidades validadas da Web
 
 - biblioteca paginada e página de detalhe de Reel;
