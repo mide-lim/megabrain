@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import hmac
-import secrets
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from starlette.templating import Jinja2Templates
 
 from app import database
+from app.auth.routes import auth_router
+from app.csrf import CSRF_COOKIE_NAME, CSRF_TOKEN_BYTES, csrf_token, require_csrf, set_csrf_cookie
 from app.categories import (
     associate_category,
     create_and_associate_category,
@@ -27,22 +27,10 @@ VERSION = "0.1.0"
 PAGE_SIZE = 12
 APP_DIR = Path(__file__).parent
 
-CSRF_COOKIE_NAME = "__Host-csrf_token"
-CSRF_TOKEN_BYTES = 32
-
-
-def _csrf_token(request: Request) -> tuple[str, bool]:
-    existing = request.cookies.get(CSRF_COOKIE_NAME)
-
-    if existing:
-        return existing, False
-
-    return secrets.token_urlsafe(CSRF_TOKEN_BYTES), True
-
-
 app = FastAPI(title="MegaBrain Web", version=VERSION)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
+app.include_router(auth_router)
 
 
 LIBRARY_QUERY = """
@@ -198,7 +186,7 @@ def reel_detail(
             status_code=503,
         )
 
-    csrf_token, set_csrf_cookie = _csrf_token(request)
+    csrf_value, set_cookie = csrf_token(request)
 
     context = reel_detail_context(reel, presigned_video_url(reel))
     context.update(
@@ -206,7 +194,7 @@ def reel_detail(
             "assigned_categories": assigned_categories,
             "available_categories": available_categories,
             "curation_error": curation_error,
-            "csrf_token": csrf_token,
+            "csrf_token": csrf_value,
         }
     )
 
@@ -216,15 +204,8 @@ def reel_detail(
         context=context,
     )
 
-    if set_csrf_cookie:
-        response.set_cookie(
-            CSRF_COOKIE_NAME,
-            csrf_token,
-            secure=True,
-            httponly=True,
-            samesite="lax",
-            path="/",
-        )
+    if set_cookie:
+        set_csrf_cookie(response, csrf_value)
 
     return response
 
@@ -250,31 +231,12 @@ def _missing_reel_response(request: Request) -> HTMLResponse:
     )
 
 
-def _require_csrf(
-    request: Request,
-    csrf_token: str | None = Form(default=None),
-) -> None:
-    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
-
-    valid = bool(
-        cookie_token
-        and csrf_token
-        and hmac.compare_digest(cookie_token, csrf_token)
-    )
-
-    if not valid:
-        raise HTTPException(
-            status_code=403,
-            detail="CSRF token validation failed",
-        )
-
-
 @app.post("/reels/{reel_id}/categories")
 def add_reel_category(
     request: Request,
     reel_id: int,
     category_id: int = Form(),
-    _csrf: None = Depends(_require_csrf),
+    _csrf: None = Depends(require_csrf),
 ) -> Response:
     try:
         if not reel_exists(reel_id):
@@ -293,7 +255,7 @@ def create_reel_category(
     request: Request,
     reel_id: int,
     name: str = Form(),
-    _csrf: None = Depends(_require_csrf),
+    _csrf: None = Depends(require_csrf),
 ) -> Response:
     normalized_name = name.strip()
 
@@ -317,7 +279,7 @@ def remove_reel_category(
     request: Request,
     reel_id: int,
     category_id: int,
-    _csrf: None = Depends(_require_csrf),
+    _csrf: None = Depends(require_csrf),
 ) -> Response:
     try:
         if not reel_exists(reel_id):

@@ -29,6 +29,37 @@ encaminha o tráfego para os serviços internos. Todas as rotas da Web, inclusiv
 `/health`, exigem Basic Auth. O endpoint e as credenciais operacionais não são
 registrados neste repositório.
 
+## Candidato F1 — caminho de autenticação da aplicação
+
+O caminho abaixo está implementado como candidato local F1, mas ainda não é o
+roteamento de produção:
+
+```text
+Browser
+  -> FastAPI /auth/login
+  -> Google OIDC
+  -> FastAPI /auth/callback
+  -> PostgreSQL auth_users/auth_sessions
+  -> __Host-mb_session
+```
+
+FastAPI mantém a autoridade sobre OAuth/OIDC, validação de claims, vínculo de
+identidade, transações e sessões locais opacas. Google é somente o provedor de
+identidade; o navegador recebe somente `__Host-mb_session` opaco. O candidato
+requer configuração futura do cliente Google e aplicação futura da migration,
+que não ocorreram nesta mudança.
+
+O roteamento atual de produção permanece distinto:
+
+```text
+Internet
+  -> Caddy
+  -> Basic Auth
+  -> FastAPI/Jinja
+```
+
+Não há cutover para Next.js no F1.
+
 ## Serviços internos
 
 - **MegaBrain Frontend Foundation:** aplicação Next.js/App Router em
