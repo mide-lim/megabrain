@@ -70,6 +70,22 @@ VALUES (
 )
 """
 
+RESOLVE_SESSION_QUERY = """
+SELECT u.id, u.email
+FROM app.auth_sessions AS s
+JOIN app.auth_users AS u ON u.id = s.user_id
+WHERE s.token_hash = %s
+  AND s.revoked_at IS NULL
+  AND s.expires_at > CURRENT_TIMESTAMP
+  AND u.disabled_at IS NULL
+"""
+
+REVOKE_SESSION_QUERY = """
+UPDATE app.auth_sessions
+SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+WHERE token_hash = %s
+"""
+
 
 class OwnerAuthorizationError(RuntimeError):
     """Raised when a validated Google identity is not the configured owner."""
@@ -80,6 +96,12 @@ class ConsumedAuthTransaction:
     nonce: str
     pkce_verifier: str
     return_path: str
+
+
+@dataclass(frozen=True)
+class SessionIdentity:
+    user_id: int
+    email: str
 
 
 def _field(row: Any, name: str, position: int) -> Any:
@@ -157,3 +179,20 @@ def resolve_or_bootstrap_owner(
 def create_session(*, user_id: int, token_hash: bytes) -> None:
     with database.connect() as connection, connection.cursor() as cursor:
         cursor.execute(CREATE_SESSION_QUERY, (token_hash, user_id))
+
+
+def resolve_session(token_hash: bytes) -> SessionIdentity | None:
+    with database.connect() as connection, connection.cursor() as cursor:
+        cursor.execute(RESOLVE_SESSION_QUERY, (token_hash,))
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    return SessionIdentity(
+        user_id=int(_field(row, "id", 0)),
+        email=str(_field(row, "email", 1)),
+    )
+
+
+def revoke_session(token_hash: bytes) -> None:
+    with database.connect() as connection, connection.cursor() as cursor:
+        cursor.execute(REVOKE_SESSION_QUERY, (token_hash,))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from app.auth import repository
 from app.auth.config import (
@@ -20,6 +20,7 @@ from app.auth.oidc import (
     OIDCValidationError,
     generate_pkce_verifier,
 )
+from app.csrf import require_csrf
 
 auth_router = APIRouter()
 _CACHE_CONTROL = "no-store, private"
@@ -82,6 +83,30 @@ def _clear_transaction_cookie(response: Response) -> None:
         path=OIDC_TRANSACTION_COOKIE_POLICY.path,
         domain=OIDC_TRANSACTION_COOKIE_POLICY.domain,
     )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        secure=SESSION_COOKIE_POLICY.secure,
+        httponly=SESSION_COOKIE_POLICY.httponly,
+        samesite=SESSION_COOKIE_POLICY.samesite,
+        path=SESSION_COOKIE_POLICY.path,
+        domain=SESSION_COOKIE_POLICY.domain,
+    )
+
+
+def _session_response(payload: dict, status_code: int) -> Response:
+    response = JSONResponse(payload, status_code=status_code)
+    _apply_auth_headers(response)
+    response.headers["Vary"] = "Cookie"
+    return response
+
+
+def _session_token_hash(raw_token: str) -> bytes | None:
+    if not raw_token or any(not (character.isalnum() or character in "-_") for character in raw_token):
+        return None
+    return sha256_token(raw_token)
 
 
 def _error_response(status_code: int, body: str, *, clear_transaction: bool = False) -> Response:
@@ -195,4 +220,53 @@ def callback(
     _apply_auth_headers(response, callback=True)
     _clear_transaction_cookie(response)
     _set_cookie(response, SESSION_COOKIE_NAME, session_token, SESSION_COOKIE_POLICY)
+    return response
+
+
+@auth_router.get("/api/auth/session")
+def session(request: Request) -> Response:
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not raw_token:
+        return _session_response({"authenticated": False}, 401)
+    try:
+        token_hash = _session_token_hash(raw_token)
+    except UnicodeEncodeError:
+        return _session_response({"authenticated": False}, 401)
+    if token_hash is None:
+        return _session_response({"authenticated": False}, 401)
+    try:
+        identity = repository.resolve_session(token_hash)
+    except Exception:
+        return _session_response({"authenticated": False}, 401)
+    if identity is None:
+        return _session_response({"authenticated": False}, 401)
+    return _session_response(
+        {
+            "authenticated": True,
+            "user": {"id": identity.user_id, "email": identity.email},
+        },
+        200,
+    )
+
+
+@auth_router.post("/auth/logout")
+def logout(request: Request, _csrf: None = Depends(require_csrf)) -> Response:
+    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if raw_token:
+        try:
+            token_hash = _session_token_hash(raw_token)
+        except UnicodeEncodeError:
+            token_hash = None
+        if token_hash is not None:
+            try:
+                repository.revoke_session(token_hash)
+            except Exception:
+                response = PlainTextResponse("Authentication temporarily unavailable", status_code=503)
+                _apply_auth_headers(response)
+                _clear_session_cookie(response)
+                return response
+
+    response = RedirectResponse("/", status_code=303)
+    _apply_auth_headers(response)
+    _clear_session_cookie(response)
     return response
