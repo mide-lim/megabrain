@@ -54,7 +54,14 @@ WITH existing_subject AS (
         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL
     WHERE NOT EXISTS (SELECT 1 FROM existing_subject)
       AND %s = %s
-    ON CONFLICT (provider_issuer, provider_subject) DO NOTHING
+    ON CONFLICT (provider) DO UPDATE
+    SET email = EXCLUDED.email,
+        email_normalized = EXCLUDED.email_normalized,
+        updated_at = CURRENT_TIMESTAMP,
+        last_login_at = CURRENT_TIMESTAMP
+    WHERE app.auth_users.provider_issuer = EXCLUDED.provider_issuer
+      AND app.auth_users.provider_subject = EXCLUDED.provider_subject
+      AND app.auth_users.disabled_at IS NULL
     RETURNING id
 )
 SELECT id FROM updated_subject

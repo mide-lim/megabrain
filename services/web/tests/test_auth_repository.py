@@ -106,6 +106,15 @@ def test_owner_bootstrap_updates_only_matching_durable_subject(monkeypatch) -> N
     assert "created_owner AS" in query
     assert "WHERE NOT EXISTS (SELECT 1 FROM existing_subject)" in query
     assert "email_normalized" in query
+    assert "ON CONFLICT (provider) DO UPDATE" in query
+    assert "app.auth_users.provider_subject = EXCLUDED.provider_subject" in query
+    for value in (
+        identity.provider_issuer,
+        identity.provider_subject,
+        identity.email,
+        "owner@example.com",
+    ):
+        assert value not in query
     assert parameters[-2:] == ("changed@example.com", "owner@example.com")
 
 
@@ -132,6 +141,46 @@ def test_concurrent_bootstrap_relies_on_database_conflict_without_rebinding(monk
         repository.resolve_or_bootstrap_owner(second, "owner@example.com")
 
     assert all("provider_subject" in query for query, _ in calls)
+
+
+def test_same_subject_conflict_converges_on_the_database_owner_row(monkeypatch) -> None:
+    calls = fake_connection(monkeypatch, (1,), (1,))
+    identity = ValidatedIdentity(GOOGLE_ISSUER, "subject-one", "owner@example.com", True)
+
+    assert repository.resolve_or_bootstrap_owner(identity, "owner@example.com") == 1
+    assert repository.resolve_or_bootstrap_owner(identity, "owner@example.com") == 1
+
+    query, _ = calls[1]
+    assert "ON CONFLICT (provider) DO UPDATE" in query
+    assert "provider_issuer = EXCLUDED.provider_issuer" in query
+    assert "provider_subject = EXCLUDED.provider_subject" in query
+
+
+def test_user_controlled_auth_values_are_bound_parameters(monkeypatch) -> None:
+    calls = fake_connection(monkeypatch)
+    state = "state-'value"
+    nonce = "nonce-'value"
+    return_path = "/library/'value"
+
+    repository.create_auth_transaction(
+        transaction_hash=b"t" * 32,
+        state_hash=b"s" * 32,
+        nonce=nonce,
+        pkce_verifier="verifier-'value",
+        return_path=return_path,
+    )
+
+    query, parameters = calls[0]
+    for value in (state, nonce, return_path):
+        assert value not in query
+    assert parameters == (
+        b"t" * 32,
+        "google",
+        b"s" * 32,
+        nonce,
+        "verifier-'value",
+        return_path,
+    )
 
 
 def test_create_session_persists_only_the_opaque_token_hash(monkeypatch) -> None:
