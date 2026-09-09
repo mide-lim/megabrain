@@ -162,3 +162,18 @@ nessas branches permanecem human-gated via pull request.
 O transporte por Git bundle deixa de fazer parte do fluxo operacional. Esta
 decisão não concede ao Hermes acesso, merge, deploy ou qualquer autoridade de
 produção.
+
+## D018 — Next.js como fundação gradual de frontend
+
+**Status:** aceita
+
+`apps/web` usa Next.js App Router, React, TypeScript strict, Tailwind CSS e uma
+fundação compatível com shadcn/ui para a futura experiência do MegaBrain. A
+aplicação é empacotada como output standalone para um serviço Docker interno;
+Caddy não a encaminha em produção nesta fase.
+
+Esta decisão não substitui D006: FastAPI/Jinja continua servindo a Web Library
+existente. Next é responsável por UI e rendering; FastAPI permanece a
+autoridade de autenticação, autorização, domínio e dados. A adoção ocorre por
+migrações aprovadas individualmente; F0 não inclui login, OAuth/OIDC ou Reel
+Library, e F1 é a Authentication Foundation.

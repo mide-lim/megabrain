@@ -2,7 +2,12 @@
 
 ## Tarefa atual
 
-**Nenhum novo milestone de engenharia ou produto está selecionado.**
+**F0 — Next.js Frontend Foundation: READY FOR HUMAN REVIEW.**
+
+A fundação aprovada está limitada ao App Router em `apps/web`, tokens semânticos,
+serviço Docker interno e documentação. Login, OAuth/OIDC, migração da Reel
+Library, roteamento público de Next e alterações de Caddy permanecem fora do
+escopo. O próximo marco de produto é F1 — Authentication Foundation.
 
 ## Estado
 
