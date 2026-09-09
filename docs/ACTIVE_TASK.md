@@ -2,14 +2,21 @@
 
 ## Tarefa atual
 
-**F1 — Authentication Foundation: IMPLEMENTING.**
+**F1 — Authentication Foundation: READY / HUMAN-GATED PUBLICATION.**
 
 Frontend Agent Skills Bootstrap: **COMPLETE / MERGED** at merge commit
 `1ece90c2e07e3c61e4661b4e370595c468a6e721`.
 
-The current implementation scope is F1A — Authentication Core. This status does
-not declare F1 authentication behavior complete and does not authorize B4.2
-publication.
+Completed local slices:
+
+- F1A — Authentication Core: COMPLETE.
+- F1B — Google OIDC Transaction + Callback: COMPLETE.
+- F1C — Local Session HTTP Contract: COMPLETE.
+- F1D — Database / Configuration Integration: COMPLETE.
+- F1E — Security / Regression Closure: COMPLETE.
+
+This status does not authorize remote publication, deployment, migration
+execution, runtime grants, Caddy changes, or Basic Auth changes.
 
 ## Estado
 
@@ -103,9 +110,8 @@ não seleciona nem autoriza o próximo milestone de engenharia ou produto.
 
 ## Próximo trabalho
 
-F1 — Authentication Foundation is IMPLEMENTING, beginning with the limited F1A
-Authentication Core scope. F1 behavior is not yet complete. Staging, Playwright,
-observability, backup/restore, monitoramento, automação de deploy e
+F1 — Authentication Foundation is READY for human-gated publication. Staging,
+Playwright, observability, backup/restore, monitoramento, automação de deploy e
 funcionalidades adicionais de produto permanecem fora deste escopo e exigem
 aprovação e gates próprios.
 

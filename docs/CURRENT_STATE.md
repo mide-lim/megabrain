@@ -44,6 +44,23 @@ concluída com sucesso.
   pública de Next foi implementada. O próximo marco de produto é F1 —
   Authentication Foundation.
 
+## F1 — Authentication Foundation candidate
+
+- O candidato local contém uma fundação Google OIDC controlada pela FastAPI,
+  com `Authlib==1.8.0`, Authorization Code + PKCE S256 e transações OIDC
+  server-side.
+- A associação de proprietário usa identidade Google durável por issuer +
+  subject; sessões locais opacas com persistência PostgreSQL suportam
+  `/api/auth/session` e `/auth/logout`.
+- A migration `003_f1_authentication_foundation.sql` foi escrita para
+  `app.auth_users`, `app.auth_sessions` e `app.auth_transactions`.
+- O hardening da configuração de produção para desativar access log do Uvicorn
+  foi escrito, prevenindo registro de query strings de callback.
+
+O candidato F1 não está implantado; a migration não foi aplicada; o cliente
+Google OAuth não foi configurado. Basic Auth continua sendo a fronteira de
+produção e Caddy permanece inalterado.
+
 ## Capacidades validadas da Web
 
 - biblioteca paginada e página de detalhe de Reel;
