@@ -39,6 +39,20 @@ function render(library: LibraryResponse | null = result): string {
   return renderToStaticMarkup(createElement(LibraryPageContent, { library }));
 }
 
+test("library authenticates before accessing data and has no route-level stream fallback", async () => {
+  const pageSource = await readFile(
+    new URL("../src/app/library/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(pageSource.indexOf("await requireOwnerSession()") >= 0);
+  assert.ok(pageSource.indexOf("await fetchLibraryPage") > pageSource.indexOf("await requireOwnerSession()"));
+  await assert.rejects(
+    readFile(new URL("../src/app/library/loading.tsx", import.meta.url), "utf8"),
+    { code: "ENOENT" },
+  );
+});
+
 test("library page is a server-rendered Explore surface with accessible search", async () => {
   const source = await readFile(
     new URL("../src/app/library/page.tsx", import.meta.url),
