@@ -1,11 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { ReelCategory } from "./reel-detail-api";
 
 type MutationMethod = "POST" | "DELETE";
+
+export function reconcileSelectedCategoryId(selectedCategoryId: string, availableCategories: ReelCategory[]): string {
+  if (availableCategories.some((category) => String(category.id) === selectedCategoryId)) {
+    return selectedCategoryId;
+  }
+  return availableCategories[0] ? String(availableCategories[0].id) : "";
+}
 
 function isCsrfPayload(value: unknown): value is { csrf_token: string } {
   return typeof value === "object" && value !== null && typeof (value as { csrf_token?: unknown }).csrf_token === "string";
@@ -54,8 +61,13 @@ export function ReelCategoryControls({ reelId, assignedCategories, availableCate
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState(availableCategories[0]?.id ? String(availableCategories[0].id) : "");
+  const [selectedCategoryId, setSelectedCategoryId] = useState(() => reconcileSelectedCategoryId("", availableCategories));
   const [newCategory, setNewCategory] = useState("");
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reconcile controlled selection after canonical server props refresh.
+    setSelectedCategoryId((currentSelection) => reconcileSelectedCategoryId(currentSelection, availableCategories));
+  }, [availableCategories]);
 
   async function runMutation(path: string, method: MutationMethod, body: Record<string, unknown> | undefined, failureMessage: string) {
     if (pending) return;

@@ -9,7 +9,7 @@ import {
   fetchReelDetail,
   type ReelDetail,
 } from "../src/app/reels/[reelId]/reel-detail-api";
-import { performCategoryMutation } from "../src/app/reels/[reelId]/reel-category-controls";
+import { performCategoryMutation, reconcileSelectedCategoryId } from "../src/app/reels/[reelId]/reel-category-controls";
 import { ReelDetailPageContent } from "../src/app/reels/[reelId]/reel-detail-page-content";
 
 const reel: ReelDetail = {
@@ -129,6 +129,15 @@ test("detail presentation uses explicit pt-BR fallbacks and unavailable states",
   assert.match(markup, /Status/);
   assert.match(markup, /Shortcode/);
   assert.doesNotMatch(markup, /NaN|undefined/);
+});
+
+test("category selection reconciliation replaces stale ids and preserves valid ids", () => {
+  const available = [{ id: 2, name: "Maker" }, { id: 3, name: "Design" }];
+
+  assert.equal(reconcileSelectedCategoryId("2", available), "2");
+  assert.equal(reconcileSelectedCategoryId("2", [available[1]]), "3");
+  assert.equal(reconcileSelectedCategoryId("3", [available[1]]), "3");
+  assert.equal(reconcileSelectedCategoryId("3", []), "");
 });
 
 test("category mutation helper uses C3 JSON APIs with same-origin CSRF bootstrap", async () => {
