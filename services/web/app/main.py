@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 from starlette.templating import Jinja2Templates
 
 from app import database
+from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
 from app.csrf import CSRF_COOKIE_NAME, CSRF_TOKEN_BYTES, csrf_token, require_csrf, set_csrf_cookie
 from app.categories import (
@@ -187,6 +188,7 @@ def reels_api(
     response: Response,
     page: int = Query(default=1, ge=1),
     q: str | None = Query(default=None),
+    _owner=Depends(require_owner_session),
 ) -> dict:
     response.headers["Cache-Control"] = "no-store"
 

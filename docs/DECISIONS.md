@@ -177,3 +177,21 @@ existente. Next é responsável por UI e rendering; FastAPI permanece a
 autoridade de autenticação, autorização, domínio e dados. A adoção ocorre por
 migrações aprovadas individualmente; F0 não inclui login, OAuth/OIDC ou Reel
 Library, e F1 é a Authentication Foundation.
+
+## D019 — App Shell autenticado seletivo do Next.js
+
+**Status:** aceita; substitui o estado de roteamento de D018, sem revogar suas
+fronteiras de autoridade
+
+O Next.js passa a compor a experiência autenticada e o App Shell nas rotas
+`/`, `/login`, `/inbox`, `/library`, `/categories` e `/settings`. O Caddyfile
+faz a transição seletiva apenas dessas rotas e dos assets `/_next/*`; o FastAPI
+continua recebendo `/api/*`, `/auth/*`, `/health`, `/reels/*`, `/static/*` e as
+demais rotas legadas.
+
+O Next usa uma consulta server-side não cacheada a `/api/auth/session`, com o
+header `Cookie` explicitamente encaminhado, somente para composição e redirects
+de UX. FastAPI valida a sessão opaca e aplica a autorização do proprietário em
+cada API protegida; Next, Caddy e a visibilidade da UI não constituem fronteira
+de autorização. A página Jinja `/reels/{id}` e a curadoria legada continuam até
+as migrações de paridade aprovadas.

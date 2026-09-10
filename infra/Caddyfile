@@ -3,7 +3,19 @@ n8n.midelim.tech {
 }
 
 {$WEB_HOST} {
+	handle / {
+		reverse_proxy frontend:3000
+	}
+
 	handle /login {
+		reverse_proxy frontend:3000
+	}
+
+	handle /inbox {
+		reverse_proxy frontend:3000
+	}
+
+	handle /inbox/* {
 		reverse_proxy frontend:3000
 	}
 
@@ -12,6 +24,22 @@ n8n.midelim.tech {
 	}
 
 	handle /library/* {
+		reverse_proxy frontend:3000
+	}
+
+	handle /categories {
+		reverse_proxy frontend:3000
+	}
+
+	handle /categories/* {
+		reverse_proxy frontend:3000
+	}
+
+	handle /settings {
+		reverse_proxy frontend:3000
+	}
+
+	handle /settings/* {
 		reverse_proxy frontend:3000
 	}
 

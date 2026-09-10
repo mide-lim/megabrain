@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 
+import { AppShell } from "../../components/app-shell";
+import { requireOwnerSession } from "../../lib/auth/session";
 import { fetchLibraryPage } from "./library-api";
 import { LibraryPageContent } from "./library-page-content";
 
 export const metadata: Metadata = {
   title: "Biblioteca de Reels | MegaBrain",
-  description: "Explore a biblioteca pública de Reels do MegaBrain.",
+  description: "Explore a biblioteca de Reels do MegaBrain.",
 };
 
 type LibraryPageProps = {
@@ -22,10 +24,15 @@ function pageFromSearch(value: string | string[] | undefined): number {
 }
 
 export default async function LibraryPage({ searchParams }: LibraryPageProps) {
+  const owner = await requireOwnerSession();
   const params = await searchParams;
   const q = firstSearchValue(params.q).trim();
   const page = pageFromSearch(params.page);
   const library = await fetchLibraryPage({ page, q });
 
-  return <LibraryPageContent library={library} />;
+  return (
+    <AppShell owner={owner} pathname="/library">
+      <LibraryPageContent library={library} />
+    </AppShell>
+  );
 }

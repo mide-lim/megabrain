@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+
 export type ReelLibraryItem = {
   id: number;
   title: string | null;
@@ -92,6 +94,7 @@ export function buildLibraryUrl({ page, q }: LibraryRequest): string {
 export async function fetchLibraryPage(
   { page, q }: LibraryRequest,
   request: typeof fetch = fetch,
+  incomingHeaders?: Headers,
 ): Promise<LibraryResponse | null> {
   const url = new URL("/api/reels", apiBaseUrl());
   url.searchParams.set("page", String(page));
@@ -100,9 +103,13 @@ export async function fetchLibraryPage(
   }
 
   try {
+    const requestHeaders = incomingHeaders ?? (await headers());
     const response = await request(url, {
       cache: "no-store",
-      headers: { accept: "application/json" },
+      headers: {
+        accept: "application/json",
+        cookie: requestHeaders.get("cookie") ?? "",
+      },
     });
     if (!response.ok) {
       return null;

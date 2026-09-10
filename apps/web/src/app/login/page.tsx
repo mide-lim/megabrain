@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
+import { getOwnerSession } from "../../lib/auth/session";
 import LoginSession from "./login-session";
 
 export const metadata: Metadata = {
@@ -7,7 +9,11 @@ export const metadata: Metadata = {
   description: "Acesse seu espaço pessoal de conhecimento e IA no MegaBrain.",
 };
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  if (await getOwnerSession()) {
+    redirect("/inbox");
+  }
+
   return (
     <main className="min-h-screen bg-background px-4 py-4 sm:px-6 sm:py-6">
       <a
@@ -19,7 +25,7 @@ export default function LoginPage() {
       <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-6xl flex-col sm:min-h-[calc(100vh-3rem)]">
         <header className="flex items-center justify-between px-2 py-4 sm:px-4">
           <a
-            className="inline-flex items-center gap-3 rounded-lg text-sm font-semibold text-foreground focus-visible:outline-none"
+            className="inline-flex items-center gap-3 rounded-lg text-sm font-semibold text-foreground"
             href="/login"
             translate="no"
           >
@@ -49,7 +55,7 @@ export default function LoginPage() {
               </p>
             </div>
             <p className="mt-12 max-w-sm border-t border-white/20 pt-5 text-sm leading-6 text-white/70">
-              A Biblioteca de Reels continua disponível publicamente enquanto o acesso do proprietário evolui.
+              O acesso é reservado para o espaço pessoal do proprietário.
             </p>
           </div>
 

@@ -14,6 +14,7 @@ from app.auth.config import (
     generate_opaque_token,
     sha256_token,
 )
+from app.auth.dependencies import resolve_owner_session, session_token_hash
 from app.auth.oidc import (
     GoogleOIDCAdapter,
     OIDCDependencyError,
@@ -101,12 +102,6 @@ def _session_response(payload: dict, status_code: int) -> Response:
     _apply_auth_headers(response)
     response.headers["Vary"] = "Cookie"
     return response
-
-
-def _session_token_hash(raw_token: str) -> bytes | None:
-    if not raw_token or any(not (character.isalnum() or character in "-_") for character in raw_token):
-        return None
-    return sha256_token(raw_token)
 
 
 def _error_response(status_code: int, body: str, *, clear_transaction: bool = False) -> Response:
@@ -225,19 +220,7 @@ def callback(
 
 @auth_router.get("/api/auth/session")
 def session(request: Request) -> Response:
-    raw_token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not raw_token:
-        return _session_response({"authenticated": False}, 401)
-    try:
-        token_hash = _session_token_hash(raw_token)
-    except UnicodeEncodeError:
-        return _session_response({"authenticated": False}, 401)
-    if token_hash is None:
-        return _session_response({"authenticated": False}, 401)
-    try:
-        identity = repository.resolve_session(token_hash)
-    except Exception:
-        return _session_response({"authenticated": False}, 401)
+    identity = resolve_owner_session(request)
     if identity is None:
         return _session_response({"authenticated": False}, 401)
     return _session_response(
@@ -254,7 +237,7 @@ def logout(request: Request, _csrf: None = Depends(require_csrf)) -> Response:
     raw_token = request.cookies.get(SESSION_COOKIE_NAME)
     if raw_token:
         try:
-            token_hash = _session_token_hash(raw_token)
+            token_hash = session_token_hash(raw_token)
         except UnicodeEncodeError:
             token_hash = None
         if token_hash is not None:
