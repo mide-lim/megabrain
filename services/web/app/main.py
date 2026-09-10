@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -158,6 +160,88 @@ class CreateCategoryRequest(BaseModel):
     name: str
 
 
+class ReelCategoryResponse(BaseModel):
+    id: int
+    name: str
+
+
+class ReelTranscriptResponse(BaseModel):
+    available: bool
+    text: str | None
+    language: str | None
+    completed_at: datetime | None
+
+
+class ReelCategoriesResponse(BaseModel):
+    assigned: list[ReelCategoryResponse]
+    available: list[ReelCategoryResponse]
+
+
+class ReelVideoResponse(BaseModel):
+    available: bool
+    src: str | None
+
+
+class ReelDetailResponse(BaseModel):
+    id: int
+    title: str | None
+    creator: str | None
+    shortcode: str | None
+    original_url: str | None
+    status: str | None
+    caption: str | None
+    duration_seconds: float | None
+    received_at: datetime | None
+    downloaded_at: datetime | None
+    filename: str | None
+    mime_type: str | None
+    file_size_bytes: int | None
+    transcript: ReelTranscriptResponse
+    categories: ReelCategoriesResponse
+    video: ReelVideoResponse
+
+
+def reel_detail_projection(
+    reel: dict[str, Any],
+    assigned_categories: list[dict[str, Any]],
+    available_categories: list[dict[str, Any]],
+) -> ReelDetailResponse:
+    presentation = reel_detail_context(reel, None)
+    transcript = presentation["transcript"]
+    transcript_available = transcript is not None
+    video_available = bool(reel.get("object_key"))
+
+    return ReelDetailResponse(
+        id=reel["id"],
+        title=reel.get("title"),
+        creator=reel.get("creator"),
+        shortcode=reel.get("shortcode"),
+        original_url=reel.get("original_url"),
+        status=reel.get("status"),
+        caption=reel.get("caption"),
+        duration_seconds=presentation["duration"],
+        received_at=reel.get("received_at"),
+        downloaded_at=reel.get("downloaded_at"),
+        filename=reel.get("filename"),
+        mime_type=reel.get("mime_type"),
+        file_size_bytes=reel.get("file_size_bytes"),
+        transcript=ReelTranscriptResponse(
+            available=transcript_available,
+            text=transcript if transcript_available else None,
+            language=reel.get("transcript_language") if transcript_available else None,
+            completed_at=reel.get("enrichment_completed_at") if transcript_available else None,
+        ),
+        categories=ReelCategoriesResponse(
+            assigned=[ReelCategoryResponse(id=category["id"], name=category["name"]) for category in assigned_categories],
+            available=[ReelCategoryResponse(id=category["id"], name=category["name"]) for category in available_categories],
+        ),
+        video=ReelVideoResponse(
+            available=video_available,
+            src=f"/api/reels/{reel['id']}/video" if video_available else None,
+        ),
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy", "version": VERSION}
@@ -282,6 +366,66 @@ def remove_reel_category_api(
     except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
         raise HTTPException(status_code=503, detail="Category update temporarily unavailable") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get(
+    "/api/reels/{reel_id}",
+    response_model=ReelDetailResponse,
+    responses={
+        404: {"description": "Reel not found"},
+        503: {"description": "Reel detail temporarily unavailable"},
+    },
+)
+def reel_detail_api(
+    reel_id: int,
+    response: Response,
+    _owner=Depends(require_owner_session),
+) -> ReelDetailResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        reel = fetch_reel(reel_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Reel detail temporarily unavailable") from None
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    try:
+        assigned_categories, available_categories = fetch_categories_for_reel(reel_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Reel detail temporarily unavailable") from None
+
+    return reel_detail_projection(reel, assigned_categories, available_categories)
+
+
+@app.get(
+    "/api/reels/{reel_id}/video",
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    response_class=RedirectResponse,
+    responses={
+        404: {"description": "Reel not found"},
+        503: {"description": "Video temporarily unavailable"},
+    },
+)
+def reel_video_api(
+    reel_id: int,
+    _owner=Depends(require_owner_session),
+) -> Response:
+    try:
+        reel = fetch_reel(reel_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Video temporarily unavailable") from None
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    signed_url = presigned_video_url(reel)
+    if signed_url is None:
+        raise HTTPException(status_code=503, detail="Video temporarily unavailable")
+
+    redirect_response = RedirectResponse(signed_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    redirect_response.headers["Cache-Control"] = "no-store"
+    return redirect_response
 
 
 @app.get("/reels/{reel_id}", response_class=HTMLResponse)
