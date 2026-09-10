@@ -36,12 +36,18 @@ app.include_router(auth_router)
 LIBRARY_QUERY = """
 SELECT
     r.id,
+    r.title,
     r.creator,
     r.shortcode,
     r.caption,
+    r.duration_seconds,
     r.status,
     r.received_at,
     r.downloaded_at,
+    (
+        enrichment.outcome = 'transcribed'
+        AND NULLIF(btrim(enrichment.transcript_text), '') IS NOT NULL
+    ) AS has_transcript,
     COALESCE(categories.names, ARRAY[]::TEXT[]) AS categories
 FROM app.reels AS r
 LEFT JOIN LATERAL (
@@ -107,6 +113,33 @@ def fetch_reels(page: int, search_term: str | None = None) -> tuple[list[dict], 
     return rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
 
 
+def normalize_library_search(q: str | None) -> str:
+    return q.strip() if q is not None else ""
+
+
+def fetch_library_page(
+    page: int,
+    q: str | None,
+) -> tuple[list[dict], bool, str]:
+    search_term = normalize_library_search(q)
+    reels, has_next = fetch_reels(page, search_term or None)
+    return reels, has_next, search_term
+
+
+def reel_library_projection(reel: dict) -> dict:
+    return {
+        "id": reel["id"],
+        "title": reel.get("title"),
+        "creator": reel.get("creator"),
+        "shortcode": reel.get("shortcode"),
+        "caption": reel.get("caption"),
+        "categories": reel.get("categories") or [],
+        "duration_seconds": reel.get("duration_seconds"),
+        "received_at": reel.get("received_at"),
+        "has_transcript": bool(reel.get("has_transcript")),
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy", "version": VERSION}
@@ -118,11 +151,10 @@ def library(
     page: int = Query(default=1, ge=1),
     q: str | None = Query(default=None),
 ) -> HTMLResponse:
-    search_term = q.strip() if q is not None else ""
-    normalized_search = search_term or None
+    search_term = normalize_library_search(q)
 
     try:
-        reels, has_next = fetch_reels(page, normalized_search)
+        reels, has_next, search_term = fetch_library_page(page, q)
     except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
         return templates.TemplateResponse(
             request=request,
@@ -148,6 +180,32 @@ def library(
             "q": search_term,
         },
     )
+
+
+@app.get("/api/reels")
+def reels_api(
+    response: Response,
+    page: int = Query(default=1, ge=1),
+    q: str | None = Query(default=None),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+
+    try:
+        reels, has_next, search_term = fetch_library_page(page, q)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        response.status_code = 503
+        return {"detail": "Library temporarily unavailable"}
+
+    return {
+        "items": [reel_library_projection(reel) for reel in reels],
+        "query": {"q": search_term},
+        "pagination": {
+            "page": page,
+            "page_size": PAGE_SIZE,
+            "has_previous": page > 1,
+            "has_next": has_next,
+        },
+    }
 
 
 @app.get("/reels/{reel_id}", response_class=HTMLResponse)
