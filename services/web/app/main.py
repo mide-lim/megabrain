@@ -151,6 +151,7 @@ def library(
     request: Request,
     page: int = Query(default=1, ge=1),
     q: str | None = Query(default=None),
+    _owner=Depends(require_owner_session),
 ) -> HTMLResponse:
     search_term = normalize_library_search(q)
 
@@ -215,6 +216,7 @@ def reel_detail(
     request: Request,
     reel_id: int,
     curation_error: str | None = None,
+    _owner=Depends(require_owner_session),
 ) -> HTMLResponse:
     try:
         reel = fetch_reel(reel_id)
@@ -296,6 +298,7 @@ def add_reel_category(
     request: Request,
     reel_id: int,
     category_id: int = Form(),
+    _owner=Depends(require_owner_session),
     _csrf: None = Depends(require_csrf),
 ) -> Response:
     try:
@@ -315,6 +318,7 @@ def create_reel_category(
     request: Request,
     reel_id: int,
     name: str = Form(),
+    _owner=Depends(require_owner_session),
     _csrf: None = Depends(require_csrf),
 ) -> Response:
     normalized_name = name.strip()
@@ -339,6 +343,7 @@ def remove_reel_category(
     request: Request,
     reel_id: int,
     category_id: int,
+    _owner=Depends(require_owner_session),
     _csrf: None = Depends(require_csrf),
 ) -> Response:
     try:

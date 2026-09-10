@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import categories, database, main, r2, reels
+from app.auth.dependencies import require_owner_session
+from app.auth.repository import SessionIdentity
 from app.database import DatabaseConfigurationError, DatabaseSettings
 from app.main import PAGE_SIZE, app
 
@@ -26,6 +28,15 @@ def csrf_form(**fields: str) -> dict[str, str]:
 @pytest.fixture(autouse=True)
 def empty_categories(monkeypatch) -> None:
     monkeypatch.setattr(main, "fetch_categories_for_reel", lambda reel_id: ([], []))
+
+
+@pytest.fixture(autouse=True)
+def authenticated_owner_session(monkeypatch) -> None:
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_owner_session,
+        lambda: SessionIdentity(7, "owner@example.com"),
+    )
 
 
 def test_health_does_not_require_database_configuration(monkeypatch) -> None:
