@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import secrets
 
-from fastapi import Form, HTTPException, Request
+from fastapi import Form, Header, HTTPException, Request
 from fastapi.responses import Response
 
 CSRF_COOKIE_NAME = "__Host-csrf_token"
@@ -28,15 +28,25 @@ def set_csrf_cookie(response: Response, token: str) -> None:
     )
 
 
+def _validate_csrf(cookie_token: str | None, presented_token: str | None) -> bool:
+    return bool(
+        cookie_token
+        and presented_token
+        and hmac.compare_digest(cookie_token, presented_token)
+    )
+
+
 def require_csrf(
     request: Request,
     csrf_token: str | None = Form(default=None),
 ) -> None:
-    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
-    valid = bool(
-        cookie_token
-        and csrf_token
-        and hmac.compare_digest(cookie_token, csrf_token)
-    )
-    if not valid:
+    if not _validate_csrf(request.cookies.get(CSRF_COOKIE_NAME), csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF token validation failed")
+
+
+def require_api_csrf(
+    request: Request,
+    csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
+) -> None:
+    if not _validate_csrf(request.cookies.get(CSRF_COOKIE_NAME), csrf_token):
         raise HTTPException(status_code=403, detail="CSRF token validation failed")

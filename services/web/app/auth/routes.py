@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
+from pydantic import BaseModel
 
 from app.auth import repository
 from app.auth.config import (
@@ -14,14 +15,14 @@ from app.auth.config import (
     generate_opaque_token,
     sha256_token,
 )
-from app.auth.dependencies import resolve_owner_session, session_token_hash
+from app.auth.dependencies import require_owner_session, resolve_owner_session, session_token_hash
 from app.auth.oidc import (
     GoogleOIDCAdapter,
     OIDCDependencyError,
     OIDCValidationError,
     generate_pkce_verifier,
 )
-from app.csrf import require_csrf
+from app.csrf import csrf_token, require_csrf, set_csrf_cookie
 
 auth_router = APIRouter()
 _CACHE_CONTROL = "no-store, private"
@@ -29,6 +30,10 @@ _CACHE_CONTROL = "no-store, private"
 
 class InvalidReturnPath(ValueError):
     """Raised when a return path is not an unambiguous local pathname."""
+
+
+class CsrfTokenResponse(BaseModel):
+    csrf_token: str
 
 
 def validate_local_return_path(value: str) -> str:
@@ -230,6 +235,17 @@ def session(request: Request) -> Response:
         },
         200,
     )
+
+
+@auth_router.get("/api/auth/csrf", response_model=CsrfTokenResponse)
+def api_csrf(request: Request, _owner=Depends(require_owner_session)) -> Response:
+    token, should_set_cookie = csrf_token(request)
+    response = JSONResponse({"csrf_token": token})
+    _apply_auth_headers(response)
+    response.headers["Vary"] = "Cookie"
+    if should_set_cookie:
+        set_csrf_cookie(response, token)
+    return response
 
 
 @auth_router.post("/auth/logout")
