@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.auth.dependencies import require_owner_session
+from app.auth.repository import SessionIdentity
+
+
+@pytest.fixture(autouse=True)
+def authenticated_owner_api() -> None:
+    main.app.dependency_overrides[require_owner_session] = lambda: SessionIdentity(7, "owner@example.com")
+    yield
+    main.app.dependency_overrides.clear()
 
 
 def library_row(**overrides):

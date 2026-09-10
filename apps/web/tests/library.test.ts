@@ -52,7 +52,7 @@ test("library page is a server-rendered Explore surface with accessible search",
   assert.match(markup, /<label[^>]*>Buscar por criador, legenda, transcrição ou categoria<\/label>/);
   assert.match(markup, /name="q"/);
   assert.match(markup, /value="maker"/);
-  assert.match(markup, /href="\/login"/);
+  assert.doesNotMatch(markup, /href="\/login"/);
   assert.match(markup, /Página 2/);
   assert.match(markup, /1 Reel nesta página/);
 });
@@ -137,7 +137,11 @@ test("server-side API helper uses no-store and an internal non-public URL", asyn
     return new Response(JSON.stringify(result), { status: 200 });
   }) as typeof fetch;
 
-  const response = await fetchLibraryPage({ page: 2, q: "maker" }, request);
+  const response = await fetchLibraryPage(
+    { page: 2, q: "maker" },
+    request,
+    new Headers({ cookie: "__Host-mb_session=opaque" }),
+  );
   const source = await readFile(
     new URL("../src/app/library/library-api.ts", import.meta.url),
     "utf8",
@@ -146,6 +150,7 @@ test("server-side API helper uses no-store and an internal non-public URL", asyn
   assert.deepEqual(response, result);
   assert.equal(requestedUrl, "http://web:8000/api/reels?page=2&q=maker");
   assert.equal(requestOptions?.cache, "no-store");
+  assert.equal(new Headers(requestOptions?.headers).get("cookie"), "__Host-mb_session=opaque");
   assert.match(source, /MEGABRAIN_API_INTERNAL_URL/);
   assert.doesNotMatch(source, /NEXT_PUBLIC_/);
 });

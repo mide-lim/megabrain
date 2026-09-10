@@ -61,6 +61,26 @@ O candidato F1 não está implantado; a migration não foi aplicada; o cliente
 Google OAuth não foi configurado. Basic Auth continua sendo a fronteira de
 produção e Caddy permanece inalterado.
 
+## C2 — Authenticated App Shell candidate
+
+- O candidato local estabelece o App Shell autenticado do Next.js para `/`,
+  `/login`, `/inbox`, `/library`, `/categories` e `/settings`.
+- FastAPI continua a autoridade de sessão e autorização: `/api/reels` exige uma
+  sessão opaca válida do proprietário e retorna JSON `401` sem ela; o bootstrap
+  de sessão permanece em `/api/auth/session`.
+- O Next consulta esse endpoint somente no servidor, encaminhando
+  explicitamente o header `Cookie` e usando `cache: no-store`; não armazena
+  sessão no navegador nem consulta o banco de dados diretamente.
+- O Caddyfile versionado prepara o cutover seletivo dessas rotas para Next e
+  mantém `/api/*`, `/auth/*`, `/health`, `/reels/*` e `/static/*` no FastAPI.
+  A página legada de detalhe de Reel e as telas Jinja permanecem na transição.
+- A ação global “Adicionar Reel” é intencionalmente desabilitada e marcada “Em
+  breve”; não existe endpoint ou ingestão correspondente neste slice.
+- O healthcheck interno do frontend passa a usar `/healthz`, liberando `/api/*`
+  para a arquitetura final do FastAPI.
+
+O candidato C2 não foi implantado nem executou operações de produção.
+
 ## Capacidades validadas da Web
 
 - biblioteca paginada e página de detalhe de Reel;
