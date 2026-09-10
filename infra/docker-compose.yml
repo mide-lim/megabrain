@@ -189,6 +189,8 @@ services:
     container_name: megabrain-frontend
     restart: unless-stopped
     init: true
+    environment:
+      MEGABRAIN_API_INTERNAL_URL: http://web:8000
     expose:
       - "3000"
     networks:
