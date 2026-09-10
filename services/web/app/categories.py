@@ -5,6 +5,7 @@ from psycopg.rows import dict_row
 from app import database
 
 REEL_EXISTS_QUERY = "SELECT 1 FROM app.reels WHERE id = %s"
+CATEGORY_EXISTS_QUERY = "SELECT 1 FROM app.categories WHERE id = %s"
 
 CATEGORIES_FOR_REEL_QUERY = """
 SELECT
@@ -48,6 +49,12 @@ WHERE reel_id = %s AND category_id = %s
 def reel_exists(reel_id: int) -> bool:
     with database.connect() as connection, connection.cursor() as cursor:
         cursor.execute(REEL_EXISTS_QUERY, (reel_id,))
+        return cursor.fetchone() is not None
+
+
+def category_exists(category_id: int) -> bool:
+    with database.connect() as connection, connection.cursor() as cursor:
+        cursor.execute(CATEGORY_EXISTS_QUERY, (category_id,))
         return cursor.fetchone() is not None
 
 

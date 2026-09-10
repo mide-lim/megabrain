@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Query, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
 from starlette.templating import Jinja2Templates
@@ -11,9 +12,17 @@ from starlette.templating import Jinja2Templates
 from app import database
 from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
-from app.csrf import CSRF_COOKIE_NAME, CSRF_TOKEN_BYTES, csrf_token, require_csrf, set_csrf_cookie
+from app.csrf import (
+    CSRF_COOKIE_NAME,
+    CSRF_TOKEN_BYTES,
+    csrf_token,
+    require_api_csrf,
+    require_csrf,
+    set_csrf_cookie,
+)
 from app.categories import (
     associate_category,
+    category_exists,
     create_and_associate_category,
     fetch_categories_for_reel,
     reel_exists,
@@ -141,6 +150,14 @@ def reel_library_projection(reel: dict) -> dict:
     }
 
 
+class AssignCategoryRequest(BaseModel):
+    category_id: int
+
+
+class CreateCategoryRequest(BaseModel):
+    name: str
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy", "version": VERSION}
@@ -209,6 +226,62 @@ def reels_api(
             "has_next": has_next,
         },
     }
+
+
+@app.post("/api/reels/{reel_id}/categories", status_code=status.HTTP_204_NO_CONTENT)
+def assign_reel_category_api(
+    reel_id: int,
+    payload: AssignCategoryRequest,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> Response:
+    if not reel_exists(reel_id):
+        raise HTTPException(status_code=404, detail="Reel not found")
+    if not category_exists(payload.category_id):
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    try:
+        associate_category(reel_id, payload.category_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Category update temporarily unavailable") from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/api/reels/{reel_id}/categories/new", status_code=status.HTTP_204_NO_CONTENT)
+def create_reel_category_api(
+    reel_id: int,
+    payload: CreateCategoryRequest,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> Response:
+    normalized_name = payload.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=422, detail="Category name must not be empty")
+    if not reel_exists(reel_id):
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    try:
+        create_and_associate_category(reel_id, normalized_name)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Category update temporarily unavailable") from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.delete("/api/reels/{reel_id}/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_reel_category_api(
+    reel_id: int,
+    category_id: int,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> Response:
+    if not reel_exists(reel_id):
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    try:
+        remove_category(reel_id, category_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Category update temporarily unavailable") from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/reels/{reel_id}", response_class=HTMLResponse)
