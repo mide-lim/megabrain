@@ -2,19 +2,21 @@
 
 ## Tarefa atual
 
-**C7.3 — Final Consolidation Closeout: READY / HUMAN-GATED VALIDATION.**
+**F3.1 — Source-Neutral Reel Registration: LOCAL IMPLEMENTATION / HUMAN-GATED
+PUBLICATION.**
 
-C7.1 — Runtime Remediation está concluído. C7.2 — Skill Integrity & Governance
-Remediation está concluído. C7.3 corrige os dois últimos bloqueadores
-identificados pela regressão: a superfície de logout no navegador e a declaração
-obsoleta de CI no DoD. A consolidação permanece human-gated até a regressão
-final de C7 passar. F3 não inicia antes desse gate.
+C1–C7.3 consolidation is complete. F3.0 Discovery and F3.0.1 schema
+preflight are complete. F3.1 establishes the source-neutral Reel registration
+foundation.
+
+No public Web ingestion exists yet. This state does not authorize a production
+migration, grant, or deploy.
 
 A reconciliação de integridade não concede autorização operacional. Qualquer
 operação autenticada continua sujeita à capability permitida, Task Contract,
 Run Authorization, estado do lifecycle e demais gates aplicáveis.
 
-C1–C7.1 estão implantados e validados por operador: Google OIDC e sessão local do
+C1–C7.3 estão implantados e validados por operador: Google OIDC e sessão local do
 proprietário, App Shell/Library/Reel Detail do Next.js, mutações de categoria
 JSON com CSRF, corte `/reels/*` e aposentadoria Jinja. FastAPI é a autoridade de
 autenticação, sessão, API e domínio; Next.js é a autoridade de apresentação;
