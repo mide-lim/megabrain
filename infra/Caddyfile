@@ -43,6 +43,10 @@ n8n.midelim.tech {
 		reverse_proxy frontend:3000
 	}
 
+	handle /reels/* {
+		reverse_proxy frontend:3000
+	}
+
 	handle /_next/* {
 		reverse_proxy frontend:3000
 	}
