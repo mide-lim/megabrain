@@ -26,9 +26,9 @@ concluída com sucesso.
   para mídia; referências e metadados persistidos no PostgreSQL.
 - **Sprint 3 — Speech-to-Text:** transcrição por Google Speech-to-Text V2 /
   Chirp 3 em `pt-BR`, persistida no PostgreSQL.
-- **Sprint 4 — Private Web Library:** FastAPI SSR/Jinja, biblioteca e detalhe
-  de Reel, paginação, busca, categorias manuais, reprodução por URL R2 assinada
-  e proteção de produção.
+- **Sprint 4 — Private Web Library:** biblioteca e detalhe de Reel, paginação,
+  busca, categorias manuais, reprodução por URL R2 assinada e proteção de
+  produção. A apresentação inicial FastAPI SSR/Jinja foi aposentada em C6.
 
 ## F0 — Next.js Frontend Foundation
 
@@ -37,12 +37,9 @@ concluída com sucesso.
   MegaBrain.
 - A imagem standalone do Next é preparada para self-hosting no serviço Docker
   interno `frontend` (porta 3000), com health endpoint próprio.
-- A migração é gradual: FastAPI continua responsável por autenticação,
-  autorização, domínio, dados, R2 e a Web SSR/Jinja existente. Caddy, Basic Auth
-  e o roteamento de produção permanecem inalterados.
-- Nenhuma interface de login, OAuth/OIDC, migração da Reel Library ou rota
-  pública de Next foi implementada. O próximo marco de produto é F1 —
-  Authentication Foundation.
+- Após C6, Next.js controla toda a apresentação pública. FastAPI continua
+  responsável por autenticação, autorização, domínio, dados, R2 e APIs; Caddy e
+  Basic Auth permanecem como definidos no roteamento atual.
 
 ## F1 — Authentication Foundation candidate
 
@@ -71,9 +68,9 @@ produção e Caddy permanece inalterado.
 - O Next consulta esse endpoint somente no servidor, encaminhando
   explicitamente o header `Cookie` e usando `cache: no-store`; não armazena
   sessão no navegador nem consulta o banco de dados diretamente.
-- O Caddyfile versionado prepara o cutover seletivo dessas rotas para Next e
-  mantém `/api/*`, `/auth/*`, `/health`, `/reels/*` e `/static/*` no FastAPI.
-  A página legada de detalhe de Reel e as telas Jinja permanecem na transição.
+- O Caddyfile versionado encaminha a apresentação pública, inclusive
+  `/reels/*`, para Next.js e mantém `/api/*`, `/auth/*` e `/health` no FastAPI.
+  C6 removeu as telas Jinja e o mount estático legado do FastAPI.
 - A ação global “Adicionar Reel” é intencionalmente desabilitada e marcada “Em
   breve”; não existe endpoint ou ingestão correspondente neste slice.
 - O healthcheck interno do frontend passa a usar `/healthz`, liberando `/api/*`

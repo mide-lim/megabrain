@@ -44,10 +44,10 @@ resumos e classificação automática permanecem fora do escopo.
 
 ## D006 — Web SSR com FastAPI e Jinja
 
-**Status:** aceita
+**Status:** substituída por D020
 
-A Web Library é uma aplicação SSR FastAPI/Jinja, sem SPA ou frontend separado
-no MVP. Isso reduz superfície e complexidade para a biblioteca pessoal.
+Esta foi a decisão do MVP original. A apresentação FastAPI/Jinja foi retirada em
+C6 e substituída por Next.js conforme D020.
 
 ## D007 — R2 privado com URLs assinadas curtas
 
@@ -165,33 +165,24 @@ produção.
 
 ## D018 — Next.js como fundação gradual de frontend
 
-**Status:** aceita
+**Status:** substituída nas decisões de roteamento e apresentação por D019 e D020
 
-`apps/web` usa Next.js App Router, React, TypeScript strict, Tailwind CSS e uma
-fundação compatível com shadcn/ui para a futura experiência do MegaBrain. A
-aplicação é empacotada como output standalone para um serviço Docker interno;
-Caddy não a encaminha em produção nesta fase.
-
-Esta decisão não substitui D006: FastAPI/Jinja continua servindo a Web Library
-existente. Next é responsável por UI e rendering; FastAPI permanece a
-autoridade de autenticação, autorização, domínio e dados. A adoção ocorre por
-migrações aprovadas individualmente; F0 não inclui login, OAuth/OIDC ou Reel
-Library, e F1 é a Authentication Foundation.
+Esta decisão registra a fundação inicial do frontend. As decisões posteriores
+D019 e D020 definem o roteamento e a propriedade de apresentação atuais.
 
 ## D019 — App Shell autenticado seletivo do Next.js
 
-**Status:** aceita; substitui o estado de roteamento de D018, sem revogar suas
-fronteiras de autoridade
+**Status:** substituída nas decisões de roteamento e apresentação por D020
 
-O Next.js passa a compor a experiência autenticada e o App Shell nas rotas
-`/`, `/login`, `/inbox`, `/library`, `/categories` e `/settings`. O Caddyfile
-faz a transição seletiva apenas dessas rotas e dos assets `/_next/*`; o FastAPI
-continua recebendo `/api/*`, `/auth/*`, `/health`, `/reels/*`, `/static/*` e as
-demais rotas legadas.
+Esta decisão registra o corte inicial para o App Shell. D020 completa a
+propriedade de apresentação do Next.js e retira as rotas e assets Jinja legados.
 
-O Next usa uma consulta server-side não cacheada a `/api/auth/session`, com o
-header `Cookie` explicitamente encaminhado, somente para composição e redirects
-de UX. FastAPI valida a sessão opaca e aplica a autorização do proprietário em
-cada API protegida; Next, Caddy e a visibilidade da UI não constituem fronteira
-de autorização. A página Jinja `/reels/{id}` e a curadoria legada continuam até
-as migrações de paridade aprovadas.
+## D020 — Next.js controla toda a apresentação pública
+
+**Status:** aceita
+
+Next.js é o único proprietário de apresentação pública, inclusive `/reels/*`.
+FastAPI continua como autoridade de autenticação, sessões, OIDC, CSRF, APIs,
+domínio, dados, mutações de categoria, assinatura R2 e `/health`. C6 remove as
+rotas Jinja, os templates e o mount `/static` legados sem alterar os contratos
+ativos de API ou as fronteiras de autorização.

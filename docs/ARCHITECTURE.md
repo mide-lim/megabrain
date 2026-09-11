@@ -49,23 +49,25 @@ identidade; o navegador recebe somente `__Host-mb_session` opaco. O candidato
 requer configuração futura do cliente Google e aplicação futura da migration,
 que não ocorreram nesta mudança.
 
-O roteamento atual de produção permanece distinto:
+O roteamento de apresentação atual é:
 
 ```text
 Internet
   -> Caddy
   -> Basic Auth
-  -> FastAPI/Jinja
+  -> Next.js
+  -> FastAPI para `/api/*`, `/auth/*` e `/health`
 ```
 
-Não há cutover para Next.js no F1.
+Next.js controla a apresentação pública. FastAPI mantém autenticação, sessões,
+OIDC, CSRF, APIs, domínio, dados e assinatura R2; não serve mais templates ou
+assets de apresentação.
 
 ## Serviços internos
 
-- **MegaBrain Frontend Foundation:** aplicação Next.js/App Router em
-  `apps/web`, responsável somente por UI e rendering da futura experiência. No
-  F0 ela oferece uma página de fundação e um health endpoint interno; não recebe
-  tráfego público, não implementa autenticação e não substitui a Web SSR atual.
+- **MegaBrain Frontend:** aplicação Next.js/App Router em `apps/web`,
+  responsável por toda a UI e rendering públicos. Não implementa autenticação,
+  domínio ou acesso direto ao banco.
 - **n8n:** valida entradas do Telegram e orquestra ingestão, download e fluxos
   relacionados.
 - **downloader:** recupera vídeo de Reel público e grava a mídia no R2.
@@ -74,15 +76,15 @@ Não há cutover para Next.js no F1.
 - **PostgreSQL:** mantém metadados, estado, caption original, transcript e
   categorias/associações pesquisáveis.
 - **Cloudflare R2:** mantém a mídia pesada em bucket privado.
-- **MegaBrain Web:** aplicação SSR FastAPI/Jinja para biblioteca, busca e
-  curadoria manual.
+- **MegaBrain Web:** FastAPI para autenticação, sessões, OIDC, CSRF, APIs,
+  domínio, dados e assinatura R2.
 
 Downloader, enricher, PostgreSQL, n8n e Web usam a rede Docker interna.
 A Web não publica porta no host; Caddy é sua única entrada de rede externa.
 
-O serviço `frontend` também usa a rede Docker interna na porta 3000, sem porta
-publicada. O Caddy continua encaminhando a Web pública somente para `web:8000`;
-o roteamento de produção para Next permanece explicitamente fora do F0.
+O serviço `frontend` usa a rede Docker interna na porta 3000, sem porta
+publicada. Caddy encaminha as rotas de apresentação para `frontend:3000` e as
+rotas de backend para `web:8000`.
 
 ## Fluxo da biblioteca Web
 

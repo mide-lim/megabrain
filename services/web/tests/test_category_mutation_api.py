@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.auth import config, dependencies, repository
+from app.csrf import CSRF_COOKIE_NAME
 
 
 CSRF_TOKEN = "valid-api-csrf-token"
@@ -26,7 +27,7 @@ def csrf_headers(token: str = CSRF_TOKEN) -> dict[str, str]:
 
 
 def set_csrf_cookie(client: TestClient, token: str = CSRF_TOKEN) -> None:
-    client.cookies.set(main.CSRF_COOKIE_NAME, token)
+    client.cookies.set(CSRF_COOKIE_NAME, token)
 
 
 def test_csrf_bootstrap_rejects_missing_owner_session() -> None:
@@ -44,7 +45,7 @@ def test_csrf_bootstrap_returns_and_sets_secure_httponly_cookie_for_owner(monkey
 
     assert response.status_code == 200
     token = response.json()["csrf_token"]
-    assert token and token == client.cookies.get(main.CSRF_COOKIE_NAME)
+    assert token and token == client.cookies.get(CSRF_COOKIE_NAME)
     assert response.headers["cache-control"] == "no-store, private"
     assert response.headers["vary"] == "Cookie"
     cookie = response.headers["set-cookie"]

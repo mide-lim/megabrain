@@ -1,27 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
-from fastapi.staticfiles import StaticFiles
 from psycopg.rows import dict_row
-from starlette.templating import Jinja2Templates
 
 from app import database
 from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
-from app.csrf import (
-    CSRF_COOKIE_NAME,
-    CSRF_TOKEN_BYTES,
-    csrf_token,
-    require_api_csrf,
-    require_csrf,
-    set_csrf_cookie,
-)
+from app.csrf import require_api_csrf
 from app.categories import (
     associate_category,
     category_exists,
@@ -37,11 +27,8 @@ from app.reels import fetch_reel
 
 VERSION = "0.1.0"
 PAGE_SIZE = 12
-APP_DIR = Path(__file__).parent
 
 app = FastAPI(title="MegaBrain Web", version=VERSION)
-app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=APP_DIR / "templates")
 app.include_router(auth_router)
 
 
@@ -247,44 +234,6 @@ def health() -> dict[str, str]:
     return {"status": "healthy", "version": VERSION}
 
 
-@app.get("/", response_class=HTMLResponse)
-def library(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-    q: str | None = Query(default=None),
-    _owner=Depends(require_owner_session),
-) -> HTMLResponse:
-    search_term = normalize_library_search(q)
-
-    try:
-        reels, has_next, search_term = fetch_library_page(page, q)
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return templates.TemplateResponse(
-            request=request,
-            name="library.html",
-            context={
-                "reels": [],
-                "page": page,
-                "has_next": False,
-                "error": True,
-                "q": search_term,
-            },
-            status_code=503,
-        )
-
-    return templates.TemplateResponse(
-        request=request,
-        name="library.html",
-        context={
-            "reels": reels,
-            "page": page,
-            "has_next": has_next,
-            "error": False,
-            "q": search_term,
-        },
-    )
-
-
 @app.get("/api/reels")
 def reels_api(
     response: Response,
@@ -426,150 +375,3 @@ def reel_video_api(
     redirect_response = RedirectResponse(signed_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     redirect_response.headers["Cache-Control"] = "no-store"
     return redirect_response
-
-
-@app.get("/reels/{reel_id}", response_class=HTMLResponse)
-def reel_detail(
-    request: Request,
-    reel_id: int,
-    curation_error: str | None = None,
-    _owner=Depends(require_owner_session),
-) -> HTMLResponse:
-    try:
-        reel = fetch_reel(reel_id)
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return templates.TemplateResponse(
-            request=request,
-            name="reel_detail.html",
-            context={"error": True},
-            status_code=503,
-        )
-
-    if reel is None:
-        return templates.TemplateResponse(
-            request=request,
-            name="reel_detail.html",
-            context={"missing": True},
-            status_code=404,
-        )
-
-    try:
-        assigned_categories, available_categories = fetch_categories_for_reel(
-            reel_id
-        )
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return templates.TemplateResponse(
-            request=request,
-            name="reel_detail.html",
-            context={"error": True},
-            status_code=503,
-        )
-
-    csrf_value, set_cookie = csrf_token(request)
-
-    context = reel_detail_context(reel, presigned_video_url(reel))
-    context.update(
-        {
-            "assigned_categories": assigned_categories,
-            "available_categories": available_categories,
-            "curation_error": curation_error,
-            "csrf_token": csrf_value,
-        }
-    )
-
-    response = templates.TemplateResponse(
-        request=request,
-        name="reel_detail.html",
-        context=context,
-    )
-
-    if set_cookie:
-        set_csrf_cookie(response, csrf_value)
-
-    return response
-
-
-def _reel_redirect(
-    reel_id: int,
-    error: str | None = None,
-) -> RedirectResponse:
-    suffix = f"?curation_error={error}" if error else ""
-
-    return RedirectResponse(
-        f"/reels/{reel_id}{suffix}",
-        status_code=303,
-    )
-
-
-def _missing_reel_response(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request=request,
-        name="reel_detail.html",
-        context={"missing": True},
-        status_code=404,
-    )
-
-
-@app.post("/reels/{reel_id}/categories")
-def add_reel_category(
-    request: Request,
-    reel_id: int,
-    category_id: int = Form(),
-    _owner=Depends(require_owner_session),
-    _csrf: None = Depends(require_csrf),
-) -> Response:
-    try:
-        if not reel_exists(reel_id):
-            return _missing_reel_response(request)
-
-        associate_category(reel_id, category_id)
-
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return _reel_redirect(reel_id, "database")
-
-    return _reel_redirect(reel_id)
-
-
-@app.post("/reels/{reel_id}/categories/new")
-def create_reel_category(
-    request: Request,
-    reel_id: int,
-    name: str = Form(),
-    _owner=Depends(require_owner_session),
-    _csrf: None = Depends(require_csrf),
-) -> Response:
-    normalized_name = name.strip()
-
-    try:
-        if not reel_exists(reel_id):
-            return _missing_reel_response(request)
-
-        if not normalized_name:
-            return _reel_redirect(reel_id, "empty-name")
-
-        create_and_associate_category(reel_id, normalized_name)
-
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return _reel_redirect(reel_id, "database")
-
-    return _reel_redirect(reel_id)
-
-
-@app.post("/reels/{reel_id}/categories/{category_id}/remove")
-def remove_reel_category(
-    request: Request,
-    reel_id: int,
-    category_id: int,
-    _owner=Depends(require_owner_session),
-    _csrf: None = Depends(require_csrf),
-) -> Response:
-    try:
-        if not reel_exists(reel_id):
-            return _missing_reel_response(request)
-
-        remove_category(reel_id, category_id)
-
-    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
-        return _reel_redirect(reel_id, "database")
-
-    return _reel_redirect(reel_id)
