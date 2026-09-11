@@ -80,9 +80,11 @@ Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação 
 usa CI disponível, evidência local, inspeção, pull requests e gates humanos. A
 existência do GitHub App não concede autoridade de produção, merge ou deploy.
 
-A discrepância de integridade do artefato B4.2 instalado impede publicação
-autenticada durante C7.1. C7.2 é necessário para reconciliar esse artefato antes
-de qualquer uso posterior dessa capability.
+A discrepância de integridade do artefato B4.2 identificada durante C7.1 foi
+reconciliada manualmente em C7.2 contra a fonte canônica v1.1.0. Essa
+reconciliação não concede nova autoridade: operações autenticadas continuam
+dependentes da capability permitida, Task Contract, Run Authorization e estado
+válido do lifecycle.
 
 ### Lifecycle Hermes implementado
 

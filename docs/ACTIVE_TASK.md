@@ -2,16 +2,18 @@
 
 ## Tarefa atual
 
-**C7.1 — Runtime Contract & Live-State Remediation: READY / HUMAN-GATED
-PUBLICATION.**
+**C7.2 — Skill Integrity & Governance Closeout: IN PROGRESS / HUMAN-GATED.**
 
-O candidato C7.1 foi validado localmente e revisado pelo operador. Sua
-publicação permanece human-gated e não deve usar a capability B4.2 instalada
-enquanto a discrepância de integridade estiver pendente de C7.2. Este estado
-não autoriza deploy, produção, mudança de Caddy, configuração de segredos,
-migração ou reconciliação automática do artefato B4.2 instalado.
+C7.1 foi integrado e implantado. A instalação B4.2 foi reconciliada manualmente
+com a fonte canônica v1.1.0, com conjunto exato de artefatos, paridade byte a
+byte, permissões e validação sintática. A skill não-canônica criada durante
+C7.1 foi preservada como evidência e retirada da instalação ativa.
 
-C1–C6 estão implantados e validados por operador: Google OIDC e sessão local do
+A reconciliação de integridade não concede autorização operacional. Qualquer
+operação autenticada continua sujeita à capability permitida, Task Contract,
+Run Authorization, estado do lifecycle e demais gates aplicáveis.
+
+C1–C7.1 estão implantados e validados por operador: Google OIDC e sessão local do
 proprietário, App Shell/Library/Reel Detail do Next.js, mutações de categoria
 JSON com CSRF, corte `/reels/*` e aposentadoria Jinja. FastAPI é a autoridade de
 autenticação, sessão, API e domínio; Next.js é a autoridade de apresentação;
@@ -29,9 +31,9 @@ B3 — CI Foundation: COMPLETE / PROMOTED.
 B4 — Hermes Autonomy Foundation: COMPLETE / PROMOTED.
 
 - B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
-- B4.2 — Autonomous PR Lifecycle: instalado, mas com discrepância de integridade
-  identificada; C7.2 permanece necessário antes de uso de publicação
-  autenticada.
+- B4.2 — Autonomous PR Lifecycle: fonte canônica v1.1.0 e instalação ativa
+  reconciliadas com paridade byte a byte; o uso operacional continua limitado
+  às autorizações normais do lifecycle.
 - B4.3 — Bounded Run Authorization: `COMPLETE / PROMOTED`.
 
 CI isolada existe para Pull Requests destinados a `dev` e `main`. Staging ainda
