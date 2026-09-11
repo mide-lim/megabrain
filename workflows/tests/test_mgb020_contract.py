@@ -109,6 +109,40 @@ class Mgb020ContractTests(unittest.TestCase):
             {"DATA — Validar resposta Downloader"},
         )
 
+    def test_http_failure_routes_through_error_output(self) -> None:
+        http_worker = self.node("HTTP — Worker Downloader")
+
+        self.assertEqual(http_worker["onError"], "continueErrorOutput")
+        self.assertEqual(
+            self.successors("HTTP — Worker Downloader", 1),
+            {"DATA — Normalizar falha Downloader"},
+        )
+
+    def test_initial_telegram_topology_has_one_conditional_download_path(self) -> None:
+        initial_telegram_if = "IF — Tem chat Telegram inicial?"
+        telegram_start = "TG — Download iniciado"
+        http_worker = "HTTP — Worker Downloader"
+
+        self.assertEqual(
+            self.successors(initial_telegram_if, 0),
+            {telegram_start},
+        )
+        self.assertEqual(
+            self.successors(telegram_start),
+            {http_worker},
+        )
+        self.assertEqual(
+            self.successors(initial_telegram_if, 1),
+            {http_worker},
+        )
+        self.assertEqual(
+            self.predecessors(http_worker),
+            {initial_telegram_if, telegram_start},
+        )
+        self.assertFalse(
+            any(node["type"] == "n8n-nodes-base.merge" for node in self.nodes.values())
+        )
+
     def test_success_response_validation_precedes_guarded_persistence(self) -> None:
         validator = self.node("DATA — Validar resposta Downloader")["parameters"]["jsCode"]
         self.assertIn("valid_response: false", validator)
@@ -118,6 +152,20 @@ class Mgb020ContractTests(unittest.TestCase):
         self.assertIn("cloudflare_r2", validator)
         self.assertIn("^[a-f0-9]{64}$", validator)
         self.assertIn("has_video", validator)
+        self.assertIn("typeof value === 'number'", validator)
+        self.assertIn("Number.isSafeInteger(value)", validator)
+        self.assertIn("strictPositiveSafeInteger(response.item_id)", validator)
+        self.assertIn("strictPositiveSafeInteger(response.file_size_bytes)", validator)
+        self.assertNotIn("Number(response.item_id)", validator)
+        self.assertNotIn("Number(response.file_size_bytes)", validator)
+        self.assertIn("nullableText(response.title)", validator)
+        self.assertIn("nullableText(response.creator)", validator)
+        self.assertIn("nullableText(response.caption)", validator)
+        self.assertIn("value === null", validator)
+        self.assertIn("value === undefined", validator)
+        self.assertIn("nullableDuration(response.duration_seconds)", validator)
+        self.assertIn("Number.isFinite(value)", validator)
+        self.assertIn("value >= 0", validator)
         self.assertEqual(
             self.successors("DATA — Validar resposta Downloader"),
             {"IF — Resposta Downloader válida?"},

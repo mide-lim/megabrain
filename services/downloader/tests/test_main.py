@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import hashlib
 import json
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -113,11 +116,61 @@ class DownloadEndpointTests(unittest.TestCase):
     def response_body(self, response: object) -> dict:
         return json.loads(response.body)
 
+    def post_to_app(self, payload: dict) -> list[dict]:
+        body = json.dumps(payload).encode()
+        messages: list[dict] = []
+
+        async def receive() -> dict:
+            return {
+                "type": "http.request",
+                "body": body,
+                "more_body": False,
+            }
+
+        async def send(message: dict) -> None:
+            messages.append(message)
+
+        asyncio.run(
+            downloader_main.app(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "POST",
+                    "scheme": "http",
+                    "path": "/download",
+                    "raw_path": b"/download",
+                    "query_string": b"",
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"x-megabrain-key", b"test-downloader-key"),
+                    ],
+                    "client": ("testclient", 50000),
+                    "server": ("testserver", 80),
+                },
+                receive,
+                send,
+            )
+        )
+        return messages
+
     def test_invalid_api_key_still_raises_401(self) -> None:
         with self.assertRaises(downloader_main.HTTPException) as raised:
             downloader_main.check_api_key("wrong-key")
 
         self.assertEqual(raised.exception.status_code, 401)
+
+    def test_malformed_request_returns_422_before_downloader_operations(self) -> None:
+        messages = self.post_to_app(
+            {
+                "item_id": "not-an-integer",
+                "shortcode": "AbC_123-xyz",
+                "url": "https://www.instagram.com/reel/AbC_123-xyz/",
+            }
+        )
+
+        status_code = messages[0]["status"]
+        self.assertEqual(status_code, 422)
 
     def test_download_error_returns_safe_502_envelope(self) -> None:
         with patch.object(
@@ -171,7 +224,8 @@ class DownloadEndpointTests(unittest.TestCase):
     def test_success_response_has_no_telegram_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             media_path = Path(directory) / "media.mp4"
-            media_path.write_bytes(b"fake-video-data")
+            media_bytes = b"fake-video-data"
+            media_path.write_bytes(media_bytes)
             upload_file = MagicMock()
 
             with (
@@ -193,8 +247,27 @@ class DownloadEndpointTests(unittest.TestCase):
                 )
 
         self.assertIsInstance(response, dict)
-        self.assertTrue(response["success"])
+        self.assertIs(response["success"], True)
         self.assertEqual(response["item_id"], 7)
+        self.assertEqual(response["shortcode"], "AbC_123-xyz")
+        self.assertEqual(response["filename"], "media.mp4")
+        self.assertEqual(response["mime_type"], "video/mp4")
+        self.assertEqual(response["file_size_bytes"], len(media_bytes))
+        self.assertEqual(
+            response["sha256"],
+            hashlib.sha256(media_bytes).hexdigest(),
+        )
+        self.assertEqual(response["storage_provider"], "cloudflare_r2")
+        self.assertEqual(response["storage_bucket"], "test-bucket")
+        self.assertEqual(
+            response["object_key"],
+            "original/instagram/reels/AbC_123-xyz/video.mp4",
+        )
+        self.assertIsNotNone(
+            datetime.fromisoformat(response["downloaded_at"]),
+        )
+        self.assertIs(response["has_video"], True)
+        self.assertIn("video", response["stream_types"])
         self.assertNotIn("telegram_chat_id", response)
         upload_file.assert_called_once()
 
