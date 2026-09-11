@@ -83,6 +83,12 @@ workflows, rulesets ou permissões do GitHub App, acesso à produção ou deploy
 - Há pendências de falsos positivos de ausência de fala, timestamps/VAD,
   backfill e tratamento de tentativas obsoletas.
 
+### Web
+
+- A observabilidade ainda é mínima.
+- A busca v1 usa `ILIKE` no PostgreSQL e aceita a semântica de curingas `%` e
+  `_`.
+
 ### Operações
 
 - Formalizar backup/restore, monitoramento/alertas, runbook de atualização e

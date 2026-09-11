@@ -56,7 +56,7 @@ def test_internal_openapi_describes_owner_cookie_and_runtime_security_contracts(
                 "name": "X-CSRF-Token",
                 "in": "header",
                 "required": True,
-                "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "X-Csrf-Token"},
+                "schema": {"type": "string", "title": "X-Csrf-Token"},
             }
         ]
         assert operation["responses"]["403"]["description"] == "CSRF token validation failed"

@@ -82,6 +82,10 @@ def _document_openapi_security(schema: dict[str, Any]) -> None:
                 for parameter in operation.get("parameters", []):
                     if parameter.get("in") == "header" and parameter.get("name") == "X-CSRF-Token":
                         parameter["required"] = True
+                        parameter["schema"] = {
+                            "type": "string",
+                            "title": "X-Csrf-Token",
+                        }
                 responses.setdefault("403", {"description": "CSRF token validation failed"})
 
 

@@ -2,13 +2,14 @@
 
 ## Tarefa atual
 
-**C7.1 — Runtime Contract & Live-State Remediation: IMPLEMENTATION / LOCAL
-CANDIDATE ONLY.**
+**C7.1 — Runtime Contract & Live-State Remediation: READY / HUMAN-GATED
+PUBLICATION.**
 
-O candidato atual corrige apenas inconsistências de runtime e documentação
-aceita após C1–C6. Não autoriza publicação, pull request, merge, deploy,
-produção, mudança de Caddy, configuração de segredos, migração ou reconciliação
-do artefato B4.2 instalado.
+O candidato C7.1 foi validado localmente e revisado pelo operador. Sua
+publicação permanece human-gated e não deve usar a capability B4.2 instalada
+enquanto a discrepância de integridade estiver pendente de C7.2. Este estado
+não autoriza deploy, produção, mudança de Caddy, configuração de segredos,
+migração ou reconciliação automática do artefato B4.2 instalado.
 
 C1–C6 estão implantados e validados por operador: Google OIDC e sessão local do
 proprietário, App Shell/Library/Reel Detail do Next.js, mutações de categoria
