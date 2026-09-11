@@ -193,8 +193,32 @@ def test_register_reel_persists_optional_telegram_adapter_metadata(monkeypatch) 
     assert cursor.calls[0][1][-4:] == (101, 202, 303, "forwarded message")
 
 
-@pytest.mark.parametrize("invalid_ids", [(0, 2, 3), (1, True, 3), (1, 2, -3)])
-def test_telegram_metadata_requires_all_valid_ids(invalid_ids) -> None:
+def test_telegram_metadata_accepts_negative_chat_id() -> None:
+    metadata = TelegramAdapterMetadata(
+        telegram_chat_id=-1001234567890,
+        telegram_user_id=202,
+        telegram_message_id=303,
+    )
+
+    assert metadata.telegram_chat_id == -1001234567890
+    assert metadata.telegram_user_id == 202
+    assert metadata.telegram_message_id == 303
+
+
+@pytest.mark.parametrize(
+    "invalid_ids",
+    [
+        (0, 2, 3),
+        (False, 2, 3),
+        (1, False, 3),
+        (1, 2, False),
+        (1, 0, 3),
+        (1, -2, 3),
+        (1, 2, 0),
+        (1, 2, -3),
+    ],
+)
+def test_telegram_metadata_rejects_invalid_ids(invalid_ids) -> None:
     with pytest.raises(ValueError):
         TelegramAdapterMetadata(*invalid_ids)
 

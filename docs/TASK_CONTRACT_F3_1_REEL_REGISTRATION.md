@@ -39,6 +39,93 @@ FastAPI-owned source-neutral registration of Instagram Reels.
 - auth/CSRF changes;
 - production execution.
 
+## Allowed Paths
+
+- docs/TASK_CONTRACT_F3_1_REEL_REGISTRATION.md
+- docs/ACTIVE_TASK.md
+- infra/postgres/migrations/004_f3_web_reel_ingestion.sql
+- services/web/app/reel_ingestion.py
+- services/web/tests/test_reel_ingestion.py
+
+## Forbidden Paths
+
+- apps/web/**
+- services/downloader/**
+- workflows/**
+- services/web/app/main.py
+- services/web/app/auth/**
+- services/web/app/csrf.py
+- infra/Caddyfile
+- infra/docker-compose.yml
+- skills/**
+- .github/workflows/**
+- AGENTS.md
+- docs/RISK_POLICY.md
+- historical Task Contracts
+- .env / secret-bearing files
+
+## Acceptance Criteria
+
+- canonical Instagram Reel normalization;
+- source-neutral create-or-return-existing;
+- optional Telegram metadata;
+- no duplicate insertion;
+- explicit natural-identity conflict;
+- registration requires only `SELECT` + `INSERT` + sequence `USAGE`;
+- no `UPDATE`;
+- migration alters only the three Telegram-ID nullability constraints;
+- no public/internal HTTP registration route in F3.1;
+- no downstream dispatch;
+- service-scoped tests pass.
+
+## Required Tests
+
+- F3.1 reel-ingestion service tests;
+- F3.1 migration contract tests.
+
+## Expected Files
+
+- docs/TASK_CONTRACT_F3_1_REEL_REGISTRATION.md
+- docs/ACTIVE_TASK.md
+- infra/postgres/migrations/004_f3_web_reel_ingestion.sql
+- services/web/app/reel_ingestion.py
+- services/web/tests/test_reel_ingestion.py
+
+## Migration Impact
+
+- compatibility-only;
+- three Telegram IDs become nullable;
+- historical data unchanged;
+- migration execution in production remains Red.
+
+## Security Invariants
+
+- WEB_DB_USER only;
+- no owner fallback;
+- no secrets;
+- no public ingestion;
+- no n8n/downloader/R2 access;
+- no auth/CSRF changes;
+- least privilege.
+
+## Rollback / Recovery
+
+- application callers can be rolled back;
+- nullable Telegram columns remain compatible;
+- routine rollback must NOT blindly restore `NOT NULL`;
+- `SET NOT NULL` would require proving no `NULL` rows and separate Red approval.
+
+## Human Gates
+
+Human/Product Owner approval is required before:
+
+- production migration;
+- production `GRANT`;
+- production deploy;
+- production rollback/reverse migration.
+
+Merge remains human-only.
+
 ## Runtime and persistence boundary
 
 F3.1 is source-neutral at the ingress boundary and remains Instagram-only.

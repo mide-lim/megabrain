@@ -88,14 +88,16 @@ class TelegramAdapterMetadata:
     raw_message: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in (
-            "telegram_chat_id",
-            "telegram_user_id",
-            "telegram_message_id",
-        ):
+        for field_name in ("telegram_user_id", "telegram_message_id"):
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{field_name} must be a positive integer")
+        if (
+            isinstance(self.telegram_chat_id, bool)
+            or not isinstance(self.telegram_chat_id, int)
+            or self.telegram_chat_id == 0
+        ):
+            raise ValueError("telegram_chat_id must be a non-zero integer")
         if self.raw_message is not None and not isinstance(self.raw_message, str):
             raise ValueError("raw_message must be a string or None")
 
