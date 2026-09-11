@@ -24,8 +24,27 @@ test("authenticated app shell provides navigation, safe owner presence, and a de
   assert.match(markup, /Adicionar Reel/);
   assert.match(markup, /Em breve/);
   assert.match(markup, /disabled=""/);
+  assert.match(markup, />Sair</);
   assert.match(markup, /href="\/library"/);
   assert.doesNotMatch(markup, /href="#"/);
+});
+
+test("logout uses FastAPI's CSRF bootstrap and form redirect contract", async () => {
+  const source = await readFile(new URL("../src/components/logout-button.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /fetch\("\/api\/auth\/csrf", \{[\s\S]*credentials: "same-origin"/);
+  assert.match(source, /cache: "no-store"/);
+  assert.match(source, /csrfResponse\.ok/);
+  assert.match(source, /document\.createElement\("form"\)/);
+  assert.match(source, /form\.action = "\/auth\/logout"/);
+  assert.match(source, /form\.method = "POST"/);
+  assert.match(source, /csrfInput\.name = "csrf_token"/);
+  assert.match(source, /csrfInput\.value = csrfPayload\.csrf_token/);
+  assert.match(source, /document\.body\.append\(form\)/);
+  assert.match(source, /form\.submit\(\)/);
+  assert.match(source, /disabled=\{pending\}/);
+  assert.match(source, /role="alert"/);
+  assert.doesNotMatch(source, /document\.cookie|localStorage|sessionStorage|X-CSRF-Token/);
 });
 
 test("all Next application entry pages require the server owner session", async () => {

@@ -69,6 +69,6 @@ A Definition of Done (DoD) estabelece a evidência mínima para considerar uma t
 
 ## Estado atual e requisitos futuros
 
-As verificações documentadas só são exigíveis quando a capacidade correspondente existe no repositório e no ambiente de trabalho. Hoje, `git diff --check`, inspeção de diff e validações locais disponíveis são verificações atuais. CI isolada, staging e Playwright/E2E automatizado ainda não existem; referências a elas nos perfis descrevem o alvo futuro e não devem ser declaradas como evidência atual.
+As verificações documentadas só são exigíveis quando a capacidade correspondente existe no repositório e no ambiente de trabalho. Hoje, `git diff --check`, inspeção de diff, validações locais disponíveis e CI isolada são verificações atuais. Staging e Playwright/E2E automatizado ainda não existem; referências a elas nos perfis descrevem o alvo futuro e não devem ser declaradas como evidência atual.
 
 A ausência de uma capacidade futura não elimina requisitos que já podem ser verificados localmente nem os gates humanos definidos pela política de risco.

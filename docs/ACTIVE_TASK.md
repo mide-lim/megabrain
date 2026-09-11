@@ -2,12 +2,12 @@
 
 ## Tarefa atual
 
-**C7.2 — Skill Integrity & Governance Closeout: IN PROGRESS / HUMAN-GATED.**
+**C7.3 — Final Consolidation Closeout: REMEDIATION IN PROGRESS / HUMAN-GATED.**
 
-C7.1 foi integrado e implantado. A instalação B4.2 foi reconciliada manualmente
-com a fonte canônica v1.1.0, com conjunto exato de artefatos, paridade byte a
-byte, permissões e validação sintática. A skill não-canônica criada durante
-C7.1 foi preservada como evidência e retirada da instalação ativa.
+C7.1 — Runtime Remediation está concluído. C7.2 — Skill Integrity & Governance
+Remediation está concluído. Os únicos bloqueadores C7 restantes são a superfície
+de logout no navegador e a declaração obsoleta de CI no DoD. F3 não inicia até
+que a regressão final de C7 passe.
 
 A reconciliação de integridade não concede autorização operacional. Qualquer
 operação autenticada continua sujeita à capability permitida, Task Contract,
