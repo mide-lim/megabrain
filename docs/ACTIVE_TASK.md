@@ -2,12 +2,13 @@
 
 ## Tarefa atual
 
-**C7.3 — Final Consolidation Closeout: REMEDIATION IN PROGRESS / HUMAN-GATED.**
+**C7.3 — Final Consolidation Closeout: READY / HUMAN-GATED VALIDATION.**
 
 C7.1 — Runtime Remediation está concluído. C7.2 — Skill Integrity & Governance
-Remediation está concluído. Os únicos bloqueadores C7 restantes são a superfície
-de logout no navegador e a declaração obsoleta de CI no DoD. F3 não inicia até
-que a regressão final de C7 passe.
+Remediation está concluído. C7.3 corrige os dois últimos bloqueadores
+identificados pela regressão: a superfície de logout no navegador e a declaração
+obsoleta de CI no DoD. A consolidação permanece human-gated até a regressão
+final de C7 passar. F3 não inicia antes desse gate.
 
 A reconciliação de integridade não concede autorização operacional. Qualquer
 operação autenticada continua sujeita à capability permitida, Task Contract,
