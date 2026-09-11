@@ -67,19 +67,21 @@ do banco.
 
 ## D009 — Caddy HTTPS e Basic Auth como acesso MVP
 
-**Status:** aceita
+**Status:** substituída por D021
 
-Caddy é o ingresso HTTPS da Web e aplica Basic Auth em todas as rotas. É uma
-camada intencionalmente MVP, de usuário único, e não substitui as proteções da
-aplicação.
+Caddy foi o ingresso HTTPS da Web e aplicou Basic Auth em todas as rotas no MVP.
+Essa camada histórica, de usuário único, não substituía as proteções da
+aplicação. D021 aposenta Basic Auth do fluxo Web atual e mantém Caddy somente
+como fronteira de HTTPS e roteamento.
 
 ## D010 — CSRF obrigatório atrás de Basic Auth
 
-**Status:** aceita
+**Status:** substituída e preservada historicamente por D021
 
-POSTs de curadoria exigem proteção CSRF mesmo quando a rota já exige Basic Auth.
-A autenticação HTTP não elimina o risco de requisições forjadas em contexto de
-navegador.
+POSTs de curadoria exigiam proteção CSRF mesmo quando a rota já exigia Basic
+Auth. A autenticação HTTP não eliminava o risco de requisições forjadas em
+contexto de navegador. D021 preserva o princípio de CSRF obrigatório para
+requisições cookie-autenticadas que alteram estado.
 
 ## D011 — Web somente na rede Docker interna
 
@@ -186,3 +188,23 @@ FastAPI continua como autoridade de autenticação, sessões, OIDC, CSRF, APIs,
 domínio, dados, mutações de categoria, assinatura R2 e `/health`. C6 remove as
 rotas Jinja, os templates e o mount `/static` legados sem alterar os contratos
 ativos de API ou as fronteiras de autorização.
+
+## D021 — Google OIDC e sessão local opaca são a fronteira Web atual
+
+**Status:** aceita
+
+Google OIDC com sessão local opaca de proprietário único é a fronteira atual de
+autenticação da Web. FastAPI permanece a autoridade de autenticação, sessão,
+autorização, CSRF, APIs e domínio; Caddy termina HTTPS e roteia tráfego, sem
+executar autenticação de aplicação.
+
+Basic Auth foi uma fronteira MVP e está aposentada do fluxo Web atual. A
+aplicação continua privada e de proprietário único: a política
+`AUTH_OWNER_EMAIL` controla o bootstrap, e a identidade durável do proprietário
+usa issuer + subject do Google. Esta decisão não torna a aplicação multiusuário
+nem pública.
+
+A sessão `__Host-mb_session` é local e opaca. CSRF continua obrigatório em toda
+requisição cookie-autenticada que altere estado, incluindo mutações JSON de
+categoria e logout. D009 e D010 são preservadas como decisões históricas e são
+substituídas por esta decisão para a arquitetura atual.

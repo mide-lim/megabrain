@@ -188,7 +188,7 @@ def test_video_api_hides_signer_failure_without_logging_url(monkeypatch) -> None
 
 
 def test_detail_and_video_apis_are_described_in_openapi() -> None:
-    schema = TestClient(main.app).get("/openapi.json").json()
+    schema = main.app.openapi()
     detail = schema["paths"]["/api/reels/{reel_id}"]["get"]
     video = schema["paths"]["/api/reels/{reel_id}/video"]["get"]
 

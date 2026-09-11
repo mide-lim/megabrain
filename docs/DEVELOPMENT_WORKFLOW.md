@@ -46,6 +46,21 @@ avançar**. Discovery responde **o quê e por quê**. As fronteiras detalhadas d
 papéis estão em `AGENT_ROLES.md`; este fluxo não cria novas permissões ou
 capacidades de automação.
 
+## Contrato de testes por serviço
+
+A validação Python canônica é deliberadamente isolada por serviço; não existe um
+contrato de `pytest` de repositório-raiz. Execute os testes em seus diretórios de
+serviço e nos ambientes correspondentes:
+
+```text
+cd services/web && .venv/bin/python -m pytest -q
+cd services/enricher && .venv/bin/python -m pytest -q
+```
+
+O frontend é validado em `apps/web` com `npm test`, `npm run lint`,
+`npm run typecheck` e `npm run build`. Não altere imports ou crie um contrato
+falso de pytest na raiz para coletar serviços independentes.
+
 ## Fluxo de transição atual
 
 Hoje:
@@ -64,6 +79,10 @@ Hoje:
 Assim, o ciclo alvo é aplicado até onde houver capacidade real. A validação atual
 usa CI disponível, evidência local, inspeção, pull requests e gates humanos. A
 existência do GitHub App não concede autoridade de produção, merge ou deploy.
+
+A discrepância de integridade do artefato B4.2 instalado impede publicação
+autenticada durante C7.1. C7.2 é necessário para reconciliar esse artefato antes
+de qualquer uso posterior dessa capability.
 
 ### Lifecycle Hermes implementado
 

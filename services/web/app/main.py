@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import RedirectResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from psycopg.rows import dict_row
 
 from app import database
+from app.auth.config import SESSION_COOKIE_NAME
 from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
 from app.csrf import require_api_csrf
@@ -28,8 +31,69 @@ from app.reels import fetch_reel
 VERSION = "0.1.0"
 PAGE_SIZE = 12
 
-app = FastAPI(title="MegaBrain Web", version=VERSION)
+OWNER_SESSION_SECURITY_SCHEME = "OwnerSessionCookie"
+
+
+app = FastAPI(
+    title="MegaBrain Web",
+    version=VERSION,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    swagger_ui_oauth2_redirect_url=None,
+)
 app.include_router(auth_router)
+
+
+def _uses_dependency(dependant: Any, dependency: Callable[..., Any]) -> bool:
+    return any(
+        child.call is dependency or _uses_dependency(child, dependency)
+        for child in dependant.dependencies
+    )
+
+
+def _document_openapi_security(schema: dict[str, Any]) -> None:
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})[
+        OWNER_SESSION_SECURITY_SCHEME
+    ] = {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": SESSION_COOKIE_NAME,
+        "description": "Opaque local single-owner session cookie.",
+    }
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+
+        owner_protected = _uses_dependency(route.dependant, require_owner_session)
+        csrf_protected = _uses_dependency(route.dependant, require_api_csrf)
+        if not owner_protected and not csrf_protected:
+            continue
+
+        for operation in schema.get("paths", {}).get(route.path_format, {}).values():
+            if not isinstance(operation, dict):
+                continue
+            responses = operation.setdefault("responses", {})
+            if owner_protected:
+                operation["security"] = [{OWNER_SESSION_SECURITY_SCHEME: []}]
+                responses.setdefault("401", {"description": "Authentication required"})
+            if csrf_protected:
+                for parameter in operation.get("parameters", []):
+                    if parameter.get("in") == "header" and parameter.get("name") == "X-CSRF-Token":
+                        parameter["required"] = True
+                responses.setdefault("403", {"description": "CSRF token validation failed"})
+
+
+def internal_openapi() -> dict[str, Any]:
+    if app.openapi_schema is None:
+        schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+        _document_openapi_security(schema)
+        app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = internal_openapi
 
 
 LIBRARY_QUERY = """

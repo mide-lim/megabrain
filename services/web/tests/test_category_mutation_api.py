@@ -333,7 +333,7 @@ def test_api_typed_bodies_reject_missing_fields_before_domain_access(monkeypatch
 
 
 def test_mutation_api_openapi_uses_typed_request_models() -> None:
-    schema = TestClient(main.app).get("/openapi.json").json()
+    schema = main.app.openapi()
 
     csrf = schema["paths"]["/api/auth/csrf"]["get"]
     assign = schema["paths"]["/api/reels/{reel_id}/categories"]["post"]
