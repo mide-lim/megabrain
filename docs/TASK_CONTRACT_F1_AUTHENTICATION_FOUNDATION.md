@@ -473,8 +473,7 @@ No gate implies or authorizes the next gate.
 ## Dependencies
 
 - Approved F1 Authentication Discovery and F1 Authentication SDD.
-- The then-existing FastAPI/Jinja and direct psycopg Web application style;
-  C6 later retired the Jinja presentation layer.
+- Existing FastAPI/Jinja and direct psycopg Web application style.
 - Authlib 1.8.0, added only during implementation after G1.
 - Future human-owned Google OAuth client configuration and Web database-role grant binding for
   production use; neither is an implementation prerequisite for hermetic local tests.
