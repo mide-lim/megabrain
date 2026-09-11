@@ -16,26 +16,108 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const rawReelId = $json.reel_id ?? $json.id;\nconst reelId = typeof rawReelId === 'number'\n  ? rawReelId\n  : (typeof rawReelId === 'string' && /^[1-9]\\d*$/.test(rawReelId)\n    ? Number(rawReelId)\n    : NaN);\n\nif (!Number.isSafeInteger(reelId) || reelId <= 0) {\n  throw new Error('A positive Reel id is required.');\n}\n\nreturn { reel_id: reelId };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_10__",
+      "name": "DATA — Normalizar entrada"
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE app.reels\nSET\n    status = 'downloading',\n    download_started_at = NOW(),\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id;",
+        "query": "WITH claimed AS (\n    UPDATE app.reels\n    SET\n        status = 'downloading',\n        download_started_at = NOW(),\n        error_message = NULL,\n        updated_at = NOW()\n    WHERE id = $1::BIGINT\n      AND status IN ('received', 'download_failed')\n    RETURNING\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        status,\n        TRUE AS claimed\n), existing AS (\n    SELECT\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        status\n    FROM app.reels\n    WHERE id = $1::BIGINT\n)\nSELECT\n    COALESCE((SELECT claimed FROM claimed), FALSE) AS claimed,\n    EXISTS(SELECT 1 FROM existing) AS reel_exists,\n    COALESCE((SELECT id FROM claimed), (SELECT id FROM existing)) AS id,\n    COALESCE((SELECT shortcode FROM claimed), (SELECT shortcode FROM existing)) AS shortcode,\n    COALESCE((SELECT original_url FROM claimed), (SELECT original_url FROM existing)) AS original_url,\n    COALESCE((SELECT telegram_chat_id FROM claimed), (SELECT telegram_chat_id FROM existing)) AS telegram_chat_id,\n    COALESCE((SELECT status FROM claimed), (SELECT status FROM existing)) AS status;",
         "options": {
-          "queryReplacement": "={{ [$json.id] }}"
+          "queryReplacement": "={{ [$json.reel_id] }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        208,
+        448,
         0
       ],
       "id": "__NODE_ID_MGB_020_02__",
-      "name": "DB — Marcar downloading",
+      "name": "DB — Reivindicar processamento",
       "credentials": {
         "postgres": {
           "id": "__CREDENTIAL_ID_POSTGRES__",
           "name": "__CREDENTIAL_NAME_POSTGRES__"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_020_01__",
+              "leftValue": "={{ $json.claimed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "__NODE_ID_MGB_020_11__",
+      "name": "IF — Reivindicado?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_020_02__",
+              "leftValue": "={{ $json.telegram_chat_id !== null && $json.telegram_chat_id !== undefined && String($json.telegram_chat_id).trim() !== '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        -96
+      ],
+      "id": "__NODE_ID_MGB_020_12__",
+      "name": "IF — Tem chat Telegram inicial?"
     },
     {
       "parameters": {
@@ -46,18 +128,19 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        416,
-        0
+        1120,
+        -176
       ],
       "id": "__NODE_ID_MGB_020_03__",
       "name": "TG — Download iniciado",
-      "webhookId": "__WEBHOOK_ID_MGB_020_TG_DOWNLOAD_INICIADO__",
       "credentials": {
         "telegramApi": {
           "id": "__CREDENTIAL_ID_TELEGRAM_API__",
           "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
         }
-      }
+      },
+      "onError": "continueRegularOutput",
+      "webhookId": "__WEBHOOK_ID_MGB_020_TG_DOWNLOAD_INICIADO__"
     },
     {
       "parameters": {
@@ -67,7 +150,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {\n  item_id: Number(\n    $('DB — Marcar downloading').item.json.id\n  ),\n  shortcode:\n    $('DB — Marcar downloading').item.json.shortcode,\n  url:\n    $('DB — Marcar downloading').item.json.original_url,\n  telegram_chat_id: Number(\n    $('DB — Marcar downloading').item.json.telegram_chat_id\n  )\n} }}",
+        "jsonBody": "={{ {\n  item_id: Number($('DB — Reivindicar processamento').item.json.id),\n  shortcode: $('DB — Reivindicar processamento').item.json.shortcode,\n  url: $('DB — Reivindicar processamento').item.json.original_url\n} }}",
         "options": {
           "timeout": 300000
         }
@@ -75,15 +158,11 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        624,
-        0
+        1344,
+        -32
       ],
       "id": "__NODE_ID_MGB_020_04__",
       "name": "HTTP — Worker Downloader",
-      "notesInFlow": false,
-      "retryOnFail": false,
-      "executeOnce": false,
-      "alwaysOutputData": false,
       "credentials": {
         "httpHeaderAuth": {
           "id": "__CREDENTIAL_ID_HTTP_HEADER_AUTH__",
@@ -94,17 +173,65 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const claim = $('DB — Reivindicar processamento').item.json;\nconst response = $json;\nconst nonEmpty = (value) => typeof value === 'string' && value.trim() !== '';\nconst strictPositiveSafeInteger = (value) => typeof value === 'number'\n  && Number.isSafeInteger(value)\n  && value > 0;\nconst nullableText = (value) => value === null\n  || value === undefined\n  || typeof value === 'string';\nconst nullableDuration = (value) => value === null\n  || value === undefined\n  || (typeof value === 'number'\n    && Number.isFinite(value)\n    && value >= 0);\nconst claimedId = typeof claim.id === 'number'\n  ? claim.id\n  : Number(claim.id);\nconst hasVideo = response.has_video === true\n  || (Array.isArray(response.stream_types) && response.stream_types.includes('video'));\nconst downloadedAt = typeof response.downloaded_at === 'string'\n  && Number.isFinite(Date.parse(response.downloaded_at));\nconst valid = response.success === true\n  && strictPositiveSafeInteger(response.item_id)\n  && response.item_id === claimedId\n  && response.shortcode === claim.shortcode\n  && nonEmpty(response.filename)\n  && nonEmpty(response.mime_type)\n  && nonEmpty(response.object_key)\n  && nonEmpty(response.storage_provider)\n  && nonEmpty(response.storage_bucket)\n  && response.storage_provider === 'cloudflare_r2'\n  && strictPositiveSafeInteger(response.file_size_bytes)\n  && typeof response.sha256 === 'string'\n  && /^[a-f0-9]{64}$/.test(response.sha256)\n  && downloadedAt\n  && nullableText(response.title)\n  && nullableText(response.creator)\n  && nullableText(response.caption)\n  && nullableDuration(response.duration_seconds)\n  && hasVideo;\n\nif (!valid) {\n  return {\n    valid_response: false,\n    failure_code: 'DOWNLOADER_INVALID_RESPONSE',\n  };\n}\n\nreturn { ...response, valid_response: true };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -112
+      ],
+      "id": "__NODE_ID_MGB_020_13__",
+      "name": "DATA — Validar resposta Downloader"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_020_03__",
+              "leftValue": "={{ $json.valid_response }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        -112
+      ],
+      "id": "__NODE_ID_MGB_020_14__",
+      "name": "IF — Resposta Downloader válida?"
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE app.reels\nSET\n    status = 'downloaded',\n\n    title = $2,\n    creator = $3,\n    caption = $4,\n    duration_seconds = $5::NUMERIC,\n\n    filename = $6,\n    mime_type = $7,\n    file_size_bytes = $8::BIGINT,\n    sha256 = $9,\n\n    storage_provider = $10,\n    storage_bucket = $11,\n    object_key = $12,\n\n    downloaded_at = $13::TIMESTAMPTZ,\n\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    id AS reel_id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    filename,\n    file_size_bytes,\n    storage_bucket,\n    object_key,\n    downloaded_at;",
+        "query": "UPDATE app.reels\nSET\n    status = 'downloaded',\n    title = $2,\n    creator = $3,\n    caption = $4,\n    duration_seconds = $5::NUMERIC,\n    filename = $6,\n    mime_type = $7,\n    file_size_bytes = $8::BIGINT,\n    sha256 = $9,\n    storage_provider = $10,\n    storage_bucket = $11,\n    object_key = $12,\n    downloaded_at = $13::TIMESTAMPTZ,\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND status = 'downloading'\nRETURNING\n    id,\n    id AS reel_id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    filename,\n    file_size_bytes,\n    storage_bucket,\n    object_key,\n    downloaded_at;",
         "options": {
-          "queryReplacement": "={{ [   $json.item_id,   $json.title ?? null,   $json.creator ?? null,   $json.caption ?? null,   $json.duration_seconds ?? null,   $json.filename,   $json.mime_type,   $json.file_size_bytes,   $json.sha256,   $json.storage_provider,   $json.storage_bucket,   $json.object_key,   $json.downloaded_at ] }}"
+          "queryReplacement": "={{ [\n  $('DB — Reivindicar processamento').item.json.id,\n  $json.title ?? null,\n  $json.creator ?? null,\n  $json.caption ?? null,\n  $json.duration_seconds ?? null,\n  $json.filename,\n  $json.mime_type,\n  $json.file_size_bytes,\n  $json.sha256,\n  $json.storage_provider,\n  $json.storage_bucket,\n  $json.object_key,\n  $json.downloaded_at\n] }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        832,
-        -48
+        2016,
+        -176
       ],
       "id": "__NODE_ID_MGB_020_05__",
       "name": "DB — Marcar downloaded",
@@ -117,6 +244,40 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_020_04__",
+              "leftValue": "={{ $json.telegram_chat_id !== null && $json.telegram_chat_id !== undefined && String($json.telegram_chat_id).trim() !== '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        -256
+      ],
+      "id": "__NODE_ID_MGB_020_15__",
+      "name": "IF — Tem chat Telegram sucesso?"
+    },
+    {
+      "parameters": {
         "chatId": "={{ $json.telegram_chat_id }}",
         "text": "=✅ Download concluído!  ID: {{ $json.id }} Status: {{ $json.status }} Arquivo: {{ $json.object_key }} Tamanho: {{ (Number($json.file_size_bytes) / 1048576).toFixed(2) }} MB",
         "additionalFields": {}
@@ -124,63 +285,19 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1040,
-        -48
+        2464,
+        -304
       ],
       "id": "__NODE_ID_MGB_020_06__",
-      "name": "Send a text message",
-      "webhookId": "__WEBHOOK_ID_MGB_020_SEND_A_TEXT_MESSAGE__",
+      "name": "TG — Download concluído",
       "credentials": {
         "telegramApi": {
           "id": "__CREDENTIAL_ID_TELEGRAM_API__",
           "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
         }
-      }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=❌ Não foi possível baixar o Reel.  ID: {{ $json.id }} Status: {{ $json.status }} Tentativas: {{ $json.retry_count }}  Reenvie o mesmo link para tentar novamente.",
-        "additionalFields": {}
       },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        1040,
-        96
-      ],
-      "id": "__NODE_ID_MGB_020_07__",
-      "name": "TG — Falha no download",
-      "webhookId": "__WEBHOOK_ID_MGB_020_TG_FALHA_NO_DOWNLOAD__",
-      "credentials": {
-        "telegramApi": {
-          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
-          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE app.reels\nSET\n    status = 'download_failed',\n    error_message = $2,\n    retry_count = retry_count + 1,\n    last_error_at = NOW(),\n    updated_at = NOW()\nWHERE id = $1::BIGINT\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    error_message,\n    retry_count;",
-        "options": {
-          "queryReplacement": "={{ [   $('DB — Marcar downloading').item.json.id,   $json.error_message     || $json.error?.message     || $json.message     || 'Falha inesperada no downloader' ] }}"
-        }
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.7,
-      "position": [
-        832,
-        96
-      ],
-      "id": "__NODE_ID_MGB_020_08__",
-      "name": "DB — Registrar falha",
-      "credentials": {
-        "postgres": {
-          "id": "__CREDENTIAL_ID_POSTGRES__",
-          "name": "__CREDENTIAL_NAME_POSTGRES__"
-        }
-      }
+      "onError": "continueRegularOutput",
+      "webhookId": "__WEBHOOK_ID_MGB_020_SEND_A_TEXT_MESSAGE__"
     },
     {
       "parameters": {
@@ -204,11 +321,105 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1132,
-        132
+        2240,
+        -112
       ],
       "id": "__NODE_ID_MGB_020_09__",
       "name": "SUB — Enriquecer Reel"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const claim = $('DB — Reivindicar processamento').item.json;\nconst safeMessages = {\n  DOWNLOAD_FAILED: 'Downloader could not acquire Reel media',\n  DOWNLOADER_INTERNAL_ERROR: 'Downloader internal processing failed',\n  DOWNLOADER_INVALID_RESPONSE: 'Downloader returned an invalid success response',\n  DOWNLOADER_REQUEST_FAILED: 'Downloader request failed without a valid error envelope',\n};\nconst parse = (value) => {\n  let parsed = value;\n  for (let depth = 0; depth < 3 && typeof parsed === 'string'; depth += 1) {\n    try {\n      parsed = JSON.parse(parsed);\n    } catch {\n      break;\n    }\n  }\n  return parsed;\n};\nconst candidates = [\n  $json,\n  $json.body,\n  $json.error?.body,\n  $json.error?.message,\n  $json.error?.response?.body,\n  $json.error?.response?.data,\n].map(parse);\nconst envelope = candidates.find((value) => value && typeof value === 'object'\n  && value.success === false\n  && Number.isSafeInteger(Number(value.item_id))\n  && Number(value.item_id) === Number(claim.id)\n  && value.shortcode === claim.shortcode\n  && typeof value.error?.code === 'string');\nlet code = $json.failure_code === 'DOWNLOADER_INVALID_RESPONSE'\n  ? 'DOWNLOADER_INVALID_RESPONSE'\n  : 'DOWNLOADER_REQUEST_FAILED';\n\nif (envelope && Object.hasOwn(safeMessages, envelope.error.code)) {\n  code = envelope.error.code;\n}\n\nreturn {\n  reel_id: claim.id,\n  shortcode: claim.shortcode,\n  failure_code: code,\n  error_message: safeMessages[code].slice(0, 512),\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        160
+      ],
+      "id": "__NODE_ID_MGB_020_16__",
+      "name": "DATA — Normalizar falha Downloader"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE app.reels\nSET\n    status = 'download_failed',\n    error_message = $2,\n    retry_count = retry_count + 1,\n    last_error_at = NOW(),\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND status = 'downloading'\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    error_message,\n    retry_count;",
+        "options": {
+          "queryReplacement": "={{ [\n  $('DB — Reivindicar processamento').item.json.id,\n  $json.error_message\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2016,
+        160
+      ],
+      "id": "__NODE_ID_MGB_020_08__",
+      "name": "DB — Registrar falha",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_020_05__",
+              "leftValue": "={{ $json.telegram_chat_id !== null && $json.telegram_chat_id !== undefined && String($json.telegram_chat_id).trim() !== '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        160
+      ],
+      "id": "__NODE_ID_MGB_020_17__",
+      "name": "IF — Tem chat Telegram falha?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "=❌ Não foi possível baixar o Reel.  ID: {{ $json.id }} Status: {{ $json.status }} Tentativas: {{ $json.retry_count }}  Reenvie o mesmo link para tentar novamente.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2464,
+        112
+      ],
+      "id": "__NODE_ID_MGB_020_07__",
+      "name": "TG — Falha no download",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "webhookId": "__WEBHOOK_ID_MGB_020_TG_FALHA_NO_DOWNLOAD__"
     }
   ],
   "pinData": {},
@@ -217,18 +428,59 @@
       "main": [
         [
           {
-            "node": "DB — Marcar downloading",
+            "node": "DATA — Normalizar entrada",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "DB — Marcar downloading": {
+    "DATA — Normalizar entrada": {
+      "main": [
+        [
+          {
+            "node": "DB — Reivindicar processamento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Reivindicar processamento": {
+      "main": [
+        [
+          {
+            "node": "IF — Reivindicado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Reivindicado?": {
+      "main": [
+        [
+          {
+            "node": "IF — Tem chat Telegram inicial?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF — Tem chat Telegram inicial?": {
       "main": [
         [
           {
             "node": "TG — Download iniciado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Worker Downloader",
             "type": "main",
             "index": 0
           }
@@ -250,6 +502,35 @@
       "main": [
         [
           {
+            "node": "DATA — Validar resposta Downloader",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DATA — Normalizar falha Downloader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Validar resposta Downloader": {
+      "main": [
+        [
+          {
+            "node": "IF — Resposta Downloader válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Resposta Downloader válida?": {
+      "main": [
+        [
+          {
             "node": "DB — Marcar downloaded",
             "type": "main",
             "index": 0
@@ -257,7 +538,7 @@
         ],
         [
           {
-            "node": "DB — Registrar falha",
+            "node": "DATA — Normalizar falha Downloader",
             "type": "main",
             "index": 0
           }
@@ -268,7 +549,7 @@
       "main": [
         [
           {
-            "node": "Send a text message",
+            "node": "IF — Tem chat Telegram sucesso?",
             "type": "main",
             "index": 0
           },
@@ -280,7 +561,41 @@
         ]
       ]
     },
+    "IF — Tem chat Telegram sucesso?": {
+      "main": [
+        [
+          {
+            "node": "TG — Download concluído",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "DATA — Normalizar falha Downloader": {
+      "main": [
+        [
+          {
+            "node": "DB — Registrar falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "DB — Registrar falha": {
+      "main": [
+        [
+          {
+            "node": "IF — Tem chat Telegram falha?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Tem chat Telegram falha?": {
       "main": [
         [
           {
@@ -288,7 +603,8 @@
             "type": "main",
             "index": 0
           }
-        ]
+        ],
+        []
       ]
     }
   },

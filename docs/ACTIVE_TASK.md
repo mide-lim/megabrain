@@ -2,15 +2,16 @@
 
 ## Tarefa atual
 
-**F3.1 — Source-Neutral Reel Registration: LOCAL IMPLEMENTATION / HUMAN-GATED
+**F3.2 — Source-Neutral Processing Core: LOCAL IMPLEMENTATION / HUMAN-GATED
 PUBLICATION.**
 
 C1–C7.3 consolidation is complete. F3.0 Discovery and F3.0.1 schema
-preflight are complete. F3.1 establishes the source-neutral Reel registration
-foundation.
+preflight are complete. F3.1 is complete: migration 004 has been applied to
+production and the required F3.1 DB grants have been applied. F3.2 hardens the
+shared processing pipeline.
 
-No public Web ingestion exists yet. This state does not authorize a production
-migration, grant, or deploy.
+No public Web Add Reel flow exists yet. No production F3.2 deploy or n8n
+activation is authorized.
 
 A reconciliação de integridade não concede autorização operacional. Qualquer
 operação autenticada continua sujeita à capability permitida, Task Contract,

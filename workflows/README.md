@@ -22,5 +22,28 @@ Esses valores são marcadores não operacionais: devem ser substituídos pela co
 
 - `MGB-001-entrada-telegram.json`: recebe mensagens do Telegram, valida a entrada e encaminha Reels para o workflow de registro.
 - `MGB-010-entrada-reel.json`: normaliza e registra Reels, informa o resultado pelo Telegram e chama o workflow de download.
-- `MGB-020-download-reel.json`: coordena o download, atualiza o PostgreSQL e envia mensagens de status pelo Telegram.
+- `MGB-020-download-reel.json`: shared source-neutral processing core.
 - `MGB-030-enrichment-reel.json`: recebe um Reel baixado, chama o Enricher e persiste tentativas, resultados ou falhas de enriquecimento.
+
+## MGB-020 — Source-Neutral Processing Core
+
+MGB-020 recebe `reel_id` como entrada canônica e aceita `id` temporariamente
+para compatibilidade com MGB-010. O Downloader recebe somente `item_id`,
+`shortcode` e `url`; nenhuma metadata Telegram faz parte do request canônico.
+
+O workflow reivindica atomicamente apenas Reels em `received` ou
+`download_failed`. As transições de processamento permanecem:
+
+```text
+received/download_failed
+    -> downloading
+    -> downloaded
+
+ou
+
+    -> download_failed
+```
+
+Notificações Telegram são comportamento opcional de adapter, originado apenas
+do registro persistido, e nunca bloqueiam o Downloader ou MGB-030. MGB-030 é
+acionado diretamente após a persistência bem-sucedida de `downloaded`.

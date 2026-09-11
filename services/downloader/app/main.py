@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 import boto3
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -65,10 +66,11 @@ s3_client = boto3.client(
 
 
 class DownloadRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     item_id: int = Field(gt=0)
     shortcode: str
     url: str
-    telegram_chat_id: int
 
     @field_validator("shortcode")
     @classmethod
@@ -332,14 +334,14 @@ def health() -> dict[str, str]:
     }
 
 
-@app.post("/download")
+@app.post("/download", response_model=None)
 def download_reel(
     payload: DownloadRequest,
     x_megabrain_key: str | None = Header(
         default=None,
         alias="X-MegaBrain-Key",
     ),
-) -> dict:
+) -> dict | JSONResponse:
     check_api_key(x_megabrain_key)
 
     try:
@@ -508,9 +510,7 @@ def download_reel(
                 "shortcode": (
                     payload.shortcode
                 ),
-                "telegram_chat_id": (
-                    payload.telegram_chat_id
-                ),
+
                 "title": info.get(
                     "title"
                 ),
@@ -561,46 +561,48 @@ def download_reel(
             }
 
     except DownloadError as error:
-        message = str(error)[:2000]
-
         logger.warning(
             "Falha do yt-dlp "
             "no item %s: %s",
             payload.item_id,
-            message,
+            error,
         )
 
-        return {
-            "success": False,
-            "item_id": payload.item_id,
-            "shortcode": payload.shortcode,
-            "telegram_chat_id": (
-                payload.telegram_chat_id
-            ),
-            "error_code": (
-                "download_failed"
-            ),
-            "error_message": message,
-        }
+        return JSONResponse(
+            status_code=502,
+            content={
+                "success": False,
+                "item_id": payload.item_id,
+                "shortcode": payload.shortcode,
+                "error": {
+                    "code": "DOWNLOAD_FAILED",
+                    "message": (
+                        "Unable to acquire Reel media"
+                    ),
+                    "retryable": True,
+                },
+            },
+        )
 
-    except Exception as error:
-        message = str(error)[:2000]
-
+    except Exception:
         logger.exception(
             "Falha inesperada "
             "no item %s",
             payload.item_id,
         )
 
-        return {
-            "success": False,
-            "item_id": payload.item_id,
-            "shortcode": payload.shortcode,
-            "telegram_chat_id": (
-                payload.telegram_chat_id
-            ),
-            "error_code": (
-                "unexpected_error"
-            ),
-            "error_message": message,
-        }
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "item_id": payload.item_id,
+                "shortcode": payload.shortcode,
+                "error": {
+                    "code": "DOWNLOADER_INTERNAL_ERROR",
+                    "message": (
+                        "Downloader internal processing failed"
+                    ),
+                    "retryable": True,
+                },
+            },
+        )
