@@ -13,9 +13,9 @@ Exemplos:
 - pequenos refactors com contratos inalterados;
 - tooling de desenvolvimento não produtivo.
 
-Comportamento alvo: depois de existir evidência automatizada, Hermes poderá planejar, implementar, validar e eventualmente progredir trabalho Green de modo autônomo.
+Comportamento atual: CI isolada e bounded autonomy já existem. Hermes pode planejar, implementar e validar trabalho Green e, quando existir capability permitida, Task Contract válido e Run Authorization válido, progredir somente pelas operações explicitamente autorizadas do lifecycle.
 
-Hoje essa automação ainda não existe. Green não significa auto-merge, push, deploy ou integração automática atual.
+Green não concede merge, auto-merge, escrita direta em `dev` ou `main`, bypass de proteção, acesso à produção ou deploy. A existência de automação não amplia autoridade além das capacidades e autorizações vigentes.
 
 ## Yellow
 
@@ -30,9 +30,9 @@ Exemplos:
 - criação de arquivo de migration;
 - alteração relevante de contrato.
 
-Comportamento alvo: implementação, validação automatizada e staging, seguidos inicialmente por um gate humano de promoção.
+Comportamento atual: implementação e validação automatizada podem usar a CI existente, permanecendo sujeitas às capacidades, ao Task Contract, ao Run Authorization e aos gates aplicáveis para promoção.
 
-CI e staging ainda não existem no fluxo atual. Enquanto não existirem, suas exigências são alvo de entregas futuras, não evidência disponível.
+Staging ainda não existe no fluxo atual. A existência de CI não deve ser interpretada como evidência de staging nem como autorização de produção.
 
 ## Red
 

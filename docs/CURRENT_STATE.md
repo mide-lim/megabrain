@@ -62,8 +62,9 @@ nem pública.
 - B3 — CI Foundation: `COMPLETE / PROMOTED`.
 - B4 — Hermes Autonomy Foundation: `COMPLETE / PROMOTED`.
 - B4.1 — GitHub Auth Bootstrap: `COMPLETE / PROMOTED`.
-- B4.2 — Autonomous PR Lifecycle: requer C7.2 para reconciliação da integridade
-  do artefato instalado antes de qualquer uso autenticado de publicação.
+- B4.2 — Autonomous PR Lifecycle: instalação ativa reconciliada com a fonte
+  canônica v1.1.0, com paridade byte a byte; nenhuma nova autoridade foi
+  concedida pela reconciliação.
 - B4.3 — Bounded Run Authorization: `COMPLETE / PROMOTED`.
 
 Hermes suporta o lifecycle limitado somente dentro de uma autorização aprovada:
