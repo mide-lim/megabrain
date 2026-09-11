@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { OwnerSession } from "../lib/auth/session";
+import { LogoutButton } from "./logout-button";
 
 type AppPath = "/inbox" | "/library" | "/categories" | "/settings";
 
@@ -71,7 +72,10 @@ export function AppShell({ children, owner, pathname }: AppShellProps) {
       <header className="border-b border-border bg-surface px-4 py-3 sm:px-6 lg:px-8">
         <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-4">
           <Brand />
-          <DeferredAddReel />
+          <div className="flex items-center gap-3">
+            <DeferredAddReel />
+            <LogoutButton />
+          </div>
         </div>
         <div className="mx-auto mt-2 max-w-[90rem] md:hidden">
           <Navigation compact pathname={pathname} />
