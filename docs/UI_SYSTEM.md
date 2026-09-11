@@ -1,7 +1,8 @@
-# MegaBrain UI System — Baseline atual
+# MegaBrain UI System — Baseline histórica SSR
 
-Este documento registra a baseline observada da Web privada do MegaBrain. Não é
-um redesign, não cria tokens em código e não altera a implementação atual.
+Este documento registra a baseline observada da Web privada SSR/Jinja antes de
+C6. Essa apresentação foi aposentada; a UI ativa é implementada em Next.js.
+Não é um redesign, não cria tokens em código e não altera a implementação ativa.
 
 ## Princípios observados
 
@@ -49,9 +50,9 @@ Não há breakpoints CSS explícitos. A responsividade atual deriva de `clamp`,
 
 ### DOCUMENTED BASELINE
 
-Os valores CSS acima são valores reutilizados observados em
-`services/web/app/static/library.css`. Eles documentam a baseline, mas não
-formam um sistema formal de design tokens em código.
+Os valores CSS acima foram observados no antigo
+`services/web/app/static/library.css`, removido em C6. Eles documentam a
+baseline histórica, mas não formam um sistema formal de design tokens em código.
 
 ### FUTURE TOKENIZATION
 

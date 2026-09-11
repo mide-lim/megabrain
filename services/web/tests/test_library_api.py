@@ -153,18 +153,3 @@ def test_reels_api_sanitizes_listing_errors(monkeypatch) -> None:
     assert "postgres" not in response.text
     assert "secret" not in response.text
     assert "database" not in response.text
-
-
-def test_legacy_library_route_continues_using_shared_listing_behavior(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(
-        main,
-        "fetch_reels",
-        lambda page, q: (calls.append((page, q)) or ([library_row()], False)),
-    )
-
-    response = TestClient(main.app).get("/?page=2&q=%20maker%20")
-
-    assert response.status_code == 200
-    assert calls == [(2, "maker")]
-    assert 'href="/reels/42"' in response.text

@@ -4,10 +4,10 @@ import test from "node:test";
 
 const repositoryRoot = new URL("../../../", import.meta.url);
 
-test("C2 Caddy routing assigns only selected application routes to Next", async () => {
+test("Caddy routing assigns public presentation routes to Next", async () => {
   const caddy = await readFile(new URL("infra/Caddyfile", repositoryRoot), "utf8");
 
-  for (const route of ["/", "/login", "/inbox", "/inbox/*", "/library", "/library/*", "/categories", "/categories/*", "/settings", "/settings/*", "/_next/*"]) {
+  for (const route of ["/", "/login", "/inbox", "/inbox/*", "/library", "/library/*", "/categories", "/categories/*", "/settings", "/settings/*", "/reels/*", "/_next/*"]) {
     assert.match(caddy, new RegExp(`handle ${route.replaceAll("*", "\\*")} \\{\\n\\t\\treverse_proxy frontend:3000`));
   }
   assert.match(caddy, /handle \{\n\t\treverse_proxy web:8000/);
