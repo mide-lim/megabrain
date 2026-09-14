@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
 from psycopg.rows import dict_row
 
 from app import database
@@ -18,6 +19,20 @@ from app.csrf import require_api_csrf
 from app.internal_ingestion import (
     INTERNAL_INGESTION_SECURITY_SCHEME,
     router as internal_ingestion_router,
+)
+from app.reel_dispatch import (
+    DispatchState,
+    ReelDispatchConfigurationError,
+    ReelDispatchInvariantError,
+    dispatch_reel,
+    load_dispatch_settings,
+)
+from app.reel_ingestion import (
+    InvalidReelUrl,
+    ReelIdentityConflict,
+    ReelRegistrationUnavailable,
+    RegisteredReel,
+    register_reel,
 )
 from app.categories import (
     associate_category,
@@ -225,6 +240,16 @@ class CreateCategoryRequest(BaseModel):
     name: str
 
 
+class WebReelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    url: str
+
+
+class WebReelRequestInvalid(ValueError):
+    """Raised when the local web reel request contract is invalid."""
+
+
 class ReelCategoryResponse(BaseModel):
     id: int
     name: str
@@ -307,9 +332,116 @@ def reel_detail_projection(
     )
 
 
+def _web_reel_error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _is_json_media_type(content_type: str | None) -> bool:
+    return (
+        content_type is not None
+        and content_type.split(";", 1)[0].strip().lower() == "application/json"
+    )
+
+
+async def _parse_web_reel_request(request: Request) -> WebReelRequest:
+    if not _is_json_media_type(request.headers.get("content-type")):
+        raise WebReelRequestInvalid("Invalid reel request")
+    try:
+        body = await request.body()
+        parsed = json.loads(body)
+        return WebReelRequest.model_validate(parsed)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
+        raise WebReelRequestInvalid("Invalid reel request") from None
+
+
+def _web_reel_success_response(
+    reel: RegisteredReel, dispatch: DispatchState
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=201 if reel.created else 200,
+        content={
+            "reel": {
+                "id": reel.id,
+                "shortcode": reel.shortcode,
+                "original_url": reel.original_url,
+                "status": reel.status,
+                "created": reel.created,
+            },
+            "dispatch": {"state": dispatch.value},
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy", "version": VERSION}
+
+
+@app.post(
+    "/api/reels",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {"url": {"type": "string"}},
+                        "required": ["url"],
+                        "additionalProperties": False,
+                    }
+                }
+            },
+        },
+        "responses": {
+            "200": {"description": "Existing reel registered"},
+            "201": {"description": "Reel registered"},
+            "409": {"description": "Reel natural identity conflict"},
+            "422": {"description": "Invalid reel request"},
+            "503": {"description": "Reel dispatch temporarily unavailable"},
+        },
+    },
+)
+async def create_reel_api(
+    request: Request,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> JSONResponse:
+    try:
+        payload = await _parse_web_reel_request(request)
+        reel = register_reel(raw_url=payload.url, telegram_metadata=None)
+    except (WebReelRequestInvalid, InvalidReelUrl):
+        return _web_reel_error_response(422, "invalid_request", "Invalid reel request")
+    except ReelIdentityConflict:
+        return _web_reel_error_response(
+            409, "reel_identity_conflict", "Reel natural identity conflict"
+        )
+    except ReelRegistrationUnavailable:
+        return _web_reel_error_response(
+            503,
+            "registration_unavailable",
+            "Reel registration temporarily unavailable",
+        )
+
+    try:
+        settings = load_dispatch_settings()
+    except ReelDispatchConfigurationError:
+        settings = None
+
+    try:
+        dispatch = await dispatch_reel(reel, settings)
+    except ReelDispatchInvariantError:
+        return _web_reel_error_response(
+            503,
+            "reel_dispatch_unavailable",
+            "Reel dispatch temporarily unavailable",
+        )
+    return _web_reel_success_response(reel, dispatch)
 
 
 @app.get("/api/reels")
