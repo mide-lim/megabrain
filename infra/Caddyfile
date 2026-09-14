@@ -1,5 +1,15 @@
 n8n.midelim.tech {
-	reverse_proxy n8n:5678
+	handle /webhook/megabrain-internal-dispatch {
+		respond "Not Found" 404
+	}
+
+	handle /webhook-test/megabrain-internal-dispatch {
+		respond "Not Found" 404
+	}
+
+	handle {
+		reverse_proxy n8n:5678
+	}
 }
 
 {$WEB_HOST} {
@@ -49,6 +59,14 @@ n8n.midelim.tech {
 
 	handle /_next/* {
 		reverse_proxy frontend:3000
+	}
+
+	handle /internal {
+		respond "Not Found" 404
+	}
+
+	handle /internal/* {
+		respond "Not Found" 404
 	}
 
 	handle {
