@@ -1,0 +1,170 @@
+{
+  "name": "MGB-015 — Internal Dispatch de Reel",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "megabrain-internal-dispatch",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth"
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "__NODE_ID_MGB_015_01__",
+      "name": "Webhook — Internal Dispatch",
+      "webhookId": "__WEBHOOK_ID_MGB_015_INTERNAL_DISPATCH__",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__CREDENTIAL_ID_WEB_TO_N8N_DISPATCH__",
+          "name": "__CREDENTIAL_NAME_WEB_TO_N8N_DISPATCH__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $json.body;\nconst valid = body !== null\n  && typeof body === 'object'\n  && !Array.isArray(body)\n  && Object.keys(body).length === 1\n  && Object.hasOwn(body, 'reel_id')\n  && typeof body.reel_id === 'number'\n  && Number.isSafeInteger(body.reel_id)\n  && body.reel_id > 0;\n\nreturn valid\n  ? { valid: true, reel_id: body.reel_id }\n  : { valid: false };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0],
+      "id": "__NODE_ID_MGB_015_02__",
+      "name": "DATA — Validar body"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_015_01__",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [448, 0],
+      "id": "__NODE_ID_MGB_015_03__",
+      "name": "IF — Payload válido?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { reel_id: $json.reel_id };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, -80],
+      "id": "__NODE_ID_MGB_015_04__",
+      "name": "DATA — Preparar handoff"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW_ID_MGB_020__",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/__WORKFLOW_ID_MGB_020__",
+          "cachedResultName": "MGB-020 — Download de Reel"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [896, -80],
+      "id": "__NODE_ID_MGB_015_05__",
+      "name": "SUB — Acionar MGB-020"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true, reel_id: $('DATA — Preparar handoff').first().json.reel_id } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, -80],
+      "id": "__NODE_ID_MGB_015_06__",
+      "name": "RESP — Aceito"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: false, error: { code: 'invalid_reel_id' } } }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [672, 96],
+      "id": "__NODE_ID_MGB_015_07__",
+      "name": "RESP — Payload inválido"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook — Internal Dispatch": {
+      "main": [[{"node": "DATA — Validar body", "type": "main", "index": 0}]]
+    },
+    "DATA — Validar body": {
+      "main": [[{"node": "IF — Payload válido?", "type": "main", "index": 0}]]
+    },
+    "IF — Payload válido?": {
+      "main": [
+        [{"node": "DATA — Preparar handoff", "type": "main", "index": 0}],
+        [{"node": "RESP — Payload inválido", "type": "main", "index": 0}]
+      ]
+    },
+    "DATA — Preparar handoff": {
+      "main": [[{"node": "SUB — Acionar MGB-020", "type": "main", "index": 0}]]
+    },
+    "SUB — Acionar MGB-020": {
+      "main": [[{"node": "RESP — Aceito", "type": "main", "index": 0}]]
+    },
+    "RESP — Aceito": {"main": [[]]},
+    "RESP — Payload inválido": {"main": [[]]}
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "__VERSION_ID_MGB_015__",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "__INSTANCE_ID__"
+  },
+  "nodeGroups": [],
+  "id": "__WORKFLOW_ID_MGB_015__",
+  "tags": []
+}

@@ -8,7 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / "workflows" / "MGB-020-download-reel.json"
-BASELINE = "8d401cb34894998dec2d871183c3998521c3e162"
+MGB030_PATH = ROOT / "workflows" / "MGB-030-enrichment-reel.json"
+BASELINE = "1d81048adef6c0a952ace232eb3944fad77ccd1a"
 
 
 class Mgb020ContractTests(unittest.TestCase):
@@ -231,7 +232,7 @@ class Mgb020ContractTests(unittest.TestCase):
         self.assertIn("AND status = 'downloading'", failure["query"])
         self.assertIn("$('DB — Reivindicar processamento').item.json.id", failure["options"]["queryReplacement"])
 
-    def test_legacy_workflows_remain_unchanged_from_baseline(self) -> None:
+    def test_mgb020_remains_unchanged_from_f33_baseline(self) -> None:
         result = subprocess.run(
             [
                 "git",
@@ -239,8 +240,22 @@ class Mgb020ContractTests(unittest.TestCase):
                 "--quiet",
                 BASELINE,
                 "--",
-                "workflows/MGB-010-entrada-reel.json",
-                "workflows/MGB-030-enrichment-reel.json",
+                "workflows/MGB-020-download-reel.json",
+            ],
+            cwd=ROOT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+
+    def test_mgb030_remains_unchanged_from_f33_baseline(self) -> None:
+        result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--quiet",
+                BASELINE,
+                "--",
+                str(MGB030_PATH.relative_to(ROOT)),
             ],
             cwd=ROOT,
             check=False,

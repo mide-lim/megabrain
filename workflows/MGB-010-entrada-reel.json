@@ -7,123 +7,45 @@
       },
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ],
+      "position": [0, 0],
       "id": "__NODE_ID_MGB_010_01__",
-      "name": "SUB - Receber Reels"
+      "name": "SUB — Receber Reels"
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const message = $json.message ?? {};\nconst text = String(message.text ?? '').trim();\n\nconst reelRegex = new RegExp(\n  'https?://(?:www\\\\.)?instagram\\\\.com/reels?/([A-Za-z0-9_-]+)',\n  'i'\n);\n\nconst match = text.match(reelRegex);\n\nif (!match) {\n  throw new Error('Não foi encontrado um link válido de Reel.');\n}\n\nconst shortcode = match[1];\n\nreturn {\n  source: 'instagram',\n  content_type: 'reel',\n  shortcode,\n  original_url: `https://www.instagram.com/reel/${shortcode}/`,\n  status: 'received',\n\n  telegram_chat_id: String(message.chat.id),\n  telegram_user_id: String(message.from.id),\n  telegram_message_id: String(message.message_id),\n\n  raw_message: text,\n  received_at: new Date(\n    Number(message.date) * 1000\n  ).toISOString(),\n};"
+        "jsCode": "const message = $json.message ?? {};\nconst text = typeof message.text === 'string' ? message.text : '';\nconst match = text.match(/https?:\\/\\/(?:www\\.)?instagram\\.com\\/(?:reel|reels)\\/[^\\s<>\"']+/i);\nconst chatId = message.chat?.id;\nconst userId = message.from?.id;\nconst messageId = message.message_id;\n\nif (!match || !Number.isSafeInteger(chatId) || chatId === 0 || !Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(messageId) || messageId <= 0) {\n  throw new Error('Não foi encontrado um request Telegram válido para Reel.');\n}\n\nreturn {\n  url: match[0],\n  telegram: {\n    chat_id: chatId,\n    user_id: userId,\n    message_id: messageId,\n    raw_message: text,\n  },\n  notification_chat_id: chatId,\n};"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        208,
-        0
-      ],
+      "position": [224, 0],
       "id": "__NODE_ID_MGB_010_02__",
-      "name": "DATA — Normalizar Reels"
+      "name": "DATA — Extrair request Telegram"
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "WITH inserted AS (\n    INSERT INTO app.reels (\n        shortcode,\n        original_url,\n        source,\n        status,\n        telegram_chat_id,\n        telegram_user_id,\n        telegram_message_id,\n        raw_message,\n        received_at\n    )\n    VALUES (\n        $1,\n        $2,\n        $3,\n        $4,\n        $5::BIGINT,\n        $6::BIGINT,\n        $7::BIGINT,\n        $8,\n        $9::TIMESTAMPTZ\n    )\n    ON CONFLICT (shortcode) DO NOTHING\n    RETURNING\n        id,\n        shortcode,\n        original_url,\n        status,\n        telegram_chat_id,\n        received_at,\n        TRUE AS was_inserted\n)\n\nSELECT\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    received_at,\n    was_inserted\nFROM inserted\n\nUNION ALL\n\nSELECT\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    received_at,\n    FALSE AS was_inserted\nFROM app.reels\nWHERE shortcode = $1\n  AND NOT EXISTS (\n      SELECT 1 FROM inserted\n  );",
+        "method": "POST",
+        "url": "http://web:8000/internal/reels",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { url: $json.url, telegram: $json.telegram } }}",
         "options": {
-          "queryReplacement": "={{ [\n  $json.shortcode,\n  $json.original_url,\n  $json.source,\n  $json.status,\n  $json.telegram_chat_id,\n  $json.telegram_user_id,\n  $json.telegram_message_id,\n  $json.raw_message,\n  $json.received_at\n] }}"
+          "timeout": 5000
         }
       },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.7,
-      "position": [
-        416,
-        0
-      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [448, 0],
       "id": "__NODE_ID_MGB_010_03__",
-      "name": "DB — Registrar ou localizar Reel",
+      "name": "HTTP — Registrar Reel no FastAPI",
       "credentials": {
-        "postgres": {
-          "id": "__CREDENTIAL_ID_POSTGRES__",
-          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        "httpHeaderAuth": {
+          "id": "__CREDENTIAL_ID_N8N_TO_WEB_INGESTION__",
+          "name": "__CREDENTIAL_NAME_N8N_TO_WEB_INGESTION__"
         }
       }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=📥 Reel registrado com sucesso!  ID: {{ $json.id }} Status: {{ $json.status }} Link: {{ $json.original_url }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        800,
-        -240
-      ],
-      "id": "__NODE_ID_MGB_010_04__",
-      "name": "TG — Reel registrado",
-      "webhookId": "__WEBHOOK_ID_MGB_010_TG_REEL_REGISTRADO__",
-      "credentials": {
-        "telegramApi": {
-          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
-          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=⚠️ Este Reel já está registrado.  ID: {{ $json.id }} Status atual: {{ $json.status }} Link: {{ $json.original_url }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        976,
-        144
-      ],
-      "id": "__NODE_ID_MGB_010_05__",
-      "name": "TG — Reel duplicado",
-      "webhookId": "__WEBHOOK_ID_MGB_010_TG_REEL_DUPLICADO__",
-      "credentials": {
-        "telegramApi": {
-          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
-          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "__WORKFLOW_ID_MGB_020__",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/__WORKFLOW_ID_MGB_020__",
-          "cachedResultName": "MGB-020 — Download de Reel"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": true
-        },
-        "options": {
-          "waitForSubWorkflow": true
-        }
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        976,
-        -64
-      ],
-      "id": "__NODE_ID_MGB_010_06__",
-      "name": "SUB — Baixar Reel"
     },
     {
       "parameters": {
@@ -137,18 +59,8 @@
           "conditions": [
             {
               "id": "__CONDITION_ID_MGB_010_01__",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "received",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            },
-            {
-              "id": "__CONDITION_ID_MGB_010_02__",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "download_failed",
+              "leftValue": "={{ $json.dispatch?.state }}",
+              "rightValue": "accepted",
               "operator": {
                 "type": "string",
                 "operation": "equals",
@@ -156,18 +68,15 @@
               }
             }
           ],
-          "combinator": "or"
+          "combinator": "and"
         },
         "options": {}
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        800,
-        96
-      ],
-      "id": "__NODE_ID_MGB_010_07__",
-      "name": "IF — Pode tentar novamente?"
+      "position": [672, 0],
+      "id": "__NODE_ID_MGB_010_04__",
+      "name": "IF — Dispatch aceito?"
     },
     {
       "parameters": {
@@ -180,13 +89,13 @@
           },
           "conditions": [
             {
-              "id": "__CONDITION_ID_MGB_010_03__",
-              "leftValue": "={{ $json.was_inserted }}",
-              "rightValue": "",
+              "id": "__CONDITION_ID_MGB_010_02__",
+              "leftValue": "={{ $json.dispatch?.state }}",
+              "rightValue": "not_required",
               "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
               }
             }
           ],
@@ -196,90 +105,91 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [
-        608,
-        0
-      ],
+      "position": [896, 80],
+      "id": "__NODE_ID_MGB_010_05__",
+      "name": "IF — Dispatch não requerido?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('DATA — Extrair request Telegram').item.json.notification_chat_id }}",
+        "text": "=⚠️ Este Reel já está registrado.  ID: {{ $json.reel.id }} Status atual: {{ $json.reel.status }} Link: {{ $json.reel.original_url }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 32],
+      "id": "__NODE_ID_MGB_010_06__",
+      "name": "TG — Reel duplicado",
+      "webhookId": "__WEBHOOK_ID_MGB_010_TG_REEL_DUPLICADO__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('DATA — Extrair request Telegram').item.json.notification_chat_id }}",
+        "text": "=⚠️ Reel registrado, mas o início do processamento não foi confirmado.\nID: {{ $json.reel.id }}\nStatus atual: {{ $json.reel.status }}\nReenvie o mesmo link para tentar novamente com segurança.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1120, 160],
+      "id": "__NODE_ID_MGB_010_07__",
+      "name": "TG — Processamento não confirmado",
+      "webhookId": "__WEBHOOK_ID_MGB_010_TG_PROCESSAMENTO_NAO_CONFIRMADO__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "=📥 Reel registrado com sucesso!  ID: {{ $json.id }} Status: {{ $json.status }} Link: {{ $json.original_url }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [896, -224],
       "id": "__NODE_ID_MGB_010_08__",
-      "name": "IF — É um Reel novo?"
+      "name": "TG — Reel registrado",
+      "webhookId": "__WEBHOOK_ID_MGB_010_TG_REEL_REGISTRADO__",
+      "credentials": {
+        "telegramApi": {
+          "id": "__CREDENTIAL_ID_TELEGRAM_API__",
+          "name": "__CREDENTIAL_NAME_TELEGRAM_API__"
+        }
+      }
     }
   ],
   "pinData": {},
   "connections": {
-    "SUB - Receber Reels": {
+    "SUB — Receber Reels": {
+      "main": [[{"node": "DATA — Extrair request Telegram", "type": "main", "index": 0}]]
+    },
+    "DATA — Extrair request Telegram": {
+      "main": [[{"node": "HTTP — Registrar Reel no FastAPI", "type": "main", "index": 0}]]
+    },
+    "HTTP — Registrar Reel no FastAPI": {
+      "main": [[{"node": "IF — Dispatch aceito?", "type": "main", "index": 0}]]
+    },
+    "IF — Dispatch aceito?": {
+      "main": [[], [{"node": "IF — Dispatch não requerido?", "type": "main", "index": 0}]]
+    },
+    "IF — Dispatch não requerido?": {
       "main": [
-        [
-          {
-            "node": "DATA — Normalizar Reels",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        [{"node": "TG — Reel duplicado", "type": "main", "index": 0}],
+        [{"node": "TG — Processamento não confirmado", "type": "main", "index": 0}]
       ]
     },
-    "DATA — Normalizar Reels": {
-      "main": [
-        [
-          {
-            "node": "DB — Registrar ou localizar Reel",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DB — Registrar ou localizar Reel": {
-      "main": [
-        [
-          {
-            "node": "IF — É um Reel novo?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "TG — Reel registrado": {
-      "main": [
-        []
-      ]
-    },
-    "IF — Pode tentar novamente?": {
-      "main": [
-        [
-          {
-            "node": "SUB — Baixar Reel",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "TG — Reel duplicado",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "IF — É um Reel novo?": {
-      "main": [
-        [
-          {
-            "node": "SUB — Baixar Reel",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "IF — Pode tentar novamente?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "TG — Reel duplicado": {"main": [[]]},
+    "TG — Processamento não confirmado": {"main": [[]]},
+    "TG — Reel registrado": {"main": [[]]}
   },
   "active": true,
   "settings": {

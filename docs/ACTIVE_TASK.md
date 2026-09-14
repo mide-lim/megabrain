@@ -2,16 +2,20 @@
 
 ## Tarefa atual
 
-**F3.2 — Source-Neutral Processing Core: LOCAL IMPLEMENTATION / HUMAN-GATED
+**F3.3 — Internal Orchestration Boundary: LOCAL IMPLEMENTATION / HUMAN-GATED
 PUBLICATION.**
 
-C1–C7.3 consolidation is complete. F3.0 Discovery and F3.0.1 schema
-preflight are complete. F3.1 is complete: migration 004 has been applied to
-production and the required F3.1 DB grants have been applied. F3.2 hardens the
-shared processing pipeline.
+F3.2 — Source-Neutral Processing Core is COMPLETE / PROD VALIDATED. The
+Telegram -> MGB-020 -> Downloader path and the MGB-030 trigger after successful
+download were validated by the operator. The long-audio STT failure remains
+separate backlog work.
 
-No public Web Add Reel flow exists yet. No production F3.2 deploy or n8n
-activation is authorized.
+F3.3 moves MGB-010 to a Telegram adapter, makes FastAPI the authority for Reel
+registration/deduplication, and introduces an authenticated internal dispatcher
+to MGB-020. Production secrets, n8n import/activation, Caddy/Compose changes,
+deployment and production validation remain human-gated.
+
+No public Web Add Reel flow exists yet.
 
 A reconciliação de integridade não concede autorização operacional. Qualquer
 operação autenticada continua sujeita à capability permitida, Task Contract,
