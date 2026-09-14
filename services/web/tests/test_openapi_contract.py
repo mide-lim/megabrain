@@ -29,6 +29,7 @@ def test_internal_openapi_describes_owner_cookie_and_runtime_security_contracts(
     owner_protected_operations = (
         ("/api/auth/csrf", "get"),
         ("/api/reels", "get"),
+        ("/api/reels", "post"),
         ("/api/reels/{reel_id}", "get"),
         ("/api/reels/{reel_id}/video", "get"),
         ("/api/reels/{reel_id}/categories", "post"),
@@ -41,6 +42,7 @@ def test_internal_openapi_describes_owner_cookie_and_runtime_security_contracts(
         assert operation["responses"]["401"]["description"] == "Authentication required"
 
     for path, method in (
+        ("/api/reels", "post"),
         ("/api/reels/{reel_id}/categories", "post"),
         ("/api/reels/{reel_id}/categories/new", "post"),
         ("/api/reels/{reel_id}/categories/{category_id}", "delete"),
@@ -63,3 +65,38 @@ def test_internal_openapi_describes_owner_cookie_and_runtime_security_contracts(
 
     for path in ("/auth/login", "/auth/callback"):
         assert "security" not in schema["paths"][path]["get"]
+
+
+def test_web_reel_creation_openapi_contract_is_authenticated_and_strict() -> None:
+    schema = app.openapi()
+    operation = schema["paths"]["/api/reels"]["post"]
+
+    assert operation["security"] == [{"OwnerSessionCookie": []}]
+    assert operation["requestBody"] == {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {"url": {"type": "string"}},
+                    "required": ["url"],
+                    "additionalProperties": False,
+                }
+            }
+        },
+    }
+    assert operation["responses"]["401"] == {"description": "Authentication required"}
+    assert operation["responses"]["403"] == {"description": "CSRF token validation failed"}
+    assert {"200", "201", "401", "403", "409", "422", "503"} <= set(operation["responses"])
+    assert [
+        parameter
+        for parameter in operation["parameters"]
+        if parameter["in"] == "header" and parameter["name"] == "X-CSRF-Token"
+    ] == [
+        {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": True,
+            "schema": {"type": "string", "title": "X-Csrf-Token"},
+        }
+    ]

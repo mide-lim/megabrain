@@ -4,14 +4,20 @@ import hmac
 import json
 import os
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Mapping
-from urllib.parse import urlsplit
 
-import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+
+from app.reel_dispatch import (
+    DispatchState,
+    ReelDispatchConfigurationError,
+    ReelDispatchInvariantError,
+    WebToN8nDispatchSettings,
+    dispatch_reel,
+    load_dispatch_settings,
+)
 
 from app.reel_ingestion import (
     InvalidReelUrl,
@@ -25,8 +31,6 @@ from app.reel_ingestion import (
 router = APIRouter(prefix="/internal", tags=["internal"])
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
-DISPATCH_PATH = "/webhook/megabrain-internal-dispatch"
-DISPATCH_URL = f"http://n8n:5678{DISPATCH_PATH}"
 INTERNAL_INGESTION_SECURITY_SCHEME = "N8nIngestionKey"
 
 
@@ -38,64 +42,21 @@ class InternalRequestInvalid(ValueError):
     """Raised when the local internal-ingestion request contract is invalid."""
 
 
-class InternalIngestionInvariantError(RuntimeError):
-    """Raised when a registered reel has an unsupported persisted status."""
-
-
-class DispatchState(StrEnum):
-    ACCEPTED = "accepted"
-    NOT_REQUIRED = "not_required"
-    UNCONFIRMED = "unconfirmed"
-
-
 @dataclass(frozen=True)
 class InternalIngestionSettings:
     n8n_to_web_ingestion_key: str = field(repr=False)
-    web_to_n8n_dispatch_key: str = field(repr=False)
-    web_to_n8n_dispatch_url: str
 
     @classmethod
     def from_environment(
         cls, environment: Mapping[str, str] | None = None
     ) -> InternalIngestionSettings:
         environment = os.environ if environment is None else environment
-        names = (
-            "N8N_TO_WEB_INGESTION_KEY",
-            "WEB_TO_N8N_DISPATCH_KEY",
-            "WEB_TO_N8N_DISPATCH_URL",
-        )
-        values = {name: environment.get(name, "") for name in names}
-        if any(not value.strip() for value in values.values()):
+        key = environment.get("N8N_TO_WEB_INGESTION_KEY", "")
+        if not key.strip():
             raise InternalIngestionConfigurationError(
                 "Internal ingestion configuration is unavailable"
             )
-        if values["WEB_TO_N8N_DISPATCH_URL"] != DISPATCH_URL:
-            raise InternalIngestionConfigurationError(
-                "Internal ingestion configuration is unavailable"
-            )
-        _validate_dispatch_url(values["WEB_TO_N8N_DISPATCH_URL"])
-        return cls(
-            n8n_to_web_ingestion_key=values["N8N_TO_WEB_INGESTION_KEY"],
-            web_to_n8n_dispatch_key=values["WEB_TO_N8N_DISPATCH_KEY"],
-            web_to_n8n_dispatch_url=values["WEB_TO_N8N_DISPATCH_URL"],
-        )
-
-
-def _validate_dispatch_url(value: str) -> None:
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme != "http"
-        or parsed.hostname != "n8n"
-        or parsed.port != 5678
-        or parsed.path != DISPATCH_PATH
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise InternalIngestionConfigurationError(
-            "Internal ingestion configuration is unavailable"
-        )
+        return cls(n8n_to_web_ingestion_key=key)
 
 
 def load_settings() -> InternalIngestionSettings:
@@ -160,51 +121,10 @@ async def _parse_request(request: Request) -> InternalReelRequest:
         raise InternalRequestInvalid("Invalid ingestion request") from None
 
 
-async def request_internal_dispatch(
-    reel_id: int, settings: InternalIngestionSettings
-) -> DispatchState:
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(5.0, connect=1.0),
-            follow_redirects=False,
-            trust_env=False,
-        ) as client:
-            response = await client.post(
-                settings.web_to_n8n_dispatch_url,
-                headers={"X-MegaBrain-Key": settings.web_to_n8n_dispatch_key},
-                json={"reel_id": reel_id},
-            )
-    except httpx.HTTPError:
-        return DispatchState.UNCONFIRMED
-
-    if response.status_code != 202:
-        return DispatchState.UNCONFIRMED
-
-    try:
-        body = response.json()
-    except (json.JSONDecodeError, ValueError):
-        return DispatchState.UNCONFIRMED
-
-    if (
-        not isinstance(body, dict)
-        or set(body) != {"accepted", "reel_id"}
-        or body["accepted"] is not True
-        or isinstance(body["reel_id"], bool)
-        or not isinstance(body["reel_id"], int)
-        or body["reel_id"] != reel_id
-    ):
-        return DispatchState.UNCONFIRMED
-    return DispatchState.ACCEPTED
-
-
 async def _dispatch_state(
-    reel: RegisteredReel, settings: InternalIngestionSettings
+    reel: RegisteredReel, settings: WebToN8nDispatchSettings
 ) -> DispatchState:
-    if reel.status in {"received", "download_failed"}:
-        return await request_internal_dispatch(reel.id, settings)
-    if reel.status in {"downloading", "downloaded"}:
-        return DispatchState.NOT_REQUIRED
-    raise InternalIngestionInvariantError("Unsupported reel status")
+    return await dispatch_reel(reel, settings)
 
 
 def _success_response(reel: RegisteredReel, dispatch: DispatchState) -> JSONResponse:
@@ -245,7 +165,8 @@ def _success_response(reel: RegisteredReel, dispatch: DispatchState) -> JSONResp
 async def register_internal_reel(request: Request) -> JSONResponse:
     try:
         settings = load_settings()
-    except InternalIngestionConfigurationError:
+        dispatch_settings = load_dispatch_settings()
+    except (InternalIngestionConfigurationError, ReelDispatchConfigurationError):
         return _error_response(
             503,
             "internal_ingestion_unavailable",
@@ -283,8 +204,8 @@ async def register_internal_reel(request: Request) -> JSONResponse:
         )
 
     try:
-        dispatch = await _dispatch_state(reel, settings)
-    except InternalIngestionInvariantError:
+        dispatch = await _dispatch_state(reel, dispatch_settings)
+    except ReelDispatchInvariantError:
         return _error_response(
             503,
             "internal_ingestion_unavailable",
