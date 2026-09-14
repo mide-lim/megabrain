@@ -11,7 +11,26 @@ test("Caddy routing assigns public presentation routes to Next", async () => {
     assert.match(caddy, new RegExp(`handle ${route.replaceAll("*", "\\*")} \\{\\n\\t\\treverse_proxy frontend:3000`));
   }
   assert.match(caddy, /handle \{\n\t\treverse_proxy web:8000/);
-  assert.match(caddy, /n8n\.midelim\.tech \{\n\treverse_proxy n8n:5678/);
+  assert.match(
+    caddy,
+    /n8n\.midelim\.tech \{[\s\S]*handle \/webhook\/megabrain-internal-dispatch \{\n\t\trespond "Not Found" 404/
+  );
+  assert.match(
+    caddy,
+    /handle \/webhook-test\/megabrain-internal-dispatch \{\n\t\trespond "Not Found" 404/
+  );
+  assert.match(
+    caddy,
+    /n8n\.midelim\.tech \{[\s\S]*handle \{\n\t\treverse_proxy n8n:5678/
+  );
+  assert.match(
+    caddy,
+    /handle \/internal \{\n\t\trespond "Not Found" 404/
+  );
+  assert.match(
+    caddy,
+    /handle \/internal\/\* \{\n\t\trespond "Not Found" 404/
+  );
   assert.doesNotMatch(caddy, /basic_auth/i);
 });
 
