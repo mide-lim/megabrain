@@ -21,7 +21,8 @@ Esses valores são marcadores não operacionais: devem ser substituídos pela co
 ## Arquivos
 
 - `MGB-001-entrada-telegram.json`: recebe mensagens do Telegram, valida a entrada e encaminha Reels para o workflow de registro.
-- `MGB-010-entrada-reel.json`: normaliza e registra Reels, informa o resultado pelo Telegram e chama o workflow de download.
+- `MGB-010-entrada-reel.json`: adapter Telegram que transporta URL bruta e metadata para `POST http://web:8000/internal/reels`; não acessa PostgreSQL nem chama MGB-020 diretamente.
+- `MGB-015-internal-dispatch-reel.json`: webhook interno POST autenticado que valida apenas `reel_id` e entrega MGB-020 para execução assíncrona.
 - `MGB-020-download-reel.json`: shared source-neutral processing core.
 - `MGB-030-enrichment-reel.json`: recebe um Reel baixado, chama o Enricher e persiste tentativas, resultados ou falhas de enriquecimento.
 
@@ -47,3 +48,28 @@ ou
 Notificações Telegram são comportamento opcional de adapter, originado apenas
 do registro persistido, e nunca bloqueiam o Downloader ou MGB-030. MGB-030 é
 acionado diretamente após a persistência bem-sucedida de `downloaded`.
+
+## F3.3 — Internal Orchestration Boundary
+
+MGB-010 envia `url` e metadata Telegram ao FastAPI com uma credential Header
+Auth configurada pelo operador. A credencial contém o valor correspondente a
+`N8N_TO_WEB_INGESTION_KEY`; esse valor não precisa ser injetado como environment
+variable no container n8n e nunca é versionado.
+
+O FastAPI registra/deduplica o Reel e pode solicitar dispatch. Para Reels em
+`received` ou `download_failed`, ele chama o path lógico interno
+`megabrain-internal-dispatch` com `WEB_TO_N8N_DISPATCH_KEY`. MGB-015 recebe
+somente `{ "reel_id": <positive safe integer> }`, valida Header Auth, entrega
+MGB-020 com `waitForSubWorkflow=false` e só então responde HTTP 202. O 202
+confirma o handoff assíncrono ao processing core, não download ou enrichment.
+
+Exports F3.3 continuam sanitizados: IDs reais de credentials/workflows/nós,
+nomes privados de credentials, webhook IDs gerados, instance IDs e qualquer
+segredo permanecem placeholders. O path lógico não é segredo; Header Auth é a
+fronteira de autenticação.
+
+O runtime de produção foi identificado pelo operador como n8n 2.32.5. Antes da
+ativação humana, validar o comportamento contra essa versão e o image digest
+exato em uso: o handoff deve ser aceito antes do `Respond to Webhook` retornar
+202, sem aguardar Download ou Enrichment. Essa prova de runtime não é fornecida
+por este export sanitizado nem por testes locais.

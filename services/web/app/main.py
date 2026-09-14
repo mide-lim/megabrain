@@ -15,6 +15,10 @@ from app.auth.config import SESSION_COOKIE_NAME
 from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
 from app.csrf import require_api_csrf
+from app.internal_ingestion import (
+    INTERNAL_INGESTION_SECURITY_SCHEME,
+    router as internal_ingestion_router,
+)
 from app.categories import (
     associate_category,
     category_exists,
@@ -43,6 +47,7 @@ app = FastAPI(
     swagger_ui_oauth2_redirect_url=None,
 )
 app.include_router(auth_router)
+app.include_router(internal_ingestion_router)
 
 
 def _uses_dependency(dependant: Any, dependency: Callable[..., Any]) -> bool:
@@ -53,13 +58,18 @@ def _uses_dependency(dependant: Any, dependency: Callable[..., Any]) -> bool:
 
 
 def _document_openapi_security(schema: dict[str, Any]) -> None:
-    schema.setdefault("components", {}).setdefault("securitySchemes", {})[
-        OWNER_SESSION_SECURITY_SCHEME
-    ] = {
+    security_schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    security_schemes[OWNER_SESSION_SECURITY_SCHEME] = {
         "type": "apiKey",
         "in": "cookie",
         "name": SESSION_COOKIE_NAME,
         "description": "Opaque local single-owner session cookie.",
+    }
+    security_schemes[INTERNAL_INGESTION_SECURITY_SCHEME] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-MegaBrain-Key",
+        "description": "Machine credential for n8n Telegram ingestion only.",
     }
 
     for route in app.routes:
