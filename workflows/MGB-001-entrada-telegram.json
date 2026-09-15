@@ -100,7 +100,7 @@
     {
       "parameters": {
         "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
-        "text": "=✅ Os workflows estão se comunicando!\n\nShortcode: {{ $json.shortcode }}\nURL normalizada: {{ $json.original_url }}\nStatus: {{ $json.status }}",
+        "text": "=✅ Os workflows estão se comunicando!\n\nShortcode: {{ $json.shortcode }}\nURL normalizada: {{ $json.original_url }}\nStatus: {{ $json.download_status }}",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",

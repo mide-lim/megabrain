@@ -9,7 +9,7 @@ SELECT
     r.id,
     r.shortcode,
     r.original_url,
-    r.status,
+    r.download_status,
     r.title,
     r.creator,
     r.caption,

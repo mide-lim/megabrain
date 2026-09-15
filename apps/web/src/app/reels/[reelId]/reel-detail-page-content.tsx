@@ -99,7 +99,7 @@ export function ReelDetailPageContent({ reel, categoryControls }: { reel: ReelDe
           <section className="rounded-2xl border border-border bg-surface p-5 shadow-[0_12px_30px_rgba(32,37,34,0.06)] sm:p-6">
             <h2 className="text-xl font-semibold tracking-tight text-foreground">Detalhes</h2>
             <dl className="mt-5 space-y-3">
-              <DetailValue label="Status" value={reel.status?.trim() || "Não informado"} />
+              <DetailValue label="Status do download" value={reel.download_status?.trim() || "Não informado"} />
               <DetailValue label="Shortcode" value={reel.shortcode?.trim() || null} />
               <DetailValue label="Duração" value={duration} />
               <DetailValue label="Recebido em" value={receivedAt} />

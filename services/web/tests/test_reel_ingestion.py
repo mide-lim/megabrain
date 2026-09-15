@@ -28,7 +28,7 @@ def persisted_reel(**overrides):
         "shortcode": "abc_123",
         "original_url": "https://www.instagram.com/reel/abc_123/",
         "source": "instagram",
-        "status": "received",
+        "download_status": "received",
         "telegram_chat_id": None,
         "telegram_user_id": None,
         "telegram_message_id": None,
@@ -149,7 +149,7 @@ def test_register_reel_creates_source_neutral_reel_without_telegram_metadata(
 
     assert registered.created is True
     assert registered.source == "instagram"
-    assert registered.status == "received"
+    assert registered.download_status == "received"
     assert registered.original_url == "https://www.instagram.com/reel/abc_123/"
     assert registered.telegram_chat_id is None
     assert registered.telegram_user_id is None

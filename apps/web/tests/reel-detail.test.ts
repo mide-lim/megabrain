@@ -18,7 +18,7 @@ const reel: ReelDetail = {
   creator: "maker",
   shortcode: "abc123",
   original_url: "https://www.instagram.com/reel/abc123/",
-  status: "downloaded",
+  download_status: "downloaded",
   caption: "The original caption",
   duration_seconds: 12.5,
   received_at: "2026-08-25T00:00:00Z",

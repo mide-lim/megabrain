@@ -32,22 +32,23 @@ MGB-020 recebe `reel_id` como entrada canônica e aceita `id` temporariamente
 para compatibilidade com MGB-010. O Downloader recebe somente `item_id`,
 `shortcode` e `url`; nenhuma metadata Telegram faz parte do request canônico.
 
-O workflow reivindica atomicamente apenas Reels em `received` ou
-`download_failed`. As transições de processamento permanecem:
+O workflow reivindica atomicamente apenas Reels com
+`download_status` em `received` ou `failed`. As transições de download são:
 
 ```text
-received/download_failed
+received/failed
     -> downloading
     -> downloaded
 
 ou
 
-    -> download_failed
+    -> failed
 ```
 
-Notificações Telegram são comportamento opcional de adapter, originado apenas
-do registro persistido, e nunca bloqueiam o Downloader ou MGB-030. MGB-030 é
-acionado diretamente após a persistência bem-sucedida de `downloaded`.
+MGB-020 permanece o único writer de `download_status`. MGB-030 é acionado
+diretamente após a persistência bem-sucedida de `downloaded`, usando
+`download_status` somente como critério de elegibilidade. F4.2 não adiciona
+write de `transcription_status` a MGB-030; essa sincronização é trabalho F4.3.
 
 ## F3.3 — Internal Orchestration Boundary
 
@@ -56,8 +57,8 @@ Auth configurada pelo operador. A credencial contém o valor correspondente a
 `N8N_TO_WEB_INGESTION_KEY`; esse valor não precisa ser injetado como environment
 variable no container n8n e nunca é versionado.
 
-O FastAPI registra/deduplica o Reel e pode solicitar dispatch. Para Reels em
-`received` ou `download_failed`, ele chama o path lógico interno
+O FastAPI registra/deduplica o Reel e pode solicitar dispatch. Para Reels com
+`download_status` em `received` ou `failed`, ele chama o path lógico interno
 `megabrain-internal-dispatch` com `WEB_TO_N8N_DISPATCH_KEY`. MGB-015 recebe
 somente `{ "reel_id": <positive safe integer> }`, valida Header Auth, entrega
 MGB-020 com `waitForSubWorkflow=false` e só então responde HTTP 202. O 202

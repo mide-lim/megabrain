@@ -28,7 +28,7 @@ def library_row(**overrides):
         "duration_seconds": 12.5,
         "received_at": datetime(2026, 8, 25, tzinfo=UTC),
         "has_transcript": True,
-        "status": "downloaded",
+        "download_status": "downloaded",
         "object_key": "original/instagram/reels/abc123/video.mp4",
         "storage_bucket": "private-reels",
         "transcript_text": "Private transcript text",

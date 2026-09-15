@@ -133,7 +133,7 @@ SELECT
     r.shortcode,
     r.caption,
     r.duration_seconds,
-    r.status,
+    r.download_status,
     r.received_at,
     r.downloaded_at,
     (
@@ -278,7 +278,7 @@ class ReelDetailResponse(BaseModel):
     creator: str | None
     shortcode: str | None
     original_url: str | None
-    status: str | None
+    download_status: str | None
     caption: str | None
     duration_seconds: float | None
     received_at: datetime | None
@@ -307,7 +307,7 @@ def reel_detail_projection(
         creator=reel.get("creator"),
         shortcode=reel.get("shortcode"),
         original_url=reel.get("original_url"),
-        status=reel.get("status"),
+        download_status=reel.get("download_status"),
         caption=reel.get("caption"),
         duration_seconds=presentation["duration"],
         received_at=reel.get("received_at"),
@@ -368,7 +368,7 @@ def _web_reel_success_response(
                 "id": reel.id,
                 "shortcode": reel.shortcode,
                 "original_url": reel.original_url,
-                "status": reel.status,
+                "download_status": reel.download_status,
                 "created": reel.created,
             },
             "dispatch": {"state": dispatch.value},

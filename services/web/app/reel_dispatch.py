@@ -112,10 +112,10 @@ async def request_internal_dispatch(
 async def dispatch_reel(
     reel: RegisteredReel, settings: WebToN8nDispatchSettings | None
 ) -> DispatchState:
-    if reel.status in {"received", "download_failed"}:
+    if reel.download_status in {"received", "failed"}:
         if settings is None:
             return DispatchState.UNCONFIRMED
         return await request_internal_dispatch(reel.id, settings)
-    if reel.status in {"downloading", "downloaded"}:
+    if reel.download_status in {"downloading", "downloaded"}:
         return DispatchState.NOT_REQUIRED
     raise ReelDispatchInvariantError("Unsupported reel status")

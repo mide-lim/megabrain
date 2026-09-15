@@ -237,21 +237,36 @@ class F33InternalOrchestrationContractTests(unittest.TestCase):
         for forbidden_term in ("downloader", "enricher", "cloudflare_r2", "retry_count"):
             self.assertNotIn(forbidden_term, serialized.lower())
 
-    def test_mgb020_and_mgb030_are_frozen_from_baseline(self) -> None:
-        result = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--quiet",
-                BASELINE,
-                "--",
-                str(MGB020_PATH.relative_to(ROOT)),
-                str(MGB030_PATH.relative_to(ROOT)),
-            ],
-            cwd=ROOT,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0)
+    def test_mgb020_and_mgb030_only_apply_the_f42_download_status_rename(self) -> None:
+        def baseline_workflow(path: Path) -> dict:
+            result = subprocess.run(
+                ["git", "show", f"{BASELINE}:{path.relative_to(ROOT)}"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(result.stdout)
+
+        expected_mgb020 = baseline_workflow(MGB020_PATH)
+        for node in expected_mgb020["nodes"]:
+            query = node.get("parameters", {}).get("query")
+            if isinstance(query, str) and "app.reels" in query:
+                node["parameters"]["query"] = query.replace("status", "download_status").replace(
+                    "download_failed", "failed"
+                )
+            text = node.get("parameters", {}).get("text")
+            if isinstance(text, str) and "$json.status" in text:
+                node["parameters"]["text"] = text.replace("$json.status", "$json.download_status")
+
+        expected_mgb030 = baseline_workflow(MGB030_PATH)
+        for node in expected_mgb030["nodes"]:
+            query = node.get("parameters", {}).get("query")
+            if isinstance(query, str) and "r.status" in query:
+                node["parameters"]["query"] = query.replace("r.status", "r.download_status")
+
+        self.assertEqual(json.loads(MGB020_PATH.read_text(encoding="utf-8")), expected_mgb020)
+        self.assertEqual(json.loads(MGB030_PATH.read_text(encoding="utf-8")), expected_mgb030)
 
 
 if __name__ == "__main__":
