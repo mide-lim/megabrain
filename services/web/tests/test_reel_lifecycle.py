@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.reel_ingestion import INSERT_REEL_QUERY, SELECT_REEL_IDENTITY_QUERY
+from app.categories import (
+    ASSOCIATE_CATEGORY_QUERY,
+    CATEGORIES_FOR_REEL_QUERY,
+    FIND_CATEGORY_QUERY,
+    INSERT_CATEGORY_QUERY,
+    REMOVE_CATEGORY_QUERY,
+)
 from app.reel_lifecycle import (
     CURATION_STATUS_INBOX,
     DOWNLOAD_STATUS_DOWNLOADED,
@@ -12,40 +21,43 @@ from app.reel_lifecycle import (
     TRANSCRIPTION_STATUS_NOT_REQUESTED,
     LifecycleStatusError,
     default_reel_lifecycle,
-    map_legacy_download_status,
     validate_curation_status,
     validate_download_status,
     validate_transcription_status,
 )
 
 
-@pytest.mark.parametrize(
-    ("legacy_status", "download_status"),
-    [
-        ("received", DOWNLOAD_STATUS_RECEIVED),
-        ("downloading", DOWNLOAD_STATUS_DOWNLOADING),
-        ("downloaded", DOWNLOAD_STATUS_DOWNLOADED),
-        ("download_failed", DOWNLOAD_STATUS_FAILED),
-    ],
-)
-def test_legacy_download_statuses_map_to_explicit_download_lifecycle(
-    legacy_status: str, download_status: str
-) -> None:
-    assert map_legacy_download_status(legacy_status) == download_status
-
-
-def test_unknown_legacy_download_status_is_rejected() -> None:
-    with pytest.raises(LifecycleStatusError, match="Unknown legacy download status"):
-        map_legacy_download_status("invented")
-
-
 def test_existing_reel_defaults_are_conservative_and_independent() -> None:
     lifecycle = default_reel_lifecycle()
 
     assert lifecycle == {
+        "download_status": DOWNLOAD_STATUS_RECEIVED,
         "curation_status": CURATION_STATUS_INBOX,
         "transcription_status": TRANSCRIPTION_STATUS_NOT_REQUESTED,
     }
+
+
+def test_runtime_lifecycle_domain_no_longer_emits_legacy_download_failed() -> None:
+    lifecycle_module = Path(__file__).resolve().parents[1] / "app/reel_lifecycle.py"
+
+    assert "download_failed" not in lifecycle_module.read_text(encoding="utf-8")
+
+
+def test_category_operations_do_not_mutate_or_auto_organize_lifecycle() -> None:
+    category_sql = "\n".join(
+        (
+            CATEGORIES_FOR_REEL_QUERY,
+            ASSOCIATE_CATEGORY_QUERY,
+            INSERT_CATEGORY_QUERY,
+            FIND_CATEGORY_QUERY,
+            REMOVE_CATEGORY_QUERY,
+        )
+    )
+
+    assert "UPDATE app.reels" not in category_sql
+    assert "download_status" not in category_sql
+    assert "transcription_status" not in category_sql
+    assert "curation_status" not in category_sql
 
 
 @pytest.mark.parametrize("value", ["received", "downloading", "downloaded", "failed"])

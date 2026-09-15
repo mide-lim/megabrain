@@ -33,14 +33,6 @@ TRANSCRIPTION_STATUSES = frozenset(
     }
 )
 
-LEGACY_DOWNLOAD_STATUS_MAP = {
-    "received": DOWNLOAD_STATUS_RECEIVED,
-    "downloading": DOWNLOAD_STATUS_DOWNLOADING,
-    "downloaded": DOWNLOAD_STATUS_DOWNLOADED,
-    "download_failed": DOWNLOAD_STATUS_FAILED,
-}
-
-
 class LifecycleStatusError(ValueError):
     """Raised when a lifecycle state is outside its approved vocabulary."""
 
@@ -49,13 +41,6 @@ def _validate(value: str, allowed: frozenset[str], dimension: str) -> str:
     if not isinstance(value, str) or value not in allowed:
         raise LifecycleStatusError(f"Unsupported {dimension} status")
     return value
-
-
-def map_legacy_download_status(legacy_status: str) -> str:
-    try:
-        return LEGACY_DOWNLOAD_STATUS_MAP[legacy_status]
-    except (KeyError, TypeError):
-        raise LifecycleStatusError("Unknown legacy download status") from None
 
 
 def validate_download_status(value: str) -> str:
@@ -73,6 +58,7 @@ def validate_transcription_status(value: str) -> str:
 def default_reel_lifecycle() -> dict[str, str]:
     """Return the conservative lifecycle fields for a newly persisted Reel."""
     return {
+        "download_status": DOWNLOAD_STATUS_RECEIVED,
         "curation_status": CURATION_STATUS_INBOX,
         "transcription_status": TRANSCRIPTION_STATUS_NOT_REQUESTED,
     }

@@ -1,15 +1,19 @@
 -- F4.2 explicit Reel lifecycle persistence.
 --
 -- Production execution requires a separate human authorization. This migration
--- intentionally performs no per-row enrichment inspection: existing rows use
--- the conservative transcription_status='not_requested' until F4.3 owns a
--- separately authorized reconciliation/synchronization design.
+-- intentionally performs no per-row enrichment reconciliation: existing rows use
+-- the conservative transcription_status='not_requested'. F4.3 synchronizes
+-- only lifecycle events accepted after its workflow path begins.
 BEGIN;
 
 DO $$
 BEGIN
     IF to_regclass('app.reels') IS NULL THEN
         RAISE EXCEPTION 'app.reels is required for F4.2 lifecycle migration';
+    END IF;
+
+    IF to_regclass('app.reel_enrichment_attempts') IS NULL THEN
+        RAISE EXCEPTION 'app.reel_enrichment_attempts is required for F4.3 lifecycle synchronization';
     END IF;
 
     IF NOT EXISTS (
@@ -65,12 +69,22 @@ WHERE download_status = 'download_failed';
 ALTER TABLE app.reels
     ADD COLUMN curation_status TEXT NOT NULL DEFAULT 'inbox',
     ADD COLUMN transcription_status TEXT NOT NULL DEFAULT 'not_requested',
+    ADD COLUMN transcription_attempt_id UUID,
     ADD CONSTRAINT reels_download_status_check
         CHECK (download_status IN ('received', 'downloading', 'downloaded', 'failed')),
     ADD CONSTRAINT reels_curation_status_check
         CHECK (curation_status IN ('inbox', 'organized')),
     ADD CONSTRAINT reels_transcription_status_check
-        CHECK (transcription_status IN ('not_requested', 'queued', 'processing', 'completed', 'failed'));
+        CHECK (transcription_status IN ('not_requested', 'queued', 'processing', 'completed', 'failed')),
+    ADD CONSTRAINT reels_transcription_attempt_state_check
+        CHECK (
+            (transcription_status = 'processing' AND transcription_attempt_id IS NOT NULL)
+            OR (transcription_status <> 'processing' AND transcription_attempt_id IS NULL)
+        ),
+    ADD CONSTRAINT reels_transcription_attempt_reel_fk
+        FOREIGN KEY (transcription_attempt_id, id)
+        REFERENCES app.reel_enrichment_attempts (attempt_id, reel_id)
+        DEFERRABLE INITIALLY DEFERRED;
 
 DO $$
 BEGIN
@@ -80,6 +94,8 @@ BEGIN
         WHERE download_status NOT IN ('received', 'downloading', 'downloaded', 'failed')
            OR curation_status NOT IN ('inbox', 'organized')
            OR transcription_status NOT IN ('not_requested', 'queued', 'processing', 'completed', 'failed')
+           OR (transcription_status = 'processing' AND transcription_attempt_id IS NULL)
+           OR (transcription_status <> 'processing' AND transcription_attempt_id IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'resulting app.reels lifecycle values are invalid';
     END IF;
@@ -91,10 +107,15 @@ BEGIN
           AND conname IN (
               'reels_download_status_check',
               'reels_curation_status_check',
-              'reels_transcription_status_check'
+              'reels_transcription_status_check',
+              'reels_transcription_attempt_state_check',
+              'reels_transcription_attempt_reel_fk'
           )
-          AND contype = 'c'
-    ) <> 3 THEN
+          AND (
+              contype = 'c'
+              OR conname = 'reels_transcription_attempt_reel_fk'
+          )
+    ) <> 5 THEN
         RAISE EXCEPTION 'resulting Reel lifecycle constraints are missing';
     END IF;
 END $$;

@@ -75,6 +75,29 @@
     },
     {
       "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH queued_reel AS (\n    UPDATE app.reels AS reel\n    SET\n        transcription_status = 'queued',\n        transcription_attempt_id = NULL,\n        updated_at = NOW()\n    WHERE reel.id = $1::BIGINT\n      AND reel.download_status = 'downloaded'\n      AND reel.transcription_status IN ('not_requested', 'failed')\n      AND reel.transcription_attempt_id IS NULL\n      AND NOT EXISTS (\n          SELECT 1\n          FROM app.reel_enrichments AS enrichment\n          WHERE enrichment.reel_id = reel.id\n            AND enrichment.source_object_key = reel.object_key\n            AND enrichment.source_sha256 = reel.sha256\n            AND enrichment.pipeline_version = $2::TEXT\n      )\n    RETURNING\n        reel.id AS reel_id,\n        reel.shortcode,\n        reel.object_key,\n        reel.sha256,\n        reel.file_size_bytes\n)\nSELECT\n    queued_reel.*,\n    $2::TEXT AS pipeline_version,\n    $3::TEXT AS contract_version,\n    $4::TEXT AS language_hint,\n    $5::UUID AS retry_of_attempt_id\nFROM queued_reel;",
+        "options": {
+          "queryReplacement": "={{ [$json.reel_id, $json.pipeline_version, $json.contract_version, $json.language_hint, $json.retry_of_attempt_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        848,
+        0
+      ],
+      "id": "__NODE_ID_MGB_030_13__",
+      "name": "DB — Enfileirar transcrição",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "const uuidV4 = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {\n  const random = Math.floor(Math.random() * 16);\n  const value = character === 'x' ? random : (random & 0x3) | 0x8;\n  return value.toString(16);\n});\n\nreturn { ...$json, attempt_id: uuidV4() };"
       },
@@ -87,7 +110,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO app.reel_enrichment_attempts (\n    attempt_id, reel_id, source_object_key, expected_sha256,\n    expected_size_bytes, pipeline_version, contract_version, language_hint,\n    retry_of_attempt_id, status, started_at\n)\nVALUES (\n    $1::UUID, $2::BIGINT, $3, $4, $5::BIGINT, $6, $7, $8,\n    $9::UUID, 'processing', NOW()\n)\nRETURNING\n    attempt_id, reel_id, source_object_key, expected_sha256,\n    expected_size_bytes, pipeline_version, contract_version, language_hint,\n    $10::TEXT AS shortcode;",
+        "query": "WITH activated_reel AS (\n    UPDATE app.reels\n    SET\n        transcription_status = 'processing',\n        transcription_attempt_id = $1::UUID,\n        updated_at = NOW()\n    WHERE id = $2::BIGINT\n      AND transcription_status = 'queued'\n      AND transcription_attempt_id IS NULL\n    RETURNING id\n), created_attempt AS (\n    INSERT INTO app.reel_enrichment_attempts (\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint,\n        retry_of_attempt_id, status, started_at\n    )\n    SELECT\n        $1::UUID, activated_reel.id, $3, $4, $5::BIGINT, $6, $7, $8,\n        $9::UUID, 'processing', NOW()\n    FROM activated_reel\n    RETURNING\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint\n)\nSELECT\n    created_attempt.*,\n    $10::TEXT AS shortcode\nFROM created_attempt;",
         "options": {
           "queryReplacement": "={{ [$json.attempt_id, $json.reel_id, $json.object_key, $json.sha256, $json.file_size_bytes, $json.pipeline_version, $json.contract_version, $json.language_hint, $json.retry_of_attempt_id, $json.shortcode] }}"
         }
@@ -181,7 +204,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH completed_attempt AS (\n    UPDATE app.reel_enrichment_attempts\n    SET\n        status = 'completed',\n        finished_at = NOW(),\n        enricher_version = $2,\n        stt_provider = $3,\n        stt_model = $4,\n        provider_request_id = $5\n    WHERE attempt_id = $1::UUID\n      AND status = 'processing'\n    RETURNING attempt_id\n)\nINSERT INTO app.reel_enrichments (\n    reel_id, source_attempt_id, source_object_key, source_sha256,\n    source_size_bytes, pipeline_version, completed_at,\n    container_format, media_duration_seconds, video_codec, video_width, video_height,\n    audio_present, audio_codec, audio_sample_rate_hz, audio_channels, audio_duration_seconds,\n    transcription_audio_format, transcription_audio_sample_rate_hz,\n    transcription_audio_channels, transcription_audio_duration_seconds,\n    outcome, transcript_text, transcript_language\n)\nSELECT\n    $6::BIGINT, completed_attempt.attempt_id, $7, $8,\n    $9::BIGINT, $10, $11::TIMESTAMPTZ,\n    $12, $13::NUMERIC, $14, $15::INTEGER, $16::INTEGER,\n    $17::BOOLEAN, $18, $19::INTEGER, $20::INTEGER, $21::NUMERIC,\n    $22, $23::INTEGER, $24::INTEGER, $25::NUMERIC,\n    $26, $27, $28\nFROM completed_attempt\nRETURNING id, source_attempt_id, outcome;",
+        "query": "WITH completed_attempt AS (\n    UPDATE app.reel_enrichment_attempts\n    SET\n        status = 'completed',\n        finished_at = NOW(),\n        enricher_version = $2,\n        stt_provider = $3,\n        stt_model = $4,\n        provider_request_id = $5\n    WHERE attempt_id = $1::UUID\n      AND status = 'processing'\n    RETURNING attempt_id\n), persisted_result AS (\n    INSERT INTO app.reel_enrichments (\n        reel_id, source_attempt_id, source_object_key, source_sha256,\n        source_size_bytes, pipeline_version, completed_at,\n        container_format, media_duration_seconds, video_codec, video_width, video_height,\n        audio_present, audio_codec, audio_sample_rate_hz, audio_channels, audio_duration_seconds,\n        transcription_audio_format, transcription_audio_sample_rate_hz,\n        transcription_audio_channels, transcription_audio_duration_seconds,\n        outcome, transcript_text, transcript_language\n    )\n    SELECT\n        $6::BIGINT, completed_attempt.attempt_id, $7, $8,\n        $9::BIGINT, $10, $11::TIMESTAMPTZ,\n        $12, $13::NUMERIC, $14, $15::INTEGER, $16::INTEGER,\n        $17::BOOLEAN, $18, $19::INTEGER, $20::INTEGER, $21::NUMERIC,\n        $22, $23::INTEGER, $24::INTEGER, $25::NUMERIC,\n        $26, $27, $28\n    FROM completed_attempt\n    RETURNING id, source_attempt_id, outcome\n)\nUPDATE app.reels\nSET\n    transcription_status = 'completed',\n    transcription_attempt_id = NULL,\n    updated_at = NOW()\nWHERE id = $6::BIGINT\n  AND transcription_status = 'processing'\n  AND transcription_attempt_id = $1::UUID\n  AND EXISTS (SELECT 1 FROM persisted_result)\nRETURNING\n    id,\n    transcription_status,\n    (SELECT id FROM persisted_result) AS enrichment_id,\n    (SELECT outcome FROM persisted_result) AS outcome;",
         "options": {
           "queryReplacement": "={{ [ $json.attempt_id, $json.processor_version, $json.transcription.engine.provider, $json.transcription.engine.model, $json.transcription.engine.request_id, $json.reel_id, $json.source.object_key, $json.source.sha256, $json.source.size_bytes, $json.pipeline_version, $json.processing.completed_at, $json.media.container_format, $json.media.duration_seconds, $json.media.video.codec, $json.media.video.width, $json.media.video.height, $json.media.audio !== null, $json.media.audio?.codec ?? null, $json.media.audio?.sample_rate_hz ?? null, $json.media.audio?.channels ?? null, $json.media.audio?.duration_seconds ?? null, $json.transcription_input?.format ?? null, $json.transcription_input?.sample_rate_hz ?? null, $json.transcription_input?.channels ?? null, $json.transcription_input?.duration_seconds ?? null, $json.transcription.outcome, $json.transcription.transcript_text, $json.transcription.transcript_language ] }}"
         }
@@ -212,7 +235,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE app.reel_enrichment_attempts\nSET\n    status = 'failed',\n    finished_at = NOW(),\n    error_code = $2,\n    error_stage = $3,\n    error_message = $4,\n    retryable = $5::BOOLEAN\nWHERE attempt_id = $1::UUID\n  AND status = 'processing'\nRETURNING attempt_id, status, error_code, error_stage, retryable;",
+        "query": "WITH failed_attempt AS (\n    UPDATE app.reel_enrichment_attempts\n    SET\n        status = 'failed',\n        finished_at = NOW(),\n        error_code = $2,\n        error_stage = $3,\n        error_message = $4,\n        retryable = $5::BOOLEAN\n    WHERE attempt_id = $1::UUID\n      AND status = 'processing'\n    RETURNING attempt_id, reel_id, status, error_code, error_stage, retryable\n)\nUPDATE app.reels AS reel\nSET\n    transcription_status = 'failed',\n    transcription_attempt_id = NULL,\n    updated_at = NOW()\nFROM failed_attempt\nWHERE reel.id = failed_attempt.reel_id\n  AND reel.transcription_status = 'processing'\n  AND reel.transcription_attempt_id = failed_attempt.attempt_id\nRETURNING\n    failed_attempt.attempt_id,\n    failed_attempt.status,\n    failed_attempt.error_code,\n    failed_attempt.error_stage,\n    failed_attempt.retryable,\n    reel.transcription_status;",
         "options": {
           "queryReplacement": "={{ [$json.attempt_id, $json.error_code, $json.error_stage, $json.error_message, $json.retryable] }}"
         }
@@ -235,7 +258,8 @@
     "SUB — Receber Reel downloaded": { "main": [[{ "node": "DATA — Preparar parâmetros", "type": "main", "index": 0 }]] },
     "DATA — Preparar parâmetros": { "main": [[{ "node": "DB — Localizar Reel elegível", "type": "main", "index": 0 }]] },
     "DB — Localizar Reel elegível": { "main": [[{ "node": "IF — Precisa enriquecer?", "type": "main", "index": 0 }]] },
-    "IF — Precisa enriquecer?": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }], []] },
+    "IF — Precisa enriquecer?": { "main": [[{ "node": "DB — Enfileirar transcrição", "type": "main", "index": 0 }], []] },
+    "DB — Enfileirar transcrição": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }]] },
     "DATA — Criar attempt_id": { "main": [[{ "node": "DB — Criar tentativa processing", "type": "main", "index": 0 }]] },
     "DB — Criar tentativa processing": { "main": [[{ "node": "HTTP — Enricher /v1/enrichments", "type": "main", "index": 0 }]] },
     "HTTP — Enricher /v1/enrichments": { "main": [[{ "node": "DATA — Validar resposta Enricher", "type": "main", "index": 0 }], [{ "node": "DATA — Normalizar falha Enricher", "type": "main", "index": 0 }]] },

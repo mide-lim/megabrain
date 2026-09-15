@@ -46,9 +46,13 @@ ou
 ```
 
 MGB-020 permanece o único writer de `download_status`. MGB-030 é acionado
-diretamente após a persistência bem-sucedida de `downloaded`, usando
-`download_status` somente como critério de elegibilidade. F4.2 não adiciona
-write de `transcription_status` a MGB-030; essa sincronização é trabalho F4.3.
+diretamente após a persistência bem-sucedida de `downloaded`; MGB-020 não
+escreve estado de transcrição. Na entrada elegível, MGB-030 é o único writer de
+`transcription_status`: aceita `not_requested` ou `failed` para `queued`, cria
+atomicamente a tentativa atual ao avançar `queued -> processing`, e só finaliza
+`completed` ou `failed` quando o UUID da tentativa ainda é o lifecycle atual.
+Consulte `docs/F4_3_REEL_LIFECYCLE_AUTHORITY.md` para a regra de concorrência,
+retry e handoff.
 
 ## F3.3 — Internal Orchestration Boundary
 

@@ -59,3 +59,16 @@ def test_migration_preflights_expected_constraints_and_verifies_result() -> None
     assert "GRANT" not in sql
     assert "BEGIN;" in sql
     assert sql.endswith("COMMIT;")
+
+
+def test_migration_adds_current_transcription_attempt_identity_for_stale_write_protection() -> None:
+    sql = normalized_sql()
+
+    assert "TO_REGCLASS('APP.REEL_ENRICHMENT_ATTEMPTS')" in sql
+    assert "ADD COLUMN TRANSCRIPTION_ATTEMPT_ID UUID" in sql
+    assert "REELS_TRANSCRIPTION_ATTEMPT_REEL_FK" in sql
+    assert "FOREIGN KEY (TRANSCRIPTION_ATTEMPT_ID, ID)" in sql
+    assert "REFERENCES APP.REEL_ENRICHMENT_ATTEMPTS (ATTEMPT_ID, REEL_ID)" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql
+    assert "REELS_TRANSCRIPTION_ATTEMPT_STATE_CHECK" in sql
+    assert "TRANSCRIPTION_STATUS = 'PROCESSING'" in sql

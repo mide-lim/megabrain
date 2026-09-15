@@ -245,15 +245,19 @@ class Mgb020ContractTests(unittest.TestCase):
             self.assertIn("download_status", query)
             self.assertNotIn("download_failed", query)
 
-    def test_mgb030_reads_download_status_without_writing_transcription_status(self) -> None:
+    def test_mgb030_reads_download_status_and_owns_transcription_lifecycle(self) -> None:
         workflow = json.loads(MGB030_PATH.read_text(encoding="utf-8"))
         nodes = {node["name"]: node for node in workflow["nodes"]}
         query = nodes["DB — Localizar Reel elegível"]["parameters"]["query"]
         self.assertIn("r.download_status = 'downloaded'", query)
         self.assertNotIn("r.status", query)
         serialized = json.dumps(workflow)
-        self.assertNotIn("UPDATE app.reels", serialized)
-        self.assertNotIn("transcription_status", serialized)
+        self.assertIn("UPDATE app.reels", serialized)
+        self.assertIn("transcription_status = 'queued'", serialized)
+        self.assertIn("transcription_status = 'processing'", serialized)
+        self.assertIn("transcription_status = 'completed'", serialized)
+        self.assertIn("transcription_status = 'failed'", serialized)
+        self.assertNotIn("curation_status", serialized)
 
 
 if __name__ == "__main__":

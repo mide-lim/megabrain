@@ -237,7 +237,7 @@ class F33InternalOrchestrationContractTests(unittest.TestCase):
         for forbidden_term in ("downloader", "enricher", "cloudflare_r2", "retry_count"):
             self.assertNotIn(forbidden_term, serialized.lower())
 
-    def test_mgb020_and_mgb030_only_apply_the_f42_download_status_rename(self) -> None:
+    def test_mgb020_keeps_the_f42_download_status_rename_while_mgb030_owns_f43(self) -> None:
         def baseline_workflow(path: Path) -> dict:
             result = subprocess.run(
                 ["git", "show", f"{BASELINE}:{path.relative_to(ROOT)}"],
@@ -259,14 +259,14 @@ class F33InternalOrchestrationContractTests(unittest.TestCase):
             if isinstance(text, str) and "$json.status" in text:
                 node["parameters"]["text"] = text.replace("$json.status", "$json.download_status")
 
-        expected_mgb030 = baseline_workflow(MGB030_PATH)
-        for node in expected_mgb030["nodes"]:
-            query = node.get("parameters", {}).get("query")
-            if isinstance(query, str) and "r.status" in query:
-                node["parameters"]["query"] = query.replace("r.status", "r.download_status")
-
         self.assertEqual(json.loads(MGB020_PATH.read_text(encoding="utf-8")), expected_mgb020)
-        self.assertEqual(json.loads(MGB030_PATH.read_text(encoding="utf-8")), expected_mgb030)
+        mgb030 = json.loads(MGB030_PATH.read_text(encoding="utf-8"))
+        serialized = json.dumps(mgb030)
+        self.assertIn("download_status = 'downloaded'", serialized)
+        self.assertIn("transcription_status = 'queued'", serialized)
+        self.assertIn("transcription_status = 'processing'", serialized)
+        self.assertIn("transcription_status = 'completed'", serialized)
+        self.assertIn("transcription_status = 'failed'", serialized)
 
 
 if __name__ == "__main__":
