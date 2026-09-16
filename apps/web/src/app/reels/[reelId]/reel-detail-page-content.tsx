@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { ReelLifecycle } from "../../../components/reel-lifecycle";
+import { lifecycleKey } from "../../../lib/reel-lifecycle";
 import type { ReelCategory, ReelDetail } from "./reel-detail-api";
 import { ReelCategoryControls } from "./reel-category-controls";
 
@@ -94,12 +96,17 @@ export function ReelDetailPageContent({ reel, categoryControls }: { reel: ReelDe
           </div>
         </section>
         <aside className="space-y-6">
+          <ReelLifecycle key={lifecycleKey(reel)} lifecycle={{
+            id: reel.id,
+            download_status: reel.download_status,
+            curation_status: reel.curation_status,
+            transcription_status: reel.transcription_status,
+          }} reelId={reel.id} />
           <AssignedCategorySummary categories={reel.categories.assigned} />
           {categoryControls === undefined ? <ReelCategoryControls assignedCategories={reel.categories.assigned} availableCategories={reel.categories.available} reelId={reel.id} /> : categoryControls}
           <section className="rounded-2xl border border-border bg-surface p-5 shadow-[0_12px_30px_rgba(32,37,34,0.06)] sm:p-6">
             <h2 className="text-xl font-semibold tracking-tight text-foreground">Detalhes</h2>
             <dl className="mt-5 space-y-3">
-              <DetailValue label="Status do download" value={reel.download_status?.trim() || "Não informado"} />
               <DetailValue label="Shortcode" value={reel.shortcode?.trim() || null} />
               <DetailValue label="Duração" value={duration} />
               <DetailValue label="Recebido em" value={receivedAt} />

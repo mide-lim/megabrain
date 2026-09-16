@@ -1,3 +1,5 @@
+import { ReelLifecycle } from "../../components/reel-lifecycle";
+import { lifecycleKey } from "../../lib/reel-lifecycle";
 import type { LibraryResponse, ReelLibraryItem } from "./library-api";
 import { buildLibraryUrl } from "./library-api";
 
@@ -32,6 +34,12 @@ function ReelCard({ item }: { item: ReelLibraryItem }) {
           {item.categories.map((category) => <li className="max-w-full break-words rounded-full bg-accent px-3 py-1 text-xs font-semibold text-primary" key={category}>{category}</li>)}
         </ul>
       ) : null}
+      <ReelLifecycle compact key={lifecycleKey(item)} lifecycle={{
+        id: item.id,
+        download_status: item.download_status,
+        curation_status: item.curation_status,
+        transcription_status: item.transcription_status,
+      }} reelId={item.id} />
       <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t border-border pt-4 text-sm text-muted">
         {receivedAt ? <span>Recebido em {receivedAt}</span> : null}
         {duration ? <span>{duration}</span> : null}

@@ -1,5 +1,14 @@
 import { headers } from "next/headers";
 
+import {
+  isCurationStatus,
+  isDownloadStatus,
+  isTranscriptionStatus,
+  type CurationStatus,
+  type DownloadStatus,
+  type TranscriptionStatus,
+} from "../../lib/reel-lifecycle";
+
 export type ReelLibraryItem = {
   id: number;
   title: string | null;
@@ -10,6 +19,9 @@ export type ReelLibraryItem = {
   duration_seconds: number | null;
   received_at: string | null;
   has_transcript: boolean;
+  download_status: DownloadStatus;
+  curation_status: CurationStatus;
+  transcription_status: TranscriptionStatus;
 };
 
 export type LibraryResponse = {
@@ -59,7 +71,10 @@ function isLibraryItem(value: unknown): value is ReelLibraryItem {
     value.categories.every((category) => typeof category === "string") &&
     isNullableNumber(value.duration_seconds) &&
     isNullableString(value.received_at) &&
-    typeof value.has_transcript === "boolean"
+    typeof value.has_transcript === "boolean" &&
+    isDownloadStatus(value.download_status) &&
+    isCurationStatus(value.curation_status) &&
+    isTranscriptionStatus(value.transcription_status)
   );
 }
 

@@ -85,12 +85,14 @@ test("server detail adapter distinguishes missing data from temporary or malform
   const unavailable = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
   const malformed = (async () => new Response(JSON.stringify({ id: 42, video: {} }), { status: 200 })) as typeof fetch;
   const unexpectedVideoUrl = (async () => new Response(JSON.stringify({ ...reel, video: { available: true, src: "https://signed.example/video.mp4" } }), { status: 200 })) as typeof fetch;
+  const unknownLifecycle = (async () => new Response(JSON.stringify({ ...reel, transcription_status: "unexpected" }), { status: 200 })) as typeof fetch;
 
   const incomingHeaders = new Headers();
   assert.deepEqual(await fetchReelDetail(42, missing, incomingHeaders), { kind: "not-found" });
   assert.deepEqual(await fetchReelDetail(42, unavailable, incomingHeaders), { kind: "unavailable" });
   assert.deepEqual(await fetchReelDetail(42, malformed, incomingHeaders), { kind: "unavailable" });
   assert.deepEqual(await fetchReelDetail(42, unexpectedVideoUrl, incomingHeaders), { kind: "unavailable" });
+  assert.deepEqual(await fetchReelDetail(42, unknownLifecycle, incomingHeaders), { kind: "unavailable" });
 });
 
 test("detail presentation renders parity content through the protected same-origin video contract", async () => {
@@ -128,7 +130,7 @@ test("detail presentation uses explicit pt-BR fallbacks and unavailable states",
   assert.match(markup, /Legenda original não disponível\./);
   assert.match(markup, /Transcrição ainda não disponível\./);
   assert.match(markup, /Vídeo temporariamente indisponível\./);
-  assert.match(markup, /Status/);
+  assert.match(markup, /Ciclo de vida/);
   assert.match(markup, /Shortcode/);
   assert.doesNotMatch(markup, /NaN|undefined/);
 });
