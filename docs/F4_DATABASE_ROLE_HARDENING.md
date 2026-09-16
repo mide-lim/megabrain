@@ -23,11 +23,11 @@ The reviewed production evidence is human-provided, not re-probed by this stage:
 | `megabrain_mgb020` | MGB-020 download lifecycle only | F4 relations/sequences |
 | `megabrain_mgb030` | MGB-030 transcription/enrichment lifecycle only | F4 relations/sequences |
 
-`001_f4_runtime_roles.sql` creates the two dedicated roles as `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`, and `NOINHERIT`. It creates them as `NOLOGIN`, invokes psql's interactive `\password` prompt for each role, and enables `LOGIN` only after both password prompts complete. It neither grants ownership nor commits a password literal.
+`001_f4_runtime_roles.sql` creates the two dedicated roles as `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`, and `NOINHERIT`. It is noninteractive and contains neither a password command nor a `LOGIN` transition. It neither grants ownership nor commits a password literal.
 
-Do not pass secrets through shell history, standard input transcripts, environment dumps, or process arguments. In particular, `psql --set=...password=...` and `CREATE/ALTER ROLE ... PASSWORD ...` expose plaintext values through process argv or PostgreSQL statement logging and are not approved invocations.
+This structural artifact is intentionally usable through noninteractive psql stdin for the disposable integration proof. A test superuser can `SET ROLE megabrain_mgb020` or `SET ROLE megabrain_mgb030` without either role having a login password. The roles cannot authenticate until a later human production credential-provisioning step enables login and sets each password outside Git.
 
-Run `001` only in an authorized interactive psql session attached to a terminal controlled by the human operator. psql's `\password` command disables terminal echo and sends a password hash rather than a plaintext password SQL literal. If the interactive protected prompt cannot be used, stop and use the operator's credential-provisioning runbook; this repository provides no alternative password handoff. No password or credential ID is stored in Git.
+Do not pass secrets through shell history, standard input transcripts, environment dumps, or process arguments. In particular, `psql --set=...password=...` and `CREATE/ALTER ROLE ... PASSWORD ...` expose plaintext values through process argv or PostgreSQL statement logging and are not approved invocations. After the structural/grant proof, an authorized human must use an interactive protected prompt such as psql's `\password`, or an approved secure operator mechanism, to provision each production credential and enable `LOGIN`. No password or credential ID is stored in Git.
 
 ## Source-derived authority matrix
 
@@ -80,7 +80,7 @@ MGB-030 has no download-status or curation-status write, `DELETE`, `TRUNCATE`, D
 
 ## SQL artifact sequence
 
-1. `infra/postgres/security/f4/001_f4_runtime_roles.sql` — transactionally creates the two restrictive login roles only. It is safe to prepare before migration 005 because it grants no F4-column authority.
+1. `infra/postgres/security/f4/001_f4_runtime_roles.sql` — transactionally creates the two restrictive `NOLOGIN` role structures only. It is safe to prepare before migration 005 because it grants no F4-column authority.
 2. `infra/postgres/security/f4/002_f4_runtime_grants.sql` — transactionally validates the final schema/identity sequences, removes direct grants to the three F4 runtime roles on the reviewed objects, and restores exact source-derived grants.
 3. `infra/postgres/security/f4/003_f4_runtime_grants_verify.sql` — catalog-only privilege proof. All rows must say `PASS`.
 4. `infra/postgres/security/f4/004_f4_runtime_grants_rollback.sql` — dedicated-role privilege rollback only, gated by a human credential-detachment acknowledgement with the affirmative value `true`; it commits both dedicated roles as `NOLOGIN` before checking active sessions in the separate destructive phase.
@@ -91,11 +91,11 @@ The grant script does not change `PUBLIC` grants or inherited-role membership. T
 
 | Phase | Human-only action |
 | --- | --- |
-| A — pre-migration | Create dedicated login roles using `001`, if approved. Do not apply final F4 grants yet. |
+| A — pre-migration | Create dedicated `NOLOGIN` role structures using `001`, if approved. The roles cannot authenticate at this point. Do not apply final F4 grants yet. |
 | B — quiesce | Pause/drain old incompatible readers and writers: MGB-001/MGB-010/MGB-015 dispatch, MGB-020, MGB-030, Web writes, and old Web Reel reads. Account for in-flight work. |
 | C — schema | Execute migration 005 exactly once under its separate authorization. |
 | D — final authority | Execute `002`; execute `003`; remediate every verifier `FAIL` before enabling runtime. |
-| E — credential switch | Create two new n8n PostgreSQL credentials with the dedicated principals, assign MGB-020 to `megabrain_mgb020` and MGB-030 to `megabrain_mgb030`, and verify each F4 PostgreSQL node. |
+| E — credential switch | After the structural/grant proof, the human provisions each production `LOGIN` credential outside Git, then creates two new n8n PostgreSQL credentials with the dedicated principals, assigns MGB-020 to `megabrain_mgb020` and MGB-030 to `megabrain_mgb030`, and verifies each F4 PostgreSQL node. |
 | F — matching release | Import/review/activate the matching F4 workflows and deploy the matching runtime under separate authorization. Resume only after smoke and authority proof. |
 
 Migration 005 changes legacy `status` to `download_status` and adds F4 lifecycle columns. Applying final grants before that migration is intentionally rejected by `002`.
@@ -128,7 +128,7 @@ The post-cutover invariant is `OWNER_ROLE_USED_BY_F4_RUNTIME=NO`. It is an n8n c
 
 ## Verification and eventual integration proof
 
-`003` verifies catalog authority without application data. It checks required source columns, rejects table-wide and excess effective Reel privileges, rejects effective runtime access to every auth relation, and detects any membership granted to a dedicated runtime role. `has_*_privilege` resolves direct, `PUBLIC`, and applicable inherited authority, so a pre-existing broad grant becomes a `FAIL` rather than a silent exception. Required invariant rows include:
+`003` verifies catalog authority without application data. It checks required source columns, rejects table-wide and excess effective Reel privileges, rejects effective runtime access to every auth relation, and detects any membership granted to a dedicated runtime role. Its dedicated-role attribute checks deliberately do not require `LOGIN`, so the structural/grant verifier also passes in the disposable `NOLOGIN` proof before human credential provisioning. `has_*_privilege` resolves direct, `PUBLIC`, and applicable inherited authority, so a pre-existing broad grant becomes a `FAIL` rather than a silent exception. Required invariant rows include:
 
 | Invariant | Required result |
 | --- | --- |

@@ -44,15 +44,16 @@ def granted_columns(sql: str, privilege: str, role: str) -> str:
     return match.group(1)
 
 
-def test_role_creation_uses_secret_injection_and_restrictive_runtime_attributes() -> None:
+def test_role_creation_is_noninteractive_nologin_structure_with_restrictive_attributes() -> None:
     sql = normalized(ROLE_CREATION)
 
     for role in ("MEGABRAIN_MGB020", "MEGABRAIN_MGB030"):
         assert f"CREATE ROLE {role} NOLOGIN" in sql
-        assert f"ALTER ROLE {role} LOGIN" in sql
-        assert f"\\PASSWORD {role}" in sql
+        assert f"ALTER ROLE {role} LOGIN" not in sql
+        assert f"\\PASSWORD {role}" not in sql
     assert "MGB020_PASSWORD" not in sql
     assert "MGB030_PASSWORD" not in sql
+    assert "PASSWORD" not in executable_lines(artifact(ROLE_CREATION)).upper()
     for attribute in (
         "NOSUPERUSER",
         "NOCREATEDB",
@@ -64,7 +65,19 @@ def test_role_creation_uses_secret_injection_and_restrictive_runtime_attributes(
         assert sql.count(attribute) == 2
     assert "GRANT " not in sql
     assert "ALTER DEFAULT PRIVILEGES" not in sql
-    assert not re.search(r"PASSWORD\s+'", sql)
+    assert "ALTER OWNER" not in sql
+
+
+def test_verifier_proves_privilege_boundaries_before_human_login_provisioning() -> None:
+    sql = artifact(VERIFIER)
+
+    for role_check in (
+        "MGB020_ROLE_ATTRIBUTES_RESTRICTIVE",
+        "MGB030_ROLE_ATTRIBUTES_RESTRICTIVE",
+    ):
+        start = sql.index(role_check)
+        end = sql.index("),", start)
+        assert "rolcanlogin" not in sql[start:end].lower()
 
 
 def test_grants_are_explicit_column_scoped_and_never_broad_or_ddl_capable() -> None:

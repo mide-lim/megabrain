@@ -20,8 +20,8 @@ production migration.
 `infra/postgres/migrations/005_f4_reel_lifecycle.sql` is a forward-only,
 transactional artifact. Before changing schema it verifies that:
 
-- `app.reels.status` and its known `reels_status_check` exist;
-- none of the three new lifecycle columns already exist;
+- `app.reels.status` exists and no F4 lifecycle target column exists;
+- no named legacy lifecycle constraint is required or dropped;
 - every legacy row has exactly one approved legacy value.
 
 Unknown or null legacy values raise an exception and roll back rather than being
@@ -34,10 +34,10 @@ coerced. The legacy mapping is explicit:
 | `downloaded` | `downloaded` |
 | `download_failed` | `failed` |
 
-The migration renames the column, removes the legacy constraint, maps only
-`download_failed`, adds the two new fields with explicit defaults, then verifies
-all three constraints before committing. There is no permanent compatibility
-column and no dual-write path.
+The migration renames the column, maps only `download_failed`, adds the two new
+fields with explicit defaults, then verifies the target lifecycle shape and all
+three vocabulary constraints before committing. There is no permanent
+compatibility column and no dual-write path.
 
 Existing rows receive `curation_status = 'inbox'` because categories, source,
 download state, and enrichment data do not imply manual organization. They

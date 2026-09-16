@@ -1,11 +1,11 @@
--- F4 runtime role creation template. Execute only under a separate human rollout
--- authorization, as a PostgreSQL role-administration principal, with interactive
--- psql. This file is safe before migration 005 because it creates no F4-column
--- grants.
+-- F4 runtime role structure. Execute only under a separate human rollout
+-- authorization, as a PostgreSQL role-administration principal. This file is
+-- deliberately noninteractive so a disposable integration proof can execute it
+-- through psql stdin without supplying a secret. It creates no F4-column grants.
 --
--- psql's \password prompt keeps the operator-provided password out of this file,
--- shell history, process argv, and PostgreSQL statement text. Do not replace it
--- with a password psql variable or a CREATE/ALTER ROLE PASSWORD literal.
+-- The roles remain NOLOGIN after this file commits. A separate human production
+-- credential-provisioning step must set each role to LOGIN and provision its
+-- password outside Git before either role can authenticate as a runtime principal.
 --
 -- The script intentionally fails if either target role already exists; inspect and
 -- resolve that state rather than silently changing an unknown role.
@@ -39,12 +39,5 @@ CREATE ROLE megabrain_mgb030 NOLOGIN
     NOREPLICATION
     NOBYPASSRLS
     NOINHERIT;
-
--- psql prompts twice with terminal echo disabled and sends only a password hash.
-\password megabrain_mgb020
-\password megabrain_mgb030
-
-ALTER ROLE megabrain_mgb020 LOGIN;
-ALTER ROLE megabrain_mgb030 LOGIN;
 
 COMMIT;

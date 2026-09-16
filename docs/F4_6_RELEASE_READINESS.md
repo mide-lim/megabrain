@@ -16,6 +16,39 @@ The F4 release scope is limited to:
 
 No new product scope is approved by this release plan.
 
+## F4.6D1A migration legacy-compatibility remediation
+
+**Blocker:** the unapplied migration 005 assumed that
+`app.reels.reels_status_check` existed. The human-controlled PostgreSQL 16
+restore of approved pre-F4 backup
+`megabrain-pre-f4-20260916-180216.dump` (SHA-256
+`bb5beb2075305567173486b2a1f58f804cca01a371d6c47930029d4c62c800d2`)
+instead failed with `app.reels.reels_status_check is required for F4.2 lifecycle
+migration`.
+
+**Reality:** the restored production legacy schema has `app.reels.status`, none
+of the four F4 lifecycle target columns, and no constraint with that assumed
+name. Repository discovery contains no tracked baseline `app.reels` DDL that
+proves a lifecycle CHECK under another name. The old static fixture encoded the
+assumed named constraint, so it only proved agreement with the migration's
+incorrect model and never modeled the restored production-like shape.
+
+**Remediation:** migration 005 accepts only the exact relevant legacy shape:
+`status` present and `download_status`, `curation_status`,
+`transcription_status`, and `transcription_attempt_id` all absent. It does not
+require or drop a named legacy lifecycle constraint. Before any DDL it rejects
+null and unknown legacy values using aggregate-only preflights for the approved
+`received`, `downloading`, `downloaded`, and `download_failed` vocabulary. It
+rejects mixed, partial, and replayed F4 shapes; it records and verifies the
+aggregate Reel count; and it retains the F4.3 current-attempt invariant and
+deterministic target CHECK constraints.
+
+The companion role-structure artifact now creates restrictive `NOLOGIN` roles
+without interactive password prompts, so the disposable proof can run it through
+noninteractive psql and use superuser `SET ROLE`. Production authentication
+remains a later human-only credential-provisioning step that enables `LOGIN` and
+sets each secret outside Git.
+
 ## Trust and repository baseline
 
 | Item | Evidence |
@@ -55,16 +88,16 @@ Artifact: `infra/postgres/migrations/005_f4_reel_lifecycle.sql`.
 | Required property | Static result |
 | --- | --- |
 | Transactional execution | `BEGIN` through `COMMIT`; any preflight/postcondition failure aborts the transaction |
-| Expected preflight shape | requires `app.reels`, `app.reel_enrichment_attempts`, legacy `status`, and `reels_status_check`; rejects pre-existing new lifecycle columns |
-| Unknown-state handling | null or any status outside the four approved legacy values raises an exception; no coercion/defaulting |
+| Expected preflight shape | requires `app.reels`, `app.reel_enrichment_attempts`, legacy `status`, and exactly zero F4 lifecycle target columns; no named legacy constraint dependency |
+| Unknown-state handling | null or any status outside the four approved legacy values raises a distinct exception; no coercion/defaulting |
 | Exact mapping | `received→received`, `downloading→downloading`, `downloaded→downloaded`, `download_failed→failed` |
 | Rename | `status` is renamed to `download_status`; no permanent compatibility column or dual write exists |
 | Curation initialization | all existing rows obtain `curation_status='inbox'`; categories are not consulted |
 | Transcription initialization | all existing rows obtain `transcription_status='not_requested'`; enrichment history is not consulted |
 | Attempt invariant | `processing` requires non-null `transcription_attempt_id`; every other state requires null; deferred composite FK binds `(attempt_id, reel_id)` to the same Reel |
 | Constraints | CHECK constraints enumerate exactly the approved download, curation, and transcription vocabularies |
-| Postconditions | resulting values and all five lifecycle constraints are verified before commit |
-| Row preservation/destruction | no `DELETE`, truncation, or Reel-removal statement appears; migration updates only the legacy failed spelling |
+| Postconditions | legacy `status` absence, all four target columns, aggregate row-count preservation, resulting values, and all five lifecycle constraints are verified before commit |
+| Row preservation/destruction | the migration records the pre-DDL aggregate Reel count, verifies it before commit, and has no `DELETE`, truncation, or Reel-removal statement; it updates only the legacy failed spelling |
 
 The migration is intentionally not replay-safe after its new columns exist. This is correct for a one-time forward migration but requires the operator to record application of migration 005 exactly once.
 
@@ -152,7 +185,8 @@ All commands below exited 0 unless explicitly marked otherwise.
 
 | Gate | Command/result |
 | --- | --- |
-| Migration | `pytest infra/postgres/tests/test_f4_reel_lifecycle_migration.py`: 5 passed |
+| F4.6D1A migration static fixture | `services/web/.venv/bin/python -m pytest -q infra/postgres/tests/test_f4_reel_lifecycle_migration.py`: 7 passed; includes the no-constraint production-like legacy fixture, null/unknown, mixed/partial/replay, mapping, count-preservation, target-constraint, and F4.3 invariant checks |
+| F4.6D1A role-hardening static | `services/web/.venv/bin/python -m pytest -q infra/postgres/tests/test_f4_runtime_role_hardening.py`: 9 passed; verifies noninteractive restrictive `NOLOGIN` structure and unchanged grant/verifier boundaries |
 | Lifecycle backend | `pytest services/web/tests/test_reel_lifecycle.py`: 19 passed |
 | Workflow contract | `pytest workflows/tests`: 20 passed; 5 workflow JSON exports parsed |
 | Downloader regression | `unittest discover services/downloader/tests`: 9 passed |

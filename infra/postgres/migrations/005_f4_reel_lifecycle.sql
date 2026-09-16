@@ -4,9 +4,16 @@
 -- intentionally performs no per-row enrichment reconciliation: existing rows use
 -- the conservative transcription_status='not_requested'. F4.3 synchronizes
 -- only lifecycle events accepted after its workflow path begins.
+--
+-- The expected legacy lifecycle shape has app.reels.status and none of the F4
+-- lifecycle columns. No legacy CHECK constraint is required or removed: the
+-- explicit aggregate-only value preflight below is the compatibility contract.
 BEGIN;
 
 DO $$
+DECLARE
+    legacy_status_exists BOOLEAN;
+    target_lifecycle_column_count INTEGER;
 BEGIN
     IF to_regclass('app.reels') IS NULL THEN
         RAISE EXCEPTION 'app.reels is required for F4.2 lifecycle migration';
@@ -16,51 +23,64 @@ BEGIN
         RAISE EXCEPTION 'app.reel_enrichment_attempts is required for F4.3 lifecycle synchronization';
     END IF;
 
-    IF NOT EXISTS (
+    SELECT EXISTS (
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema = 'app'
           AND table_name = 'reels'
           AND column_name = 'status'
-    ) THEN
+    )
+    INTO legacy_status_exists;
+
+    SELECT count(*)
+    INTO target_lifecycle_column_count
+    FROM information_schema.columns
+    WHERE table_schema = 'app'
+      AND table_name = 'reels'
+      AND column_name IN (
+          'download_status',
+          'curation_status',
+          'transcription_status',
+          'transcription_attempt_id'
+      );
+
+    IF legacy_status_exists THEN
+        IF target_lifecycle_column_count <> 0 THEN
+            RAISE EXCEPTION 'mixed legacy and F4 lifecycle columns are not replay-safe';
+        END IF;
+    ELSIF target_lifecycle_column_count = 4 THEN
+        RAISE EXCEPTION 'F4 lifecycle schema already complete; migration is not replay-safe';
+    ELSIF target_lifecycle_column_count <> 0 THEN
+        RAISE EXCEPTION 'partial F4 lifecycle schema is not replay-safe';
+    ELSE
         RAISE EXCEPTION 'app.reels.status is required for F4.2 lifecycle migration';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'app'
-          AND table_name = 'reels'
-          AND column_name IN ('download_status', 'curation_status', 'transcription_status')
-    ) THEN
-        RAISE EXCEPTION 'F4.2 lifecycle columns already exist; migration is not replay-safe';
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'app.reels'::regclass
-          AND conname = 'reels_status_check'
-          AND contype = 'c'
-    ) THEN
-        RAISE EXCEPTION 'app.reels.reels_status_check is required for F4.2 lifecycle migration';
     END IF;
 
     IF EXISTS (
         SELECT 1
         FROM app.reels
         WHERE status IS NULL
-           OR status NOT IN ('received', 'downloading', 'downloaded', 'download_failed')
     ) THEN
-        RAISE EXCEPTION 'unexpected app.reels.status value prevents F4.2 lifecycle migration';
+        RAISE EXCEPTION 'null app.reels.status value prevents F4.2 lifecycle migration';
     END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM app.reels
+        WHERE status NOT IN ('received', 'downloading', 'downloaded', 'download_failed')
+    ) THEN
+        RAISE EXCEPTION 'unknown app.reels.status value prevents F4.2 lifecycle migration';
+    END IF;
+
+    PERFORM set_config(
+        'f4.lifecycle_reel_count',
+        (SELECT count(*)::TEXT FROM app.reels),
+        TRUE
+    );
 END $$;
 
 ALTER TABLE app.reels
     RENAME COLUMN status TO download_status;
-
-ALTER TABLE app.reels
-    DROP CONSTRAINT reels_status_check;
 
 UPDATE app.reels
 SET download_status = 'failed'
@@ -87,12 +107,44 @@ ALTER TABLE app.reels
         DEFERRABLE INITIALLY DEFERRED;
 
 DO $$
+DECLARE
+    expected_row_count BIGINT;
 BEGIN
     IF EXISTS (
         SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'app'
+          AND table_name = 'reels'
+          AND column_name = 'status'
+    ) OR (
+        SELECT count(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'app'
+          AND table_name = 'reels'
+          AND column_name IN (
+              'download_status',
+              'curation_status',
+              'transcription_status',
+              'transcription_attempt_id'
+          )
+    ) <> 4 THEN
+        RAISE EXCEPTION 'resulting Reel lifecycle shape is invalid';
+    END IF;
+
+    expected_row_count := current_setting('f4.lifecycle_reel_count', TRUE)::BIGINT;
+    IF expected_row_count IS NULL
+       OR (SELECT count(*) FROM app.reels) <> expected_row_count THEN
+        RAISE EXCEPTION 'app.reels row count changed during F4.2 lifecycle migration';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
         FROM app.reels
-        WHERE download_status NOT IN ('received', 'downloading', 'downloaded', 'failed')
+        WHERE download_status IS NULL
+           OR download_status NOT IN ('received', 'downloading', 'downloaded', 'failed')
+           OR curation_status IS NULL
            OR curation_status NOT IN ('inbox', 'organized')
+           OR transcription_status IS NULL
            OR transcription_status NOT IN ('not_requested', 'queued', 'processing', 'completed', 'failed')
            OR (transcription_status = 'processing' AND transcription_attempt_id IS NULL)
            OR (transcription_status <> 'processing' AND transcription_attempt_id IS NOT NULL)

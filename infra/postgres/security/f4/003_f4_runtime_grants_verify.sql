@@ -28,7 +28,6 @@ WITH checks(name, expected, actual) AS (
                 SELECT 1
                 FROM pg_roles
                 WHERE rolname = 'megabrain_mgb020'
-                  AND rolcanlogin
                   AND NOT rolsuper
                   AND NOT rolcreatedb
                   AND NOT rolcreaterole
@@ -44,7 +43,6 @@ WITH checks(name, expected, actual) AS (
                 SELECT 1
                 FROM pg_roles
                 WHERE rolname = 'megabrain_mgb030'
-                  AND rolcanlogin
                   AND NOT rolsuper
                   AND NOT rolcreatedb
                   AND NOT rolcreaterole
