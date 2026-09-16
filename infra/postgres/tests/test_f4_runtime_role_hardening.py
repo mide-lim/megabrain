@@ -80,6 +80,26 @@ def test_verifier_proves_privilege_boundaries_before_human_login_provisioning() 
         assert "rolcanlogin" not in sql[start:end].lower()
 
 
+def test_web_role_verifier_and_disposable_fixture_require_login_inherit_and_restrictive_attributes() -> None:
+    verifier = artifact(VERIFIER)
+    start = verifier.index("WEB_ROLE_ATTRIBUTES_RESTRICTIVE")
+    predicate = verifier[start : verifier.index("),", start)].lower()
+    documentation = artifact(DOCUMENTATION)
+
+    assert "rolcanlogin" in predicate
+    assert "rolinherit" in predicate
+    for attribute in (
+        "not rolsuper",
+        "not rolcreatedb",
+        "not rolcreaterole",
+        "not rolreplication",
+        "not rolbypassrls",
+    ):
+        assert attribute in predicate
+    assert "CREATE ROLE megabrain_web\n    LOGIN\n    INHERIT" in documentation
+    assert "PASSWORD NULL;" in documentation
+
+
 def test_grants_are_explicit_column_scoped_and_never_broad_or_ddl_capable() -> None:
     sql = normalized(GRANTS)
 
@@ -166,9 +186,45 @@ def test_verifier_is_catalog_read_only_and_proves_positive_and_negative_boundari
         "EFFECTIVE_SEQUENCE_ALLOWLIST",
         "RUNTIME_ROLES_OWN_NO_REVIEWED_OBJECTS",
         "ALL_RUNTIME_ROLES_HAVE_NO_MEMBERSHIPS",
-        "MAINTAIN",
     ):
         assert check_name in sql
+
+
+def test_postgresql_16_verifier_uses_only_supported_table_privileges_and_fails_closed() -> None:
+    sql = artifact(VERIFIER)
+    executable = executable_lines(sql)
+
+    expected_pg16_table_privileges = (
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    )
+    assert "MAINTAIN" not in executable.upper()
+    assert (
+        "CROSS JOIN unnest(ARRAY["
+        + ",".join(f"'{privilege}'" for privilege in expected_pg16_table_privileges)
+        + "]) action(privilege)"
+    ) in sql
+    assert "\\set ON_ERROR_STOP on" in sql
+    assert "\\gset" in sql
+    assert re.search(
+        r"\\if\s+:f4_verifier_all_pass\s*\\else\s*\\quit\s+3\s*\\endif",
+        sql,
+    ) is not None
+
+
+def test_verifier_assertion_names_are_unique() -> None:
+    sql = artifact(VERIFIER)
+    primary = re.findall(r"(?m)^\s*\(\s*'([A-Z][A-Z0-9_]+)'\s*,", sql)
+    allowlist = re.findall(r"UNION ALL SELECT '([A-Z][A-Z0-9_]+)'", sql)
+    assertion_names = primary + allowlist
+
+    assert assertion_names
+    assert len(assertion_names) == len(set(assertion_names))
 
 
 def test_rollback_is_dedicated_role_only_and_requires_human_credential_reassignment() -> None:
@@ -203,6 +259,11 @@ def test_documentation_never_recommends_passwords_in_process_arguments() -> None
 def test_artifacts_are_reviewable_sql_files_without_committed_secret_material() -> None:
     for path in ARTIFACTS:
         sql = artifact(path)
-        assert sql.rstrip().endswith(";") or sql.rstrip().endswith("\\quit")
+        ending = sql.rstrip()
+        assert (
+            ending.endswith(";")
+            or ending.endswith("\\quit")
+            or (path == VERIFIER and ending.endswith("\\endif"))
+        )
         assert "\x00" not in sql
         assert not re.search(r"(?i)(password|passwd|secret)\s*=\s*['\"][^'\"]+", sql)

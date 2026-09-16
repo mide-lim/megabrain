@@ -23,11 +23,43 @@ The reviewed production evidence is human-provided, not re-probed by this stage:
 | `megabrain_mgb020` | MGB-020 download lifecycle only | F4 relations/sequences |
 | `megabrain_mgb030` | MGB-030 transcription/enrichment lifecycle only | F4 relations/sequences |
 
+`megabrain_web` is the existing production Web runtime identity. Its final
+verifier contract is `LOGIN`, `INHERIT`, `NOSUPERUSER`, `NOCREATEDB`,
+`NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`. `LOGIN` is required because
+the Web runtime must authenticate in production. `INHERIT` is expected because
+it is the existing runtime role's normal PostgreSQL default; it does not grant
+authority by itself, and the verifier separately requires that no F4 runtime
+role have memberships. The dedicated MGB roles remain `NOLOGIN` and `NOINHERIT`
+until their separately authorized credential-provisioning step.
+
 `001_f4_runtime_roles.sql` creates the two dedicated roles as `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`, and `NOINHERIT`. It is noninteractive and contains neither a password command nor a `LOGIN` transition. It neither grants ownership nor commits a password literal.
 
 This structural artifact is intentionally usable through noninteractive psql stdin for the disposable integration proof. A test superuser can `SET ROLE megabrain_mgb020` or `SET ROLE megabrain_mgb030` without either role having a login password. The roles cannot authenticate until a later human production credential-provisioning step enables login and sets each password outside Git.
 
 Do not pass secrets through shell history, standard input transcripts, environment dumps, or process arguments. In particular, `psql --set=...password=...` and `CREATE/ALTER ROLE ... PASSWORD ...` expose plaintext values through process argv or PostgreSQL statement logging and are not approved invocations. After the structural/grant proof, an authorized human must use an interactive protected prompt such as psql's `\password`, or an approved secure operator mechanism, to provision each production credential and enable `LOGIN`. No password or credential ID is stored in Git.
+
+## Disposable Web fixture contract
+
+The human D2 disposable PostgreSQL-16 proof must model the existing Web runtime
+identity rather than using `NOLOGIN` solely because `SET ROLE` is available in a
+fixture. Create the fixture with this exact no-secret statement before running
+the role/grant artifacts:
+
+```sql
+CREATE ROLE megabrain_web
+    LOGIN
+    INHERIT
+    NOSUPERUSER
+    NOCREATEDB
+    NOCREATEROLE
+    NOREPLICATION
+    NOBYPASSRLS
+    PASSWORD NULL;
+```
+
+`PASSWORD NULL` supplies no credential and commits no secret. It is acceptable
+only for the isolated `--network none` fixture; production credential handling
+remains a separate human-only operation.
 
 ## Source-derived authority matrix
 
@@ -82,7 +114,7 @@ MGB-030 has no download-status or curation-status write, `DELETE`, `TRUNCATE`, D
 
 1. `infra/postgres/security/f4/001_f4_runtime_roles.sql` — transactionally creates the two restrictive `NOLOGIN` role structures only. It is safe to prepare before migration 005 because it grants no F4-column authority.
 2. `infra/postgres/security/f4/002_f4_runtime_grants.sql` — transactionally validates the final schema/identity sequences, removes direct grants to the three F4 runtime roles on the reviewed objects, and restores exact source-derived grants.
-3. `infra/postgres/security/f4/003_f4_runtime_grants_verify.sql` — catalog-only privilege proof. All rows must say `PASS`.
+3. `infra/postgres/security/f4/003_f4_runtime_grants_verify.sql` — PostgreSQL-16 catalog-only privilege proof. All rows must say `PASS`; psql exits non-zero if any assertion fails or SQL is unsupported.
 4. `infra/postgres/security/f4/004_f4_runtime_grants_rollback.sql` — dedicated-role privilege rollback only, gated by a human credential-detachment acknowledgement with the affirmative value `true`; it commits both dedicated roles as `NOLOGIN` before checking active sessions in the separate destructive phase.
 
 The grant script does not change `PUBLIC` grants or inherited-role membership. That scope is intentionally excluded to avoid silently changing unrelated authority. The verifier fails if either mechanism still creates an authority boundary violation.
@@ -128,7 +160,18 @@ The post-cutover invariant is `OWNER_ROLE_USED_BY_F4_RUNTIME=NO`. It is an n8n c
 
 ## Verification and eventual integration proof
 
-`003` verifies catalog authority without application data. It checks required source columns, rejects table-wide and excess effective Reel privileges, rejects effective runtime access to every auth relation, and detects any membership granted to a dedicated runtime role. Its dedicated-role attribute checks deliberately do not require `LOGIN`, so the structural/grant verifier also passes in the disposable `NOLOGIN` proof before human credential provisioning. `has_*_privilege` resolves direct, `PUBLIC`, and applicable inherited authority, so a pre-existing broad grant becomes a `FAIL` rather than a silent exception. Required invariant rows include:
+`003` verifies catalog authority without application data. It checks required source columns, rejects table-wide and excess effective Reel privileges, rejects effective runtime access to every auth relation, and detects any membership granted to a dedicated runtime role. Its dedicated-role attribute checks deliberately do not require `LOGIN`, so the structural/grant verifier also passes in the disposable `NOLOGIN` proof before human credential provisioning. In contrast, the existing Web role is required to be `LOGIN` and `INHERIT` with the restrictive attributes above. `has_*_privilege` resolves direct, `PUBLIC`, and applicable inherited authority, so a pre-existing broad grant becomes a `FAIL` rather than a silent exception.
+
+The verifier explicitly targets PostgreSQL 16. In that release,
+`has_table_privilege` accepts only `SELECT`, `INSERT`, `UPDATE`, `DELETE`,
+`TRUNCATE`, `REFERENCES`, and `TRIGGER`; `MAINTAIN` is not a valid privilege
+literal for that API and is not applicable to this target. The verifier checks
+every PostgreSQL-16-valid table privilege and never manufactures a substitute
+for an unavailable one. It begins with psql `ON_ERROR_STOP`, renders its
+assertions, and exits `3` when the aggregate result is false; unsupported SQL
+therefore also exits non-zero.
+
+Required invariant rows include:
 
 | Invariant | Required result |
 | --- | --- |
@@ -142,7 +185,24 @@ The post-cutover invariant is `OWNER_ROLE_USED_BY_F4_RUNTIME=NO`. It is an n8n c
 | `WEB_CAN_WRITE_DOWNLOAD` | `PASS` with expected `false` |
 | `WEB_CAN_WRITE_TRANSCRIPTION` | `PASS` with expected `false` |
 
-A disposable PostgreSQL execution test was not feasible in this build: the repository has no tracked `app.reels` baseline DDL or migration runner, no local PostgreSQL server binaries/harness, and Docker control is prohibited. Static contract tests prove the committed source/artifact boundary, not PostgreSQL runtime semantics.
+A human-operated isolated `postgres:16-alpine` integration proof restored the
+approved snapshot and ran migration 005, the runtime role structure, and the
+least-privilege grants successfully. Its PostgreSQL enforcement probes showed
+the approved MGB-020, MGB-030, and Web write boundaries. This repository stage
+does not re-run that environment: Docker control and all production access
+remain prohibited.
+
+For the next D2 retry, feed SQL through standard input with `docker exec -i`.
+Without `-i`, the aggregate validator receives no query and produces no rows.
+For the approved snapshot fixture only, require:
+
+- `total=11`;
+- `download_received=3`, `download_downloading=0`, `download_downloaded=8`, `download_failed=0`;
+- `curation_inbox=11`;
+- `transcription_not_requested=11`.
+
+These are fixture-validation expectations, not migration logic or production
+constants.
 
 `HUMAN_ROLE_INTEGRATION_PROOF_REQUIRED`: an authorized future gate must apply the schema and artifact sequence to a disposable or approved human-controlled PostgreSQL environment, execute the final workflow SQL using the dedicated principals, and retain command/result evidence.
 

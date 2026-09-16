@@ -4,6 +4,8 @@
 -- switch. It reads PostgreSQL catalogs only and returns PASS/FAIL rows; it never
 -- reads application rows or changes database state. Every row must be PASS.
 
+\set ON_ERROR_STOP on
+
 WITH checks(name, expected, actual) AS (
     VALUES
         (
@@ -14,6 +16,7 @@ WITH checks(name, expected, actual) AS (
                 FROM pg_roles
                 WHERE rolname = 'megabrain_web'
                   AND rolcanlogin
+                  AND rolinherit
                   AND NOT rolsuper
                   AND NOT rolcreatedb
                   AND NOT rolcreaterole
@@ -145,7 +148,6 @@ WITH checks(name, expected, actual) AS (
             FALSE,
             has_table_privilege('megabrain_web', 'app.reels', 'INSERT')
         ),
-        ('WEB_REELS_TABLE_WIDE_UPDATE', FALSE, has_table_privilege('megabrain_web', 'app.reels', 'UPDATE')),
         (
             'WEB_REELS_EXCESS_SELECT',
             FALSE,
@@ -479,18 +481,10 @@ WITH checks(name, expected, actual) AS (
             ) OR has_table_privilege('megabrain_mgb030', 'app.auth_sessions', 'DELETE')
         ),
         ('MGB030_CATEGORY_ACCESS', FALSE, has_table_privilege('megabrain_mgb030', 'app.categories', 'SELECT'))
-)
-SELECT
-    name,
-    CASE WHEN actual IS NOT DISTINCT FROM expected THEN 'PASS' ELSE 'FAIL' END AS result,
-    expected,
-    actual
-FROM checks
-ORDER BY name;
-
--- Effective authority allowlist. This second result set catches direct, PUBLIC,
--- and otherwise effective grants outside the exact reviewed source contract.
-WITH roles(role_name) AS (
+),
+-- Effective authority allowlist. This catches direct, PUBLIC, and otherwise
+-- effective grants outside the exact reviewed source contract.
+roles(role_name) AS (
     VALUES ('megabrain_web'), ('megabrain_mgb020'), ('megabrain_mgb030')
 ), relations(relation_name) AS (
     VALUES ('app.reels'), ('app.reel_enrichment_attempts'), ('app.reel_enrichments'), ('app.categories'), ('app.reel_categories'), ('app.auth_transactions'), ('app.auth_users'), ('app.auth_sessions')
@@ -541,15 +535,10 @@ WITH roles(role_name) AS (
       AND has_column_privilege(role.role_name, relation.relation_name, attribute.attname, action.privilege)
 ), excess_table AS (
     SELECT 1 FROM roles role CROSS JOIN relations relation
-    CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) action(privilege)
+    CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) action(privilege)
     LEFT JOIN allowed_table allowed ON allowed.role_name = role.role_name AND allowed.relation_name = relation.relation_name AND allowed.privilege = action.privilege
     WHERE allowed.role_name IS NULL
-      AND CASE
-          WHEN action.privilege = 'MAINTAIN'
-               AND current_setting('server_version_num')::integer < 140000
-              THEN FALSE
-          ELSE has_table_privilege(role.role_name, relation.relation_name, action.privilege)
-      END
+      AND has_table_privilege(role.role_name, relation.relation_name, action.privilege)
 ), missing_sequence AS (
     SELECT 1 FROM allowed_sequence allowed
     WHERE NOT has_sequence_privilege(allowed.role_name, allowed.sequence_name, allowed.privilege)
@@ -563,12 +552,35 @@ WITH roles(role_name) AS (
     WHERE EXISTS (SELECT 1 FROM pg_namespace namespace WHERE namespace.nspname = 'app' AND namespace.nspowner = database_role.oid)
        OR EXISTS (SELECT 1 FROM relations relation JOIN pg_class object ON object.oid = relation.relation_name::regclass WHERE object.relowner = database_role.oid)
        OR EXISTS (SELECT 1 FROM sequences sequence JOIN pg_class object ON object.oid = sequence.sequence_name::regclass WHERE object.relowner = database_role.oid)
-)
-SELECT name, CASE WHEN actual THEN 'PASS' ELSE 'FAIL' END AS result
-FROM (
+), allowlist_checks(name, actual) AS (
     SELECT 'EFFECTIVE_COLUMN_ALLOWLIST' AS name, NOT EXISTS (SELECT 1 FROM missing_columns) AND NOT EXISTS (SELECT 1 FROM excess_columns) AS actual
     UNION ALL SELECT 'EFFECTIVE_TABLE_ALLOWLIST', NOT EXISTS (SELECT 1 FROM excess_table)
     UNION ALL SELECT 'EFFECTIVE_SEQUENCE_ALLOWLIST', NOT EXISTS (SELECT 1 FROM missing_sequence) AND NOT EXISTS (SELECT 1 FROM excess_sequence)
     UNION ALL SELECT 'RUNTIME_ROLES_OWN_NO_REVIEWED_OBJECTS', NOT EXISTS (SELECT 1 FROM runtime_ownership)
-) AS allowlist_checks
-ORDER BY name;
+), assertions(name, expected, actual) AS (
+    SELECT name, expected, actual
+    FROM checks
+    UNION ALL
+    SELECT name, TRUE, actual
+    FROM allowlist_checks
+)
+SELECT
+    COALESCE(bool_and(actual IS NOT DISTINCT FROM expected), FALSE) AS f4_verifier_all_pass,
+    string_agg(
+        format(
+            '%s | %s | %s | %s',
+            name,
+            CASE WHEN actual IS NOT DISTINCT FROM expected THEN 'PASS' ELSE 'FAIL' END,
+            expected,
+            actual
+        ),
+        E'\n'
+        ORDER BY name
+    ) AS f4_verifier_report
+FROM assertions
+\gset
+\echo :f4_verifier_report
+\if :f4_verifier_all_pass
+\else
+\quit 3
+\endif
