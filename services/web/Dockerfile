@@ -1,4 +1,11 @@
-FROM python:3.12-slim
+ARG PYTHON_BASE_IMAGE=python:3.12-slim
+FROM ${PYTHON_BASE_IMAGE}
+
+ARG SOURCE_REVISION
+ARG IMAGE_VERSION
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      org.opencontainers.image.source=https://github.com/mide-lim/megabrain \
+      org.opencontainers.image.version=${IMAGE_VERSION}
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

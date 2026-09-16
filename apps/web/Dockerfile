@@ -1,11 +1,12 @@
-FROM node:26.7.0-alpine AS dependencies
+ARG NODE_BASE_IMAGE=node:26.7.0-alpine
+FROM ${NODE_BASE_IMAGE} AS dependencies
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:26.7.0-alpine AS builder
+FROM ${NODE_BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -13,7 +14,13 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:26.7.0-alpine AS runtime
+FROM ${NODE_BASE_IMAGE} AS runtime
+
+ARG SOURCE_REVISION
+ARG IMAGE_VERSION
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      org.opencontainers.image.source=https://github.com/mide-lim/megabrain \
+      org.opencontainers.image.version=${IMAGE_VERSION}
 
 ENV NODE_ENV=production
 ENV PORT=3000

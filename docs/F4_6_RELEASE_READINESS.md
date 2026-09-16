@@ -296,3 +296,25 @@ This document grants no production authority. Once all blockers are resolved, th
 `AUTORIZO_F4_PRODUCTION_ROLLOUT`
 
 Until then, the correct disposition is `HUMAN_REMEDIATION_REQUIRED`.
+
+## F4.6E immutable build-artifact preparation
+
+**Repository verdict: `F4_6E_IMMUTABLE_ARTIFACT_PREPARATION_READY`.** The
+repository now contains a human-operated exact-commit build contract at
+`infra/release/f4/`, including a detached-worktree build script, offline bundle
+verifier, manifest template, exact-commit SQL/workflow hashing, immutable
+base-reference requirement, and OCI revision binding for Web and frontend.
+
+This is preparation only. The human build evidence is still required before any
+F4 rollout consideration: actual Python/Node base image digests, built image
+IDs and archive SHA-256 values, n8n runtime compatibility anchor, and
+PostgreSQL runtime compatibility anchor must be captured by the operator.
+`docs/F4_IMMUTABLE_RELEASE_ARTIFACTS.md` is the release-artifact consumption
+contract.
+
+The existing `n8n` Compose reference is mutable and remains a compatibility
+anchor, not an F4 artifact. No broad stack operation, n8n recreation, image
+build, deployment, database migration, grants, credential change, workflow
+import, or activation is authorized by this repository change. Overall F4
+release readiness remains blocked pending the existing human checkpoints and
+the new human immutable-build proof.
