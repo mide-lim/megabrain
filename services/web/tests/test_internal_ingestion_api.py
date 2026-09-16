@@ -25,6 +25,8 @@ def registered_reel(**overrides: object) -> RegisteredReel:
         "original_url": "https://www.instagram.com/reel/abc_123/",
         "source": "instagram",
         "download_status": "received",
+        "curation_status": "inbox",
+        "transcription_status": "not_requested",
         "telegram_chat_id": -1001234567890,
         "telegram_user_id": 123456789,
         "telegram_message_id": 987,

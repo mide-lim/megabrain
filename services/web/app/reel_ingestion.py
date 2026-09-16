@@ -43,6 +43,8 @@ RETURNING
     original_url,
     source,
     download_status,
+    curation_status,
+    transcription_status,
     telegram_chat_id,
     telegram_user_id,
     telegram_message_id,
@@ -57,6 +59,8 @@ SELECT
     original_url,
     source,
     download_status,
+    curation_status,
+    transcription_status,
     telegram_chat_id,
     telegram_user_id,
     telegram_message_id,
@@ -109,6 +113,8 @@ class RegisteredReel:
     original_url: str
     source: str
     download_status: str
+    curation_status: str
+    transcription_status: str
     telegram_chat_id: int | None
     telegram_user_id: int | None
     telegram_message_id: int | None
@@ -227,6 +233,8 @@ def _registered_reel(row: Mapping[str, Any], *, created: bool) -> RegisteredReel
         original_url=row["original_url"],
         source=row["source"],
         download_status=row["download_status"],
+        curation_status=row["curation_status"],
+        transcription_status=row["transcription_status"],
         telegram_chat_id=row["telegram_chat_id"],
         telegram_user_id=row["telegram_user_id"],
         telegram_message_id=row["telegram_message_id"],

@@ -29,6 +29,8 @@ def library_row(**overrides):
         "received_at": datetime(2026, 8, 25, tzinfo=UTC),
         "has_transcript": True,
         "download_status": "downloaded",
+        "curation_status": "organized",
+        "transcription_status": "completed",
         "object_key": "original/instagram/reels/abc123/video.mp4",
         "storage_bucket": "private-reels",
         "transcript_text": "Private transcript text",
@@ -63,6 +65,9 @@ def test_reels_api_defaults_to_first_page_and_projects_public_fields(monkeypatch
                 "duration_seconds": 12.5,
                 "received_at": "2026-08-25T00:00:00Z",
                 "has_transcript": True,
+                "download_status": "downloaded",
+                "curation_status": "organized",
+                "transcription_status": "completed",
             }
         ],
         "query": {"q": ""},

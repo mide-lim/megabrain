@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.openapi.utils import get_openapi
@@ -44,7 +44,7 @@ from app.categories import (
 )
 from app.presentation import reel_detail_context
 from app.r2 import presigned_video_url
-from app.reels import fetch_reel
+from app.reels import fetch_reel, set_curation_status
 
 
 VERSION = "0.1.0"
@@ -134,6 +134,8 @@ SELECT
     r.caption,
     r.duration_seconds,
     r.download_status,
+    r.curation_status,
+    r.transcription_status,
     r.received_at,
     r.downloaded_at,
     (
@@ -229,15 +231,28 @@ def reel_library_projection(reel: dict) -> dict:
         "duration_seconds": reel.get("duration_seconds"),
         "received_at": reel.get("received_at"),
         "has_transcript": bool(reel.get("has_transcript")),
+        "download_status": reel.get("download_status"),
+        "curation_status": reel.get("curation_status"),
+        "transcription_status": reel.get("transcription_status"),
     }
 
 
 class AssignCategoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     category_id: int
 
 
 class CreateCategoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     name: str
+
+
+class CurationStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    curation_status: Literal["inbox", "organized"]
 
 
 class WebReelRequest(BaseModel):
@@ -272,13 +287,18 @@ class ReelVideoResponse(BaseModel):
     src: str | None
 
 
-class ReelDetailResponse(BaseModel):
+class ReelLifecycleResponse(BaseModel):
     id: int
+    download_status: str
+    curation_status: str
+    transcription_status: str
+
+
+class ReelDetailResponse(ReelLifecycleResponse):
     title: str | None
     creator: str | None
     shortcode: str | None
     original_url: str | None
-    download_status: str | None
     caption: str | None
     duration_seconds: float | None
     received_at: datetime | None
@@ -308,6 +328,8 @@ def reel_detail_projection(
         shortcode=reel.get("shortcode"),
         original_url=reel.get("original_url"),
         download_status=reel.get("download_status"),
+        curation_status=reel.get("curation_status"),
+        transcription_status=reel.get("transcription_status"),
         caption=reel.get("caption"),
         duration_seconds=presentation["duration"],
         received_at=reel.get("received_at"),
@@ -369,6 +391,8 @@ def _web_reel_success_response(
                 "shortcode": reel.shortcode,
                 "original_url": reel.original_url,
                 "download_status": reel.download_status,
+                "curation_status": reel.curation_status,
+                "transcription_status": reel.transcription_status,
                 "created": reel.created,
             },
             "dispatch": {"state": dispatch.value},
@@ -525,6 +549,31 @@ def remove_reel_category_api(
     except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
         raise HTTPException(status_code=503, detail="Category update temporarily unavailable") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.patch(
+    "/api/reels/{reel_id}/curation",
+    response_model=ReelLifecycleResponse,
+    responses={
+        404: {"description": "Reel not found"},
+        503: {"description": "Curation update temporarily unavailable"},
+    },
+)
+def set_reel_curation_api(
+    reel_id: int,
+    payload: CurationStatusRequest,
+    response: Response,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> ReelLifecycleResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        reel = set_curation_status(reel_id, payload.curation_status)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(status_code=503, detail="Curation update temporarily unavailable") from None
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    return ReelLifecycleResponse(**reel)
 
 
 @app.get(

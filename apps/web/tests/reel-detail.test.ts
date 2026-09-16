@@ -19,6 +19,8 @@ const reel: ReelDetail = {
   shortcode: "abc123",
   original_url: "https://www.instagram.com/reel/abc123/",
   download_status: "downloaded",
+  curation_status: "organized",
+  transcription_status: "completed",
   caption: "The original caption",
   duration_seconds: 12.5,
   received_at: "2026-08-25T00:00:00Z",

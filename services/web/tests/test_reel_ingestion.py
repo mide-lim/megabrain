@@ -29,6 +29,8 @@ def persisted_reel(**overrides):
         "original_url": "https://www.instagram.com/reel/abc_123/",
         "source": "instagram",
         "download_status": "received",
+        "curation_status": "inbox",
+        "transcription_status": "not_requested",
         "telegram_chat_id": None,
         "telegram_user_id": None,
         "telegram_message_id": None,

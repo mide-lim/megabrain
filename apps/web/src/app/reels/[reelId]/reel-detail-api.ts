@@ -11,7 +11,9 @@ export type ReelDetail = {
   creator: string | null;
   shortcode: string | null;
   original_url: string | null;
-  download_status: string | null;
+  download_status: string;
+  curation_status: string;
+  transcription_status: string;
   caption: string | null;
   duration_seconds: number | null;
   received_at: string | null;
@@ -74,7 +76,9 @@ function isReelDetail(value: unknown): value is ReelDetail {
     isNullableString(value.creator) &&
     isNullableString(value.shortcode) &&
     isNullableString(value.original_url) &&
-    isNullableString(value.download_status) &&
+    typeof value.download_status === "string" &&
+    typeof value.curation_status === "string" &&
+    typeof value.transcription_status === "string" &&
     isNullableString(value.caption) &&
     isNullableNumber(value.duration_seconds) &&
     isNullableString(value.received_at) &&

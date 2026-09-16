@@ -20,6 +20,9 @@ def _library_row() -> dict[str, object]:
         "duration_seconds": 12.5,
         "received_at": datetime(2026, 8, 25, tzinfo=UTC),
         "has_transcript": True,
+        "download_status": "downloaded",
+        "curation_status": "organized",
+        "transcription_status": "completed",
     }
 
 
@@ -70,6 +73,9 @@ def test_reels_api_allows_valid_owner_and_keeps_existing_payload(monkeypatch) ->
             "duration_seconds": 12.5,
             "received_at": "2026-08-25T00:00:00Z",
             "has_transcript": True,
+            "download_status": "downloaded",
+            "curation_status": "organized",
+            "transcription_status": "completed",
         }
     ]
 
