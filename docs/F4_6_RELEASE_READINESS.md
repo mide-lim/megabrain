@@ -318,3 +318,26 @@ build, deployment, database migration, grants, credential change, workflow
 import, or activation is authorized by this repository change. Overall F4
 release readiness remains blocked pending the existing human checkpoints and
 the new human immutable-build proof.
+
+## F4.6F n8n cutover preparation
+
+`docs/F4_N8N_CUTOVER.md` is the static, human-operated n8n credential,
+workflow-identity, quiesce, migration, and rollback procedure for the exact F4
+artifacts. Its repository verdict is
+`F4_6F_N8N_CUTOVER_PREPARATION_READY`; it is not an overall-F4-ready verdict.
+
+The procedure fixes the ordering boundary that prevents a trigger race: close
+all entry/dispatch sources first, prove closure, drain/account for executions,
+prove `INFLIGHT_ZERO`, and only then run migration 005. It selects inactive,
+separate workflow import as the safest conditional model and requires
+`HUMAN_N8N_UI_PROOF_REQUIRED` before any production import because sanitized
+exports cannot establish overwrite, activation, credential-binding, workflow-ID,
+or webhook behavior in n8n 2.32.5.
+
+The initial F4 credential transition retains `MegaBrain → megabrain` and
+requires `OWNER_ROLE_USED_BY_F4_RUNTIME=NO` for MGB-020/MGB-030 only. It does
+not claim that the owner credential is globally unused. The procedure also
+requires human proof of exact n8n execution-state semantics, secure dedicated
+LOGIN provisioning, targeted no-build Web/frontend deployment, Web maintenance
+routing, and every migration/grant/image/checkpoint result. No F4 production
+mutation occurred while preparing this documentation.
