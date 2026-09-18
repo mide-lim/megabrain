@@ -13,7 +13,7 @@ function render(pathname: "/inbox" | "/library" | "/categories" | "/settings" = 
   );
 }
 
-test("authenticated app shell provides navigation, safe owner presence, and a deferred add action", () => {
+test("authenticated app shell provides navigation, safe owner presence, and a functional add Reel action", () => {
   const markup = render();
 
   for (const label of ["Inbox", "Biblioteca", "Categorias", "Configurações"]) {
@@ -21,9 +21,10 @@ test("authenticated app shell provides navigation, safe owner presence, and a de
   }
   assert.match(markup, /very-long-owner-address@example\.megabrain\.test/);
   assert.match(markup, /aria-current="page"/);
-  assert.match(markup, /Adicionar Reel/);
-  assert.match(markup, /Em breve/);
-  assert.match(markup, /disabled=""/);
+  assert.match(markup, />\+ Adicionar Reel</);
+  assert.match(markup, /<dialog[^>]+aria-labelledby="add-reel-title"/);
+  assert.match(markup, /Cole o link público de um Reel do Instagram/);
+  assert.doesNotMatch(markup, /Em breve|add-reel-deferred/);
   assert.match(markup, />Sair</);
   assert.match(markup, /href="\/library"/);
   assert.doesNotMatch(markup, /href="#"/);

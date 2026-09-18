@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type { OwnerSession } from "../lib/auth/session";
+import { AddReel } from "./add-reel";
 import { LogoutButton } from "./logout-button";
 
 type AppPath = "/inbox" | "/library" | "/categories" | "/settings";
@@ -47,22 +48,6 @@ function Navigation({ pathname, compact = false }: { pathname: AppPath; compact?
   );
 }
 
-function DeferredAddReel() {
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        aria-describedby="add-reel-deferred"
-        className="min-h-11 cursor-not-allowed rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-muted disabled:opacity-80"
-        disabled
-        type="button"
-      >
-        + Adicionar Reel
-      </button>
-      <span className="text-xs font-medium text-muted" id="add-reel-deferred">Em breve</span>
-    </div>
-  );
-}
-
 export function AppShell({ children, owner, pathname }: AppShellProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -73,7 +58,7 @@ export function AppShell({ children, owner, pathname }: AppShellProps) {
         <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-4">
           <Brand />
           <div className="flex items-center gap-3">
-            <DeferredAddReel />
+            <AddReel />
             <LogoutButton />
           </div>
         </div>
