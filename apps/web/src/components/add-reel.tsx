@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import {
@@ -25,10 +25,7 @@ function successMessage(result: ReelCreationSuccess): string {
     if (result.dispatch.state === "accepted") {
       return "Reel adicionado. O processamento foi iniciado.";
     }
-    if (result.dispatch.state === "unconfirmed") {
-      return "Reel salvo. Ainda não foi possível confirmar o início do processamento.";
-    }
-    return "Reel adicionado. O processamento já não precisa ser iniciado.";
+    return "Reel salvo. Ainda não foi possível confirmar o início do processamento.";
   }
 
   if (result.dispatch.state === "accepted") {
@@ -42,10 +39,17 @@ function successMessage(result: ReelCreationSuccess): string {
 
 export function AddReel() {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
   const [pending, setPending] = useState(false);
   const [success, setSuccess] = useState<ReelCreationSuccess | null>(null);
   const [error, setError] = useState<ReelCreationErrorCode | null>(null);
+
+  useEffect(() => {
+    if (error && !pending) {
+      inputRef.current?.focus();
+    }
+  }, [error, pending]);
 
   function resetState() {
     if (pending) return;
@@ -72,16 +76,18 @@ export function AddReel() {
     setSuccess(null);
     setError(null);
 
-    const result = await performReelCreation(url);
-
-    setPending(false);
-
-    if (!result.ok) {
-      setError(result.code);
-      return;
+    try {
+      const result = await performReelCreation(url);
+      if (!result.ok) {
+        setError(result.code);
+        return;
+      }
+      setSuccess(result);
+    } catch {
+      setError("invalid_response");
+    } finally {
+      setPending(false);
     }
-
-    setSuccess(result);
   }
 
   return (
@@ -96,7 +102,7 @@ export function AddReel() {
 
       <dialog
         aria-labelledby="add-reel-title"
-        className="m-auto w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/30"
+        className="m-auto max-h-[calc(100dvh-2rem)] w-[min(34rem,calc(100%-2rem))] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/30"
         onCancel={(event) => {
           if (pending) event.preventDefault();
         }}
@@ -148,7 +154,8 @@ export function AddReel() {
             <form aria-busy={pending} className="mt-6" onSubmit={(event) => void submit(event)}>
               <label className="block text-sm font-semibold" htmlFor="add-reel-url">URL do Reel</label>
               <input
-                aria-describedby="add-reel-help"
+                aria-describedby={error ? "add-reel-help add-reel-url-error" : "add-reel-help"}
+                aria-invalid={error ? true : undefined}
                 autoComplete="off"
                 className="mt-2 min-h-12 w-full rounded-xl border border-border bg-surface px-4 text-base placeholder:text-muted disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={pending}
@@ -156,6 +163,7 @@ export function AddReel() {
                 name="url"
                 onChange={(event) => setUrl(event.target.value)}
                 placeholder="https://www.instagram.com/reel/..."
+                ref={inputRef}
                 required
                 type="url"
                 value={url}
@@ -168,7 +176,7 @@ export function AddReel() {
               ) : null}
 
               {error ? (
-                <p className="mt-3 text-sm font-semibold text-danger" role="alert">
+                <p className="mt-3 text-sm font-semibold text-danger" id="add-reel-url-error" role="alert">
                   {errorMessages[error]}
                 </p>
               ) : null}

@@ -11,24 +11,41 @@ import {
 export const REEL_DISPATCH_STATES = ["accepted", "not_required", "unconfirmed"] as const;
 
 export type ReelDispatchState = (typeof REEL_DISPATCH_STATES)[number];
+type NewReelDispatchState = "accepted" | "unconfirmed";
 
-export type CreatedReel = {
+type ReelFields = {
   id: number;
   shortcode: string;
   original_url: string;
   download_status: DownloadStatus;
   curation_status: CurationStatus;
   transcription_status: TranscriptionStatus;
-  created: boolean;
 };
 
-export type ReelCreationSuccess = {
-  ok: true;
-  reel: CreatedReel;
-  dispatch: {
-    state: ReelDispatchState;
-  };
+export type NewlyCreatedReel = ReelFields & {
+  created: true;
+  download_status: "received";
+  curation_status: "inbox";
+  transcription_status: "not_requested";
 };
+
+export type ExistingReel = ReelFields & {
+  created: false;
+};
+
+export type CreatedReel = NewlyCreatedReel | ExistingReel;
+
+export type ReelCreationSuccess =
+  | {
+      ok: true;
+      reel: NewlyCreatedReel;
+      dispatch: { state: NewReelDispatchState };
+    }
+  | {
+      ok: true;
+      reel: ExistingReel;
+      dispatch: { state: ReelDispatchState };
+    };
 
 export type ReelCreationErrorCode =
   | "invalid_request"
@@ -47,16 +64,35 @@ export type ReelCreationFailure = {
 
 export type ReelCreationResult = ReelCreationSuccess | ReelCreationFailure;
 
+const REEL_KEYS = [
+  "id",
+  "shortcode",
+  "original_url",
+  "download_status",
+  "curation_status",
+  "transcription_status",
+  "created",
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const valueKeys = Object.keys(value);
+  return valueKeys.length === keys.length && valueKeys.every((key) => keys.includes(key));
 }
 
 function isDispatchState(value: unknown): value is ReelDispatchState {
   return typeof value === "string" && REEL_DISPATCH_STATES.includes(value as ReelDispatchState);
 }
 
+function isNewReelDispatchState(value: ReelDispatchState): value is NewReelDispatchState {
+  return value === "accepted" || value === "unconfirmed";
+}
+
 function isCreatedReel(value: unknown): value is CreatedReel {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value) || !hasExactKeys(value, REEL_KEYS)) return false;
 
   return (
     Number.isSafeInteger(value.id)
@@ -72,11 +108,24 @@ function isCreatedReel(value: unknown): value is CreatedReel {
   );
 }
 
+function isNewlyCreatedReel(value: CreatedReel): value is NewlyCreatedReel {
+  return value.created
+    && value.download_status === "received"
+    && value.curation_status === "inbox"
+    && value.transcription_status === "not_requested";
+}
+
 function isSuccessPayload(value: unknown): value is Omit<ReelCreationSuccess, "ok"> {
-  if (!isRecord(value) || !isCreatedReel(value.reel) || !isRecord(value.dispatch)) {
+  if (!isRecord(value) || !hasExactKeys(value, ["reel", "dispatch"]) || !isCreatedReel(value.reel)) {
     return false;
   }
-  return isDispatchState(value.dispatch.state);
+  if (!isRecord(value.dispatch) || !hasExactKeys(value.dispatch, ["state"]) || !isDispatchState(value.dispatch.state)) {
+    return false;
+  }
+
+  return !value.reel.created || (
+    isNewlyCreatedReel(value.reel) && isNewReelDispatchState(value.dispatch.state)
+  );
 }
 
 function errorCodeFromResponse(status: number, payload: unknown): ReelCreationErrorCode {
@@ -138,10 +187,21 @@ export async function performReelCreation(
       return { ok: false, code: "invalid_response" };
     }
 
+    if (payload.reel.created) {
+      if (!isNewlyCreatedReel(payload.reel) || !isNewReelDispatchState(payload.dispatch.state)) {
+        return { ok: false, code: "invalid_response" };
+      }
+      return {
+        ok: true,
+        reel: payload.reel,
+        dispatch: { state: payload.dispatch.state },
+      };
+    }
+
     return {
       ok: true,
       reel: payload.reel,
-      dispatch: payload.dispatch,
+      dispatch: { state: payload.dispatch.state },
     };
   } catch {
     return { ok: false, code: "network_error" };

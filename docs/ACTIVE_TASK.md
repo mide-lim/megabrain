@@ -2,31 +2,22 @@
 
 ## Tarefa atual
 
-**F3.3 — Internal Orchestration Boundary: LOCAL IMPLEMENTATION / HUMAN-GATED
-PUBLICATION.**
+**F5.1 — Add Reel UX: H2 remediation / QA.**
 
-F3.2 — Source-Neutral Processing Core is COMPLETE / PROD VALIDATED. The
-Telegram -> MGB-020 -> Downloader path and the MGB-030 trigger after successful
-download were validated by the operator. The long-audio STT failure remains
-separate backlog work.
+F4 production cutover is closed. F5.1 is the active frontend-only candidate:
+branch candidate and Draft PR #44 exist. It is unmerged and undeployed. The
+production baseline remains F4; this record does not assert any F5.1 production
+state.
 
-F3.3 moves MGB-010 to a Telegram adapter, makes FastAPI the authority for Reel
-registration/deduplication, and introduces an authenticated internal dispatcher
-to MGB-020. Production secrets, n8n import/activation, Caddy/Compose changes,
-deployment and production validation remain human-gated.
+F5.1 H2 is reconciling governance and H1 findings under
+`AUTORIZO_F5_1_H2_GOVERNANCE_AND_REMEDIATION`. The candidate remains limited to
+the Next.js presentation boundary and its local validation. FastAPI remains the
+authority for authentication, session, CSRF, API, registration, deduplication,
+lifecycle, and dispatch. No backend, workflow, database, R2, Caddy, Compose, or
+production-runtime change is part of this remediation.
 
-No public Web Add Reel flow exists yet.
-
-A reconciliação de integridade não concede autorização operacional. Qualquer
-operação autenticada continua sujeita à capability permitida, Task Contract,
-Run Authorization, estado do lifecycle e demais gates aplicáveis.
-
-C1–C7.3 estão implantados e validados por operador: Google OIDC e sessão local do
-proprietário, App Shell/Library/Reel Detail do Next.js, mutações de categoria
-JSON com CSRF, corte `/reels/*` e aposentadoria Jinja. FastAPI é a autoridade de
-autenticação, sessão, API e domínio; Next.js é a autoridade de apresentação;
-Caddy fornece HTTPS e roteamento. Basic Auth é histórico do MVP, não a fronteira
-Web atual.
+Merge is separately human-gated. Production and deployment are separately
+human-gated Red actions. Staging does not exist.
 
 ## Estado
 

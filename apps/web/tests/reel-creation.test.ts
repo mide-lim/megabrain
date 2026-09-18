@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { JSDOM } from "jsdom";
+import { act, createElement } from "react";
 
 import { AddReel } from "../src/components/add-reel";
 import { performReelCreation } from "../src/lib/reel-creation-api";
@@ -20,18 +19,24 @@ function jsonResponse(payload: unknown, status = 200): Response {
 function reelPayload({
   created = true,
   dispatch = "accepted",
+  downloadStatus = "received",
+  curationStatus = "inbox",
+  transcriptionStatus = "not_requested",
 }: {
   created?: boolean;
   dispatch?: "accepted" | "not_required" | "unconfirmed";
+  downloadStatus?: string;
+  curationStatus?: string;
+  transcriptionStatus?: string;
 } = {}) {
   return {
     reel: {
       id: 42,
       shortcode: "abc_123",
       original_url: VALID_URL,
-      download_status: "received",
-      curation_status: "inbox",
-      transcription_status: "not_requested",
+      download_status: downloadStatus,
+      curation_status: curationStatus,
+      transcription_status: transcriptionStatus,
       created,
     },
     dispatch: { state: dispatch },
@@ -52,6 +57,168 @@ function successfulRequest(
     assert.equal(url, "/api/reels");
     return jsonResponse(payload, status);
   }) as typeof fetch;
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void;
+  let reject: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve: resolve!, reject: reject! };
+}
+
+type BrowserGlobal =
+  | "window"
+  | "document"
+  | "navigator"
+  | "Node"
+  | "HTMLElement"
+  | "HTMLDialogElement"
+  | "HTMLInputElement"
+  | "Event"
+  | "MouseEvent"
+  | "KeyboardEvent";
+
+const browserGlobals: BrowserGlobal[] = [
+  "window",
+  "document",
+  "navigator",
+  "Node",
+  "HTMLElement",
+  "HTMLDialogElement",
+  "HTMLInputElement",
+  "Event",
+  "MouseEvent",
+  "KeyboardEvent",
+];
+
+type RenderedDialog = {
+  document: Document;
+  cleanup: () => Promise<void>;
+};
+
+async function renderDialog(): Promise<RenderedDialog> {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/",
+  });
+  const previousGlobals = new Map<BrowserGlobal, PropertyDescriptor | undefined>(
+    browserGlobals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousActEnvironment = testGlobal.IS_REACT_ACT_ENVIRONMENT;
+  const dialogPrototype = dom.window.HTMLDialogElement.prototype;
+  const showModal = Object.getOwnPropertyDescriptor(dialogPrototype, "showModal");
+  const close = Object.getOwnPropertyDescriptor(dialogPrototype, "close");
+
+  const browserValues: Record<BrowserGlobal, unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    Node: dom.window.Node,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLDialogElement: dom.window.HTMLDialogElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    Event: dom.window.Event,
+    MouseEvent: dom.window.MouseEvent,
+    KeyboardEvent: dom.window.KeyboardEvent,
+  };
+  for (const key of browserGlobals) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value: browserValues[key],
+    });
+  }
+  testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
+
+  Object.defineProperties(dialogPrototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      },
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.removeAttribute("open");
+        this.dispatchEvent(new dom.window.Event("close"));
+      },
+    },
+  });
+
+  const rootElement = dom.window.document.querySelector("#root");
+  assert.ok(rootElement);
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(rootElement);
+  await act(async () => {
+    root.render(createElement(AddReel));
+  });
+
+  return {
+    document: dom.window.document,
+    async cleanup() {
+      await act(async () => {
+        root.unmount();
+      });
+      if (showModal) Object.defineProperty(dialogPrototype, "showModal", showModal);
+      else delete (dialogPrototype as { showModal?: unknown }).showModal;
+      if (close) Object.defineProperty(dialogPrototype, "close", close);
+      else delete (dialogPrototype as { close?: unknown }).close;
+      for (const key of browserGlobals) {
+        const descriptor = previousGlobals.get(key);
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Partial<Record<BrowserGlobal, unknown>>)[key];
+      }
+      testGlobal.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+      dom.window.close();
+    },
+  };
+}
+
+function button(document: Document, name: string): HTMLButtonElement {
+  const element = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent === name);
+  assert.ok(element, `missing ${name} button`);
+  return element;
+}
+
+function input(document: Document): HTMLInputElement {
+  const element = document.querySelector<HTMLInputElement>("#add-reel-url");
+  assert.ok(element, "missing URL input");
+  return element;
+}
+
+function dialog(document: Document): HTMLDialogElement {
+  const element = document.querySelector<HTMLDialogElement>("dialog");
+  assert.ok(element, "missing dialog");
+  return element;
+}
+
+async function click(element: Element): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+async function setInputValue(element: HTMLInputElement, value: string): Promise<void> {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+  assert.ok(setter, "missing input value setter");
+  await act(async () => {
+    setter.call(element, value);
+    element.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+}
+
+async function submit(document: Document): Promise<void> {
+  const form = document.querySelector("form");
+  assert.ok(form, "missing form");
+  await act(async () => {
+    form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 test("Reel creation bootstraps CSRF before posting the strict public API request", async () => {
@@ -78,35 +245,61 @@ test("Reel creation bootstraps CSRF before posting the strict public API request
   assert.equal(calls[1]?.init?.body, JSON.stringify({ url: VALID_URL }));
 });
 
-test("new Reel accepts both confirmed and unconfirmed durable dispatch outcomes", async () => {
+test("new Reel accepts only its valid created response shape and lifecycle", async () => {
   for (const dispatch of ["accepted", "unconfirmed"] as const) {
     const result = await performReelCreation(
       VALID_URL,
       successfulRequest(reelPayload({ dispatch }), 201, []),
     );
-
     assert.equal(result.ok, true);
-    if (result.ok) {
-      assert.equal(result.reel.created, true);
-      assert.equal(result.reel.id, 42);
-      assert.equal(result.dispatch.state, dispatch);
-    }
+  }
+
+  const invalidNewResponses = [
+    reelPayload({ dispatch: "not_required" }),
+    reelPayload({ downloadStatus: "downloading" }),
+    { ...reelPayload(), extra: true },
+    { ...reelPayload(), reel: { ...reelPayload().reel, extra: true } },
+    { ...reelPayload(), dispatch: { state: "accepted", extra: true } },
+  ];
+
+  for (const payload of invalidNewResponses) {
+    assert.deepEqual(
+      await performReelCreation(VALID_URL, successfulRequest(payload, 201, [])),
+      { ok: false, code: "invalid_response" },
+    );
   }
 });
 
-test("existing Reel remains a successful idempotent response for all supported dispatch states", async () => {
+test("existing Reel accepts every known lifecycle and dispatch state only with 200", async () => {
   for (const dispatch of ["accepted", "not_required", "unconfirmed"] as const) {
-    const result = await performReelCreation(
-      VALID_URL,
-      successfulRequest(reelPayload({ created: false, dispatch }), 200, []),
-    );
-
-    assert.equal(result.ok, true);
-    if (result.ok) {
-      assert.equal(result.reel.created, false);
-      assert.equal(result.dispatch.state, dispatch);
+    for (const downloadStatus of ["received", "downloading", "downloaded", "failed"]) {
+      for (const curationStatus of ["inbox", "organized"]) {
+        for (const transcriptionStatus of ["not_requested", "queued", "processing", "completed", "failed"]) {
+          const result = await performReelCreation(
+            VALID_URL,
+            successfulRequest(
+              reelPayload({ created: false, dispatch, downloadStatus, curationStatus, transcriptionStatus }),
+              200,
+              [],
+            ),
+          );
+          assert.equal(result.ok, true);
+        }
+      }
     }
   }
+
+  assert.deepEqual(
+    await performReelCreation(VALID_URL, successfulRequest(reelPayload({ created: false }), 201, [])),
+    { ok: false, code: "invalid_response" },
+  );
+  assert.deepEqual(
+    await performReelCreation(
+      VALID_URL,
+      successfulRequest(reelPayload({ created: false, dispatch: "accepted", transcriptionStatus: "unknown" }), 200, []),
+    ),
+    { ok: false, code: "invalid_response" },
+  );
 });
 
 test("public error statuses map to bounded UI codes without trusting server messages", async () => {
@@ -155,8 +348,8 @@ test("empty input fails locally without touching CSRF or the creation endpoint",
 });
 
 test("network failure after CSRF is bounded", async () => {
-  const request = (async (input: RequestInfo | URL) => {
-    if (String(input) === "/api/auth/csrf") {
+  const request = (async (requestInput: RequestInfo | URL) => {
+    if (String(requestInput) === "/api/auth/csrf") {
       return jsonResponse({ csrf_token: "csrf-token" });
     }
     throw new Error("private network detail");
@@ -168,59 +361,107 @@ test("network failure after CSRF is bounded", async () => {
   );
 });
 
-test("malformed or lifecycle-inconsistent success payloads fail closed", async () => {
-  const malformed = await performReelCreation(
-    VALID_URL,
-    successfulRequest({ reel: { id: 42 }, dispatch: { state: "accepted" } }, 201, []),
-  );
-  const unknownLifecycle = await performReelCreation(
-    VALID_URL,
-    successfulRequest(
-      {
-        ...reelPayload(),
-        reel: { ...reelPayload().reel, download_status: "mystery" },
-      },
-      201,
-      [],
-    ),
-  );
-  const wrongStatusForCreated = await performReelCreation(
-    VALID_URL,
-    successfulRequest(reelPayload({ created: true }), 200, []),
-  );
+test("Add Reel opens, posts once while pending, and blocks cancellation until success", async () => {
+  const previousFetch = globalThis.fetch;
+  const creation = deferred<Response>();
+  let postCalls = 0;
+  globalThis.fetch = (async (requestInput: RequestInfo | URL) => {
+    if (String(requestInput) === "/api/auth/csrf") {
+      return jsonResponse({ csrf_token: "csrf-token" });
+    }
+    postCalls += 1;
+    return creation.promise;
+  }) as typeof fetch;
 
-  assert.deepEqual(malformed, { ok: false, code: "invalid_response" });
-  assert.deepEqual(unknownLifecycle, { ok: false, code: "invalid_response" });
-  assert.deepEqual(wrongStatusForCreated, { ok: false, code: "invalid_response" });
+  const rendered = await renderDialog();
+  try {
+    await click(button(rendered.document, "+ Adicionar Reel"));
+    assert.equal(dialog(rendered.document).open, true);
+
+    await setInputValue(input(rendered.document), VALID_URL);
+    await submit(rendered.document);
+
+    assert.equal(postCalls, 1);
+    assert.equal(input(rendered.document).disabled, true);
+    assert.equal(button(rendered.document, "Fechar").disabled, true);
+    assert.equal(button(rendered.document, "Cancelar").disabled, true);
+    assert.equal(button(rendered.document, "Adicionando…").disabled, true);
+
+    await submit(rendered.document);
+    assert.equal(postCalls, 1);
+
+    const cancel = new window.Event("cancel", { bubbles: true, cancelable: true });
+    dialog(rendered.document).dispatchEvent(cancel);
+    assert.equal(cancel.defaultPrevented, true);
+    assert.equal(dialog(rendered.document).open, true);
+
+    creation.resolve(jsonResponse(reelPayload(), 201));
+    await act(async () => {
+      await creation.promise;
+      await Promise.resolve();
+    });
+
+    assert.match(rendered.document.body.textContent ?? "", /Reel adicionado\. O processamento foi iniciado\./);
+    const link = rendered.document.querySelector<HTMLAnchorElement>("a[href='/reels/42']");
+    assert.ok(link, "missing successful Reel link");
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rendered.cleanup();
+  }
 });
 
-test("Add Reel renders an accessible native dialog and safe default form", () => {
-  const markup = renderToStaticMarkup(createElement(AddReel));
+test("Add Reel shows an accessible error, restores focus, and resets after close", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (requestInput: RequestInfo | URL) => {
+    if (String(requestInput) === "/api/auth/csrf") {
+      return jsonResponse({ csrf_token: "csrf-token" });
+    }
+    return jsonResponse({ error: { code: "invalid_request" } }, 422);
+  }) as typeof fetch;
 
-  assert.match(markup, />\+ Adicionar Reel</);
-  assert.match(markup, /<dialog[^>]+aria-labelledby="add-reel-title"/);
-  assert.match(markup, /<label[^>]+for="add-reel-url"[^>]*>URL do Reel<\/label>/);
-  assert.match(markup, /id="add-reel-url"/);
-  assert.match(markup, /type="url"/);
-  assert.match(markup, /required=""/);
-  assert.match(markup, />Cancelar</);
-  assert.match(markup, />Adicionar</);
-  assert.doesNotMatch(markup, /Em breve/);
+  const rendered = await renderDialog();
+  try {
+    await click(button(rendered.document, "+ Adicionar Reel"));
+    await setInputValue(input(rendered.document), VALID_URL);
+    await submit(rendered.document);
+
+    const urlInput = input(rendered.document);
+    const error = rendered.document.querySelector("#add-reel-url-error[role='alert']");
+    assert.ok(error, "missing stable error alert");
+    assert.equal(urlInput.getAttribute("aria-invalid"), "true");
+    assert.equal(urlInput.getAttribute("aria-describedby"), "add-reel-help add-reel-url-error");
+    assert.equal(rendered.document.activeElement, urlInput);
+
+    await click(button(rendered.document, "Cancelar"));
+    assert.equal(dialog(rendered.document).open, false);
+    await click(button(rendered.document, "+ Adicionar Reel"));
+    assert.equal(input(rendered.document).value, "");
+    assert.equal(input(rendered.document).getAttribute("aria-invalid"), null);
+    assert.equal(input(rendered.document).getAttribute("aria-describedby"), "add-reel-help");
+    assert.equal(rendered.document.querySelector("#add-reel-url-error"), null);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rendered.cleanup();
+  }
 });
 
-test("Add Reel source exposes bounded loading, success, duplicate, unconfirmed, and error states", async () => {
-  const source = await readFile(new URL("../src/components/add-reel.tsx", import.meta.url), "utf8");
+test("Add Reel reports an existing Reel as success", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (requestInput: RequestInfo | URL) => {
+    if (String(requestInput) === "/api/auth/csrf") {
+      return jsonResponse({ csrf_token: "csrf-token" });
+    }
+    return jsonResponse(reelPayload({ created: false, dispatch: "not_required", downloadStatus: "downloaded" }), 200);
+  }) as typeof fetch;
 
-  assert.match(source, /"use client"/);
-  assert.match(source, /showModal\(\)/);
-  assert.match(source, /disabled=\{pending\}/);
-  assert.match(source, /aria-busy=\{pending\}/);
-  assert.match(source, /Adicionando Reel/);
-  assert.match(source, /Reel adicionado\. O processamento foi iniciado\./);
-  assert.match(source, /Este Reel já existe no MegaBrain\./);
-  assert.match(source, /Ainda não foi possível confirmar/);
-  assert.match(source, /role="alert"/);
-  assert.match(source, /role="status"/);
-  assert.match(source, /href=\{\`\/reels\/\$\{success\.reel\.id\}\`\}/);
-  assert.doesNotMatch(source, /localStorage|sessionStorage|document\.cookie/);
+  const rendered = await renderDialog();
+  try {
+    await click(button(rendered.document, "+ Adicionar Reel"));
+    await setInputValue(input(rendered.document), VALID_URL);
+    await submit(rendered.document);
+    assert.match(rendered.document.body.textContent ?? "", /Este Reel já existe no MegaBrain\./);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rendered.cleanup();
+  }
 });
