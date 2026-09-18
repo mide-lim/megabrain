@@ -123,4 +123,6 @@ Revert this frontend/docs/dependency-only candidate from its feature branch befo
 
 ## Final Evidence Summary
 
-Current-round local evidence only: the new interactive DOM tests and strict response-boundary tests were added, and `cd apps/web && npm test` completed with 48 passing tests and 0 failures. This is local validation only; no H2 CI or H3 review is claimed. The task remains `QA`, unmerged, undeployed, and subject to the listed human gates.
+Candidate `5ed8ebc4a648e93f159de2245c10a5021502f469` was published and executed by CI #54. CI #54 passed Repository validation, Web tests, Enricher tests, frontend lint, and frontend typecheck; it failed only the frontend `npm test` job, so the frontend build was skipped. The confirmed cause was the incompatibility between `jsdom@30.1.0` (and its transitive dependencies) and the canonical CI Node.js `20.9.0` runtime, including the `webidl.util.markAsUncloneable` failure from jsdom/undici.
+
+H2B corrects only that interactive-test DOM dependency incompatibility: it retains jsdom and pins `jsdom@26.1.0` (declared engine `>=18`) with `@types/jsdom@21.1.7`. `npm ci` and `npm test` completed under Node.js `20.9.0` with 48 passing tests and 0 failures; local `npm run lint`, `npm run typecheck`, and `npm run build` also passed. The task remains `QA`; H3 has not occurred. The candidate remains unmerged and undeployed: merge and production remain unauthorized human gates.
