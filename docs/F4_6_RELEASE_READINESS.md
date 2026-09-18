@@ -341,3 +341,24 @@ requires human proof of exact n8n execution-state semantics, secure dedicated
 LOGIN provisioning, targeted no-build Web/frontend deployment, Web maintenance
 routing, and every migration/grant/image/checkpoint result. No F4 production
 mutation occurred while preparing this documentation.
+
+## F4.6 production cutover closure — 2026-09-18
+
+The controlled production cutover and runtime acceptance are complete.
+
+Production proof covered Web registration, MGB-015 internal dispatch, MGB-020
+download, Cloudflare R2 persistence and integrity, MGB-030 enrichment, Google
+STT execution, explicit lifecycle convergence, Google OIDC owner authentication,
+and authenticated Library/detail/video access.
+
+The OIDC smoke identified one least-privilege reconciliation in the existing
+owner UPSERT contract. `megabrain_web` requires column-level `SELECT` on
+`provider` and `email_normalized` in `app.auth_users`.
+
+Table-wide `SELECT` remains denied.
+
+The original immutable release artifact is preserved unchanged. The canonical
+F4 runtime-grant source, verifier, forward reconciliation, rollback artifact,
+and final closeout document carry the production-proven authority contract.
+
+See `docs/F4_FINAL_CUTOVER_CLOSE.md`.

@@ -124,8 +124,10 @@ GRANT INSERT (
 ) ON TABLE app.auth_transactions TO megabrain_web;
 GRANT UPDATE (consumed_at) ON TABLE app.auth_transactions TO megabrain_web;
 
-GRANT SELECT (id, provider_issuer, provider_subject, disabled_at, email)
-    ON TABLE app.auth_users TO megabrain_web;
+GRANT SELECT (
+    id, provider, provider_issuer, provider_subject, disabled_at, email,
+    email_normalized
+) ON TABLE app.auth_users TO megabrain_web;
 GRANT INSERT (
     provider, provider_issuer, provider_subject, email, email_normalized,
     created_at, updated_at, last_login_at, disabled_at

@@ -204,6 +204,27 @@ WITH checks(name, expected, actual) AS (
                   )
             )
         ),
+        (
+            'WEB_AUTH_USERS_OWNER_UPSERT_SELECT',
+            TRUE,
+            has_column_privilege(
+                'megabrain_web',
+                'app.auth_users',
+                'provider',
+                'SELECT'
+            )
+            AND has_column_privilege(
+                'megabrain_web',
+                'app.auth_users',
+                'email_normalized',
+                'SELECT'
+            )
+            AND NOT has_table_privilege(
+                'megabrain_web',
+                'app.auth_users',
+                'SELECT'
+            )
+        ),
         ('MGB020_SCHEMA_USAGE', TRUE, has_schema_privilege('megabrain_mgb020', 'app', 'USAGE')),
         ('MGB020_SCHEMA_CREATE', FALSE, has_schema_privilege('megabrain_mgb020', 'app', 'CREATE')),
         (
@@ -501,7 +522,7 @@ roles(role_name) AS (
         ('megabrain_web','app.auth_transactions','SELECT',ARRAY['transaction_hash','state_hash','nonce','pkce_verifier','return_path','expires_at','consumed_at']),
         ('megabrain_web','app.auth_transactions','INSERT',ARRAY['transaction_hash','provider','state_hash','nonce','pkce_verifier','return_path','created_at','expires_at','consumed_at']),
         ('megabrain_web','app.auth_transactions','UPDATE',ARRAY['consumed_at']),
-        ('megabrain_web','app.auth_users','SELECT',ARRAY['id','provider_issuer','provider_subject','disabled_at','email']),
+        ('megabrain_web','app.auth_users','SELECT',ARRAY['id','provider','provider_issuer','provider_subject','disabled_at','email','email_normalized']),
         ('megabrain_web','app.auth_users','INSERT',ARRAY['provider','provider_issuer','provider_subject','email','email_normalized','created_at','updated_at','last_login_at','disabled_at']),
         ('megabrain_web','app.auth_users','UPDATE',ARRAY['email','email_normalized','updated_at','last_login_at']),
         ('megabrain_web','app.auth_sessions','SELECT',ARRAY['token_hash','user_id','expires_at','revoked_at']),
