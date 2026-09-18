@@ -24,7 +24,9 @@ def registered_reel(**overrides: object) -> RegisteredReel:
         "shortcode": "abc_123",
         "original_url": "https://www.instagram.com/reel/abc_123/",
         "source": "instagram",
-        "status": "received",
+        "download_status": "received",
+        "curation_status": "inbox",
+        "transcription_status": "not_requested",
         "telegram_chat_id": -1001234567890,
         "telegram_user_id": 123456789,
         "telegram_message_id": 987,
@@ -87,7 +89,7 @@ def test_f33_new_reel_returns_unchanged_created_contract(monkeypatch) -> None:
             "id": 42,
             "shortcode": "abc_123",
             "original_url": "https://www.instagram.com/reel/abc_123/",
-            "status": "received",
+            "download_status": "received",
             "created": True,
         },
         "dispatch": {"state": "accepted"},
@@ -205,7 +207,7 @@ def test_f33_constructs_telegram_metadata_and_delegates_dispatch(monkeypatch) ->
     ("persisted_status", "expected_dispatch"),
     [
         ("received", "accepted"),
-        ("download_failed", "accepted"),
+        ("failed", "accepted"),
         ("downloading", "not_required"),
         ("downloaded", "not_required"),
     ],
@@ -221,7 +223,7 @@ def test_f33_existing_reel_uses_persisted_status_for_dispatch_eligibility(
     monkeypatch.setattr(
         internal_ingestion,
         "register_reel",
-        lambda *_args, **_kwargs: registered_reel(status=persisted_status, created=False),
+        lambda *_args, **_kwargs: registered_reel(download_status=persisted_status, created=False),
     )
 
     async def fake_request_dispatch(reel_id, settings):
@@ -242,7 +244,7 @@ def test_f33_existing_reel_uses_persisted_status_for_dispatch_eligibility(
         "id": 42,
         "shortcode": "abc_123",
         "original_url": "https://www.instagram.com/reel/abc_123/",
-        "status": persisted_status,
+        "download_status": persisted_status,
         "created": False,
     }
     assert response.json()["dispatch"] == {"state": expected_dispatch}
@@ -254,7 +256,7 @@ def test_f33_unknown_status_remains_bounded_without_upstream_dispatch(monkeypatc
     monkeypatch.setattr(
         internal_ingestion,
         "register_reel",
-        lambda *_args, **_kwargs: registered_reel(status="unexpected_state"),
+        lambda *_args, **_kwargs: registered_reel(download_status="unexpected_state"),
     )
     upstream_calls: list[int] = []
 

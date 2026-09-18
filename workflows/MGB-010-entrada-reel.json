@@ -112,7 +112,7 @@
     {
       "parameters": {
         "chatId": "={{ $('DATA — Extrair request Telegram').item.json.notification_chat_id }}",
-        "text": "=⚠️ Este Reel já está registrado.  ID: {{ $json.reel.id }} Status atual: {{ $json.reel.status }} Link: {{ $json.reel.original_url }}",
+        "text": "=⚠️ Este Reel já está registrado.  ID: {{ $json.reel.id }} Status atual: {{ $json.reel.download_status }} Link: {{ $json.reel.original_url }}",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",
@@ -131,7 +131,7 @@
     {
       "parameters": {
         "chatId": "={{ $('DATA — Extrair request Telegram').item.json.notification_chat_id }}",
-        "text": "=⚠️ Reel registrado, mas o início do processamento não foi confirmado.\nID: {{ $json.reel.id }}\nStatus atual: {{ $json.reel.status }}\nReenvie o mesmo link para tentar novamente com segurança.",
+        "text": "=⚠️ Reel registrado, mas o início do processamento não foi confirmado.\nID: {{ $json.reel.id }}\nStatus atual: {{ $json.reel.download_status }}\nReenvie o mesmo link para tentar novamente com segurança.",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",
@@ -150,7 +150,7 @@
     {
       "parameters": {
         "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=📥 Reel registrado com sucesso!  ID: {{ $json.id }} Status: {{ $json.status }} Link: {{ $json.original_url }}",
+        "text": "=📥 Reel registrado com sucesso!  ID: {{ $json.id }} Status: {{ $json.download_status }} Link: {{ $json.original_url }}",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",

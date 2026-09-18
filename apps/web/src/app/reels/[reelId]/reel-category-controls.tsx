@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { fetchCsrfToken } from "../../../lib/csrf-client";
 import type { ReelCategory } from "./reel-detail-api";
 
 type MutationMethod = "POST" | "DELETE";
@@ -14,28 +15,19 @@ export function reconcileSelectedCategoryId(selectedCategoryId: string, availabl
   return availableCategories[0] ? String(availableCategories[0].id) : "";
 }
 
-function isCsrfPayload(value: unknown): value is { csrf_token: string } {
-  return typeof value === "object" && value !== null && typeof (value as { csrf_token?: unknown }).csrf_token === "string";
-}
-
 export async function performCategoryMutation(
   path: string,
   method: MutationMethod,
   body: Record<string, unknown> | undefined,
   request: typeof fetch = fetch,
 ): Promise<boolean> {
-  try {
-    const csrfResponse = await request("/api/auth/csrf", {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { accept: "application/json" },
-    });
-    const csrfPayload: unknown = await csrfResponse.json().catch(() => null);
-    if (!csrfResponse.ok || !isCsrfPayload(csrfPayload)) {
-      return false;
-    }
+  const csrfToken = await fetchCsrfToken(request);
+  if (csrfToken === null) {
+    return false;
+  }
 
-    const headers: Record<string, string> = { "X-CSRF-Token": csrfPayload.csrf_token };
+  try {
+    const headers: Record<string, string> = { "X-CSRF-Token": csrfToken };
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
     }

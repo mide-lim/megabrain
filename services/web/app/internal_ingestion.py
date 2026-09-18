@@ -135,7 +135,7 @@ def _success_response(reel: RegisteredReel, dispatch: DispatchState) -> JSONResp
                 "id": reel.id,
                 "shortcode": reel.shortcode,
                 "original_url": reel.original_url,
-                "status": reel.status,
+                "download_status": reel.download_status,
                 "created": reel.created,
             },
             "dispatch": {"state": dispatch.value},

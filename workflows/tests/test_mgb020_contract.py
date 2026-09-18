@@ -60,9 +60,9 @@ class Mgb020ContractTests(unittest.TestCase):
     def test_atomic_claim_is_limited_and_emits_claim_diagnostics(self) -> None:
         query = self.node("DB — Reivindicar processamento")["parameters"]["query"]
         self.assertIn("UPDATE app.reels", query)
-        self.assertIn("status IN ('received', 'download_failed')", query)
-        eligibility = query.split("AND status IN", 1)[1].split("RETURNING", 1)[0]
-        self.assertEqual(eligibility.strip(), "('received', 'download_failed')")
+        self.assertIn("download_status IN ('received', 'failed')", query)
+        eligibility = query.split("AND download_status IN", 1)[1].split("RETURNING", 1)[0]
+        self.assertEqual(eligibility.strip(), "('received', 'failed')")
         self.assertIn("TRUE AS claimed", query)
         self.assertIn("AS reel_exists", query)
         for output in (
@@ -70,7 +70,7 @@ class Mgb020ContractTests(unittest.TestCase):
             "shortcode",
             "original_url",
             "telegram_chat_id",
-            "status",
+            "download_status",
         ):
             self.assertIn(output, query)
         self.assertNotIn("retry_count =", query)
@@ -176,7 +176,7 @@ class Mgb020ContractTests(unittest.TestCase):
             {"DB — Marcar downloaded"},
         )
         downloaded = self.node("DB — Marcar downloaded")["parameters"]
-        self.assertIn("AND status = 'downloading'", downloaded["query"])
+        self.assertIn("AND download_status = 'downloading'", downloaded["query"])
         self.assertIn("$('DB — Reivindicar processamento').item.json.id", downloaded["options"]["queryReplacement"])
         self.assertNotIn("$json.item_id,", downloaded["options"]["queryReplacement"])
 
@@ -229,38 +229,35 @@ class Mgb020ContractTests(unittest.TestCase):
         )
         failure = self.node("DB — Registrar falha")["parameters"]
         self.assertIn("retry_count = retry_count + 1", failure["query"])
-        self.assertIn("AND status = 'downloading'", failure["query"])
+        self.assertIn("AND download_status = 'downloading'", failure["query"])
         self.assertIn("$('DB — Reivindicar processamento').item.json.id", failure["options"]["queryReplacement"])
 
-    def test_mgb020_remains_unchanged_from_f33_baseline(self) -> None:
-        result = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--quiet",
-                BASELINE,
-                "--",
-                "workflows/MGB-020-download-reel.json",
-            ],
-            cwd=ROOT,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0)
+    def test_mgb020_uses_download_status_without_legacy_reel_status(self) -> None:
+        queries = [
+            self.node(name)["parameters"]["query"]
+            for name in (
+                "DB — Reivindicar processamento",
+                "DB — Marcar downloaded",
+                "DB — Registrar falha",
+            )
+        ]
+        for query in queries:
+            self.assertIn("download_status", query)
+            self.assertNotIn("download_failed", query)
 
-    def test_mgb030_remains_unchanged_from_f33_baseline(self) -> None:
-        result = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--quiet",
-                BASELINE,
-                "--",
-                str(MGB030_PATH.relative_to(ROOT)),
-            ],
-            cwd=ROOT,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0)
+    def test_mgb030_reads_download_status_and_owns_transcription_lifecycle(self) -> None:
+        workflow = json.loads(MGB030_PATH.read_text(encoding="utf-8"))
+        nodes = {node["name"]: node for node in workflow["nodes"]}
+        query = nodes["DB — Localizar Reel elegível"]["parameters"]["query"]
+        self.assertIn("r.download_status = 'downloaded'", query)
+        self.assertNotIn("r.status", query)
+        serialized = json.dumps(workflow)
+        self.assertIn("UPDATE app.reels", serialized)
+        self.assertIn("transcription_status = 'queued'", serialized)
+        self.assertIn("transcription_status = 'processing'", serialized)
+        self.assertIn("transcription_status = 'completed'", serialized)
+        self.assertIn("transcription_status = 'failed'", serialized)
+        self.assertNotIn("curation_status", serialized)
 
 
 if __name__ == "__main__":

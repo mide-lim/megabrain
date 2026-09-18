@@ -29,7 +29,9 @@ def registered_reel(**overrides: object) -> RegisteredReel:
         "shortcode": "abc_123",
         "original_url": VALID_URL,
         "source": "instagram",
-        "status": "received",
+        "download_status": "received",
+        "curation_status": "inbox",
+        "transcription_status": "not_requested",
         "telegram_chat_id": None,
         "telegram_user_id": None,
         "telegram_message_id": None,
@@ -95,6 +97,9 @@ def test_reel_creation_requires_csrf_before_registration(monkeypatch) -> None:
         b'{"url":"https://www.instagram.com/reel/abc_123/","telegram":{}}',
         b'{"url":"https://www.instagram.com/reel/abc_123/","source":"instagram"}',
         b'{"url":"https://www.instagram.com/reel/abc_123/","status":"received"}',
+        b'{"url":"https://www.instagram.com/reel/abc_123/","download_status":"received"}',
+        b'{"url":"https://www.instagram.com/reel/abc_123/","transcription_status":"queued"}',
+        b'{"url":"https://www.instagram.com/reel/abc_123/","curation_status":"organized"}',
         b'{"url":"https://www.instagram.com/reel/abc_123/","shortcode":"abc_123"}',
         b'{"url":"https://www.instagram.com/reel/abc_123/","original_url":"x"}',
     ],
@@ -253,7 +258,9 @@ def test_new_reel_returns_durable_response_and_dispatch_state(
             "id": 42,
             "shortcode": "abc_123",
             "original_url": VALID_URL,
-            "status": "received",
+            "download_status": "received",
+            "curation_status": "inbox",
+            "transcription_status": "not_requested",
             "created": created,
         },
         "dispatch": {"state": dispatch_state},
@@ -265,7 +272,7 @@ def test_new_reel_returns_durable_response_and_dispatch_state(
     ("persisted_status", "dispatch_state", "expected_calls"),
     [
         ("received", "accepted", [42]),
-        ("download_failed", "unconfirmed", [42]),
+        ("failed", "unconfirmed", [42]),
         ("downloading", "not_required", []),
         ("downloaded", "not_required", []),
     ],
@@ -278,7 +285,7 @@ def test_existing_reel_uses_shared_persisted_status_dispatch_decision(
     monkeypatch.setattr(
         main,
         "register_reel",
-        lambda *_args, **_kwargs: registered_reel(status=persisted_status, created=False),
+        lambda *_args, **_kwargs: registered_reel(download_status=persisted_status, created=False),
     )
     monkeypatch.setattr(
         main,
@@ -297,7 +304,7 @@ def test_existing_reel_uses_shared_persisted_status_dispatch_decision(
         main.app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["reel"]["status"] == persisted_status
+    assert response.json()["reel"]["download_status"] == persisted_status
     assert response.json()["reel"]["created"] is False
     assert response.json()["dispatch"] == {"state": dispatch_state}
     assert dispatch_calls == expected_calls
@@ -306,7 +313,7 @@ def test_existing_reel_uses_shared_persisted_status_dispatch_decision(
 def test_unknown_persisted_status_returns_bounded_503_without_dispatch(monkeypatch) -> None:
     client = client_with_owner_and_csrf()
     dispatch_calls: list[int] = []
-    monkeypatch.setattr(main, "register_reel", lambda *_args, **_kwargs: registered_reel(status="unknown"))
+    monkeypatch.setattr(main, "register_reel", lambda *_args, **_kwargs: registered_reel(download_status="unknown"))
     monkeypatch.setattr(
         main,
         "load_dispatch_settings",

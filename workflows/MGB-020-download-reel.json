@@ -31,7 +31,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH claimed AS (\n    UPDATE app.reels\n    SET\n        status = 'downloading',\n        download_started_at = NOW(),\n        error_message = NULL,\n        updated_at = NOW()\n    WHERE id = $1::BIGINT\n      AND status IN ('received', 'download_failed')\n    RETURNING\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        status,\n        TRUE AS claimed\n), existing AS (\n    SELECT\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        status\n    FROM app.reels\n    WHERE id = $1::BIGINT\n)\nSELECT\n    COALESCE((SELECT claimed FROM claimed), FALSE) AS claimed,\n    EXISTS(SELECT 1 FROM existing) AS reel_exists,\n    COALESCE((SELECT id FROM claimed), (SELECT id FROM existing)) AS id,\n    COALESCE((SELECT shortcode FROM claimed), (SELECT shortcode FROM existing)) AS shortcode,\n    COALESCE((SELECT original_url FROM claimed), (SELECT original_url FROM existing)) AS original_url,\n    COALESCE((SELECT telegram_chat_id FROM claimed), (SELECT telegram_chat_id FROM existing)) AS telegram_chat_id,\n    COALESCE((SELECT status FROM claimed), (SELECT status FROM existing)) AS status;",
+        "query": "WITH claimed AS (\n    UPDATE app.reels\n    SET\n        download_status = 'downloading',\n        download_started_at = NOW(),\n        error_message = NULL,\n        updated_at = NOW()\n    WHERE id = $1::BIGINT\n      AND download_status IN ('received', 'failed')\n    RETURNING\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        download_status,\n        TRUE AS claimed\n), existing AS (\n    SELECT\n        id,\n        shortcode,\n        original_url,\n        telegram_chat_id,\n        download_status\n    FROM app.reels\n    WHERE id = $1::BIGINT\n)\nSELECT\n    COALESCE((SELECT claimed FROM claimed), FALSE) AS claimed,\n    EXISTS(SELECT 1 FROM existing) AS reel_exists,\n    COALESCE((SELECT id FROM claimed), (SELECT id FROM existing)) AS id,\n    COALESCE((SELECT shortcode FROM claimed), (SELECT shortcode FROM existing)) AS shortcode,\n    COALESCE((SELECT original_url FROM claimed), (SELECT original_url FROM existing)) AS original_url,\n    COALESCE((SELECT telegram_chat_id FROM claimed), (SELECT telegram_chat_id FROM existing)) AS telegram_chat_id,\n    COALESCE((SELECT download_status FROM claimed), (SELECT download_status FROM existing)) AS download_status;",
         "options": {
           "queryReplacement": "={{ [$json.reel_id] }}"
         }
@@ -222,7 +222,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE app.reels\nSET\n    status = 'downloaded',\n    title = $2,\n    creator = $3,\n    caption = $4,\n    duration_seconds = $5::NUMERIC,\n    filename = $6,\n    mime_type = $7,\n    file_size_bytes = $8::BIGINT,\n    sha256 = $9,\n    storage_provider = $10,\n    storage_bucket = $11,\n    object_key = $12,\n    downloaded_at = $13::TIMESTAMPTZ,\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND status = 'downloading'\nRETURNING\n    id,\n    id AS reel_id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    filename,\n    file_size_bytes,\n    storage_bucket,\n    object_key,\n    downloaded_at;",
+        "query": "UPDATE app.reels\nSET\n    download_status = 'downloaded',\n    title = $2,\n    creator = $3,\n    caption = $4,\n    duration_seconds = $5::NUMERIC,\n    filename = $6,\n    mime_type = $7,\n    file_size_bytes = $8::BIGINT,\n    sha256 = $9,\n    storage_provider = $10,\n    storage_bucket = $11,\n    object_key = $12,\n    downloaded_at = $13::TIMESTAMPTZ,\n    error_message = NULL,\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND download_status = 'downloading'\nRETURNING\n    id,\n    id AS reel_id,\n    shortcode,\n    original_url,\n    download_status,\n    telegram_chat_id,\n    filename,\n    file_size_bytes,\n    storage_bucket,\n    object_key,\n    downloaded_at;",
         "options": {
           "queryReplacement": "={{ [\n  $('DB — Reivindicar processamento').item.json.id,\n  $json.title ?? null,\n  $json.creator ?? null,\n  $json.caption ?? null,\n  $json.duration_seconds ?? null,\n  $json.filename,\n  $json.mime_type,\n  $json.file_size_bytes,\n  $json.sha256,\n  $json.storage_provider,\n  $json.storage_bucket,\n  $json.object_key,\n  $json.downloaded_at\n] }}"
         }
@@ -279,7 +279,7 @@
     {
       "parameters": {
         "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=✅ Download concluído!  ID: {{ $json.id }} Status: {{ $json.status }} Arquivo: {{ $json.object_key }} Tamanho: {{ (Number($json.file_size_bytes) / 1048576).toFixed(2) }} MB",
+        "text": "=✅ Download concluído!  ID: {{ $json.id }} Status: {{ $json.download_status }} Arquivo: {{ $json.object_key }} Tamanho: {{ (Number($json.file_size_bytes) / 1048576).toFixed(2) }} MB",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",
@@ -344,7 +344,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE app.reels\nSET\n    status = 'download_failed',\n    error_message = $2,\n    retry_count = retry_count + 1,\n    last_error_at = NOW(),\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND status = 'downloading'\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    status,\n    telegram_chat_id,\n    error_message,\n    retry_count;",
+        "query": "UPDATE app.reels\nSET\n    download_status = 'failed',\n    error_message = $2,\n    retry_count = retry_count + 1,\n    last_error_at = NOW(),\n    updated_at = NOW()\nWHERE id = $1::BIGINT\n  AND download_status = 'downloading'\nRETURNING\n    id,\n    shortcode,\n    original_url,\n    download_status,\n    telegram_chat_id,\n    error_message,\n    retry_count;",
         "options": {
           "queryReplacement": "={{ [\n  $('DB — Reivindicar processamento').item.json.id,\n  $json.error_message\n] }}"
         }
@@ -401,7 +401,7 @@
     {
       "parameters": {
         "chatId": "={{ $json.telegram_chat_id }}",
-        "text": "=❌ Não foi possível baixar o Reel.  ID: {{ $json.id }} Status: {{ $json.status }} Tentativas: {{ $json.retry_count }}  Reenvie o mesmo link para tentar novamente.",
+        "text": "=❌ Não foi possível baixar o Reel.  ID: {{ $json.id }} Status: {{ $json.download_status }} Tentativas: {{ $json.retry_count }}  Reenvie o mesmo link para tentar novamente.",
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegram",

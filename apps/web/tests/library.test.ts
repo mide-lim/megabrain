@@ -24,6 +24,9 @@ const result: LibraryResponse = {
       duration_seconds: 12.5,
       received_at: "2026-08-25T00:00:00Z",
       has_transcript: true,
+      download_status: "downloaded",
+      curation_status: "organized",
+      transcription_status: "completed",
     },
   ],
   query: { q: "maker" },
@@ -175,8 +178,8 @@ test("server-side API helper converts API failures into the unavailable state", 
   assert.equal(await fetchLibraryPage({ page: 1, q: "" }, request), null);
 });
 
-test("server-side API helper rejects malformed public projections", async () => {
-  const request = (async () =>
+test("server-side API helper rejects malformed and unknown lifecycle projections", async () => {
+  const malformed = (async () =>
     new Response(
       JSON.stringify({
         ...result,
@@ -184,6 +187,15 @@ test("server-side API helper rejects malformed public projections", async () => 
       }),
       { status: 200 },
     )) as typeof fetch;
+  const unknownLifecycle = (async () =>
+    new Response(
+      JSON.stringify({
+        ...result,
+        items: [{ ...result.items[0], download_status: "unexpected" }],
+      }),
+      { status: 200 },
+    )) as typeof fetch;
 
-  assert.equal(await fetchLibraryPage({ page: 1, q: "" }, request), null);
+  assert.equal(await fetchLibraryPage({ page: 1, q: "" }, malformed), null);
+  assert.equal(await fetchLibraryPage({ page: 1, q: "" }, unknownLifecycle), null);
 });

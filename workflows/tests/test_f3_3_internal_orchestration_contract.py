@@ -237,21 +237,36 @@ class F33InternalOrchestrationContractTests(unittest.TestCase):
         for forbidden_term in ("downloader", "enricher", "cloudflare_r2", "retry_count"):
             self.assertNotIn(forbidden_term, serialized.lower())
 
-    def test_mgb020_and_mgb030_are_frozen_from_baseline(self) -> None:
-        result = subprocess.run(
-            [
-                "git",
-                "diff",
-                "--quiet",
-                BASELINE,
-                "--",
-                str(MGB020_PATH.relative_to(ROOT)),
-                str(MGB030_PATH.relative_to(ROOT)),
-            ],
-            cwd=ROOT,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0)
+    def test_mgb020_keeps_the_f42_download_status_rename_while_mgb030_owns_f43(self) -> None:
+        def baseline_workflow(path: Path) -> dict:
+            result = subprocess.run(
+                ["git", "show", f"{BASELINE}:{path.relative_to(ROOT)}"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(result.stdout)
+
+        expected_mgb020 = baseline_workflow(MGB020_PATH)
+        for node in expected_mgb020["nodes"]:
+            query = node.get("parameters", {}).get("query")
+            if isinstance(query, str) and "app.reels" in query:
+                node["parameters"]["query"] = query.replace("status", "download_status").replace(
+                    "download_failed", "failed"
+                )
+            text = node.get("parameters", {}).get("text")
+            if isinstance(text, str) and "$json.status" in text:
+                node["parameters"]["text"] = text.replace("$json.status", "$json.download_status")
+
+        self.assertEqual(json.loads(MGB020_PATH.read_text(encoding="utf-8")), expected_mgb020)
+        mgb030 = json.loads(MGB030_PATH.read_text(encoding="utf-8"))
+        serialized = json.dumps(mgb030)
+        self.assertIn("download_status = 'downloaded'", serialized)
+        self.assertIn("transcription_status = 'queued'", serialized)
+        self.assertIn("transcription_status = 'processing'", serialized)
+        self.assertIn("transcription_status = 'completed'", serialized)
+        self.assertIn("transcription_status = 'failed'", serialized)
 
 
 if __name__ == "__main__":

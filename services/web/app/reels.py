@@ -3,13 +3,16 @@ from __future__ import annotations
 from psycopg.rows import dict_row
 
 from app import database
+from app.reel_lifecycle import validate_curation_status
 
 REEL_DETAIL_QUERY = """
 SELECT
     r.id,
     r.shortcode,
     r.original_url,
-    r.status,
+    r.download_status,
+    r.curation_status,
+    r.transcription_status,
     r.title,
     r.creator,
     r.caption,
@@ -43,6 +46,13 @@ LEFT JOIN LATERAL (
 WHERE r.id = %s
 """
 
+SET_CURATION_STATUS_QUERY = """
+UPDATE app.reels
+SET curation_status = %s
+WHERE id = %s
+RETURNING id, download_status, curation_status, transcription_status
+"""
+
 
 def fetch_reel(reel_id: int) -> dict | None:
     with (
@@ -50,4 +60,15 @@ def fetch_reel(reel_id: int) -> dict | None:
         connection.cursor(row_factory=dict_row) as cursor,
     ):
         cursor.execute(REEL_DETAIL_QUERY, (reel_id,))
+        return cursor.fetchone()
+
+
+def set_curation_status(reel_id: int, curation_status: str) -> dict | None:
+    """Set the independent curation dimension without rewriting other lifecycle fields."""
+    validated_status = validate_curation_status(curation_status)
+    with (
+        database.connect() as connection,
+        connection.cursor(row_factory=dict_row) as cursor,
+    ):
+        cursor.execute(SET_CURATION_STATUS_QUERY, (validated_status, reel_id))
         return cursor.fetchone()

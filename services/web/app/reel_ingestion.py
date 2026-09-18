@@ -18,7 +18,7 @@ INSERT INTO app.reels (
     shortcode,
     original_url,
     source,
-    status,
+    download_status,
     telegram_chat_id,
     telegram_user_id,
     telegram_message_id,
@@ -42,7 +42,9 @@ RETURNING
     shortcode,
     original_url,
     source,
-    status,
+    download_status,
+    curation_status,
+    transcription_status,
     telegram_chat_id,
     telegram_user_id,
     telegram_message_id,
@@ -56,7 +58,9 @@ SELECT
     shortcode,
     original_url,
     source,
-    status,
+    download_status,
+    curation_status,
+    transcription_status,
     telegram_chat_id,
     telegram_user_id,
     telegram_message_id,
@@ -108,7 +112,9 @@ class RegisteredReel:
     shortcode: str
     original_url: str
     source: str
-    status: str
+    download_status: str
+    curation_status: str
+    transcription_status: str
     telegram_chat_id: int | None
     telegram_user_id: int | None
     telegram_message_id: int | None
@@ -226,7 +232,9 @@ def _registered_reel(row: Mapping[str, Any], *, created: bool) -> RegisteredReel
         shortcode=row["shortcode"],
         original_url=row["original_url"],
         source=row["source"],
-        status=row["status"],
+        download_status=row["download_status"],
+        curation_status=row["curation_status"],
+        transcription_status=row["transcription_status"],
         telegram_chat_id=row["telegram_chat_id"],
         telegram_user_id=row["telegram_user_id"],
         telegram_message_id=row["telegram_message_id"],
