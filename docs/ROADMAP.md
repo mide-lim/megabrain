@@ -42,13 +42,38 @@ Concluída e implantada: biblioteca SSR, paginação, detalhe, busca, categorias
 manuais, URLs R2 assinadas, role Web de privilégio mínimo, CSRF, HTTPS e Basic
 Auth.
 
-## Sprint 5 — Discovery pending
+## Sprint 5 — Productização da experiência
 
-Não existe implementação de Sprint 5 aprovada. A próxima etapa é discovery:
-revisar uso real, limitações e riscos antes de escolher escopo, ordem ou
-tecnologia.
+Status: em andamento.
 
-Possíveis dimensões para investigação, sem compromisso de implementação:
+### F5.1 — Add Reel UX
+
+Implementado, revisado e mergeado em `dev`.
+
+F5.1 adiciona ao App Shell autenticado uma entrada Web para registrar um Reel
+público do Instagram através do contrato FastAPI já existente.
+
+O fluxo preserva as fronteiras estabelecidas nas fases anteriores:
+
+- sessão do proprietário continua sob autoridade do FastAPI;
+- CSRF permanece obrigatório;
+- FastAPI continua responsável por normalização, registro, deduplicação,
+  lifecycle e dispatch;
+- Next.js continua sendo a autoridade de apresentação e interação do
+  proprietário;
+- nenhum novo contrato de backend, schema ou workflow é introduzido pelo F5.1.
+
+O artefato de frontend para promoção foi preparado de forma imutável, mas a
+produção permanece no F4 até autorização humana explícita de deploy.
+
+### Próxima etapa após F5.1
+
+Não existe F5.2 aprovado.
+
+Depois do fechamento de produção do F5.1, a próxima etapa volta para discovery
+baseada em uso real antes de novo compromisso de implementação.
+
+Dimensões candidatas para investigação:
 
 - organização e UX da biblioteca;
 - expansão de ingestão;

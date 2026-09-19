@@ -2,22 +2,27 @@
 
 ## Tarefa atual
 
-**F5.1 — Add Reel UX: H2 remediation / QA.**
+**F5.1 — Add Reel UX: production promotion preparation.**
 
-F4 production cutover is closed. F5.1 is the active frontend-only candidate:
-branch candidate and Draft PR #44 exist. It is unmerged and undeployed. The
-production baseline remains F4; this record does not assert any F5.1 production
-state.
+F4 production cutover is closed and sealed.
 
-F5.1 H2 is reconciling governance and H1 findings under
-`AUTORIZO_F5_1_H2_GOVERNANCE_AND_REMEDIATION`. The candidate remains limited to
-the Next.js presentation boundary and its local validation. FastAPI remains the
-authority for authentication, session, CSRF, API, registration, deduplication,
-lifecycle, and dispatch. No backend, workflow, database, R2, Caddy, Compose, or
-production-runtime change is part of this remediation.
+F5.1 source implementation, remediation, CI and review are complete. PR #44 was
+merged into `dev`; the canonical source revision is
+`de3f59b03826ea23a51b7d07e035904dee653cbe`.
 
-Merge is separately human-gated. Production and deployment are separately
-human-gated Red actions. Staging does not exist.
+An immutable F5.1 frontend candidate has been built and validated. Production
+still runs the sealed F4 frontend. No F5.1 production deployment has occurred.
+
+The current work is limited to production-promotion documentation, immutable
+artifact verification, rollback preparation and a human-gated deployment
+preflight.
+
+FastAPI remains the authority for authentication, session, CSRF, API,
+registration, deduplication, lifecycle and dispatch. F5.1 changes only the
+Next.js owner-facing Reel creation UX.
+
+Production deployment remains a separate Red action requiring explicit human
+authorization.
 
 ## Estado
 
