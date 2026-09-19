@@ -48,7 +48,8 @@ Status: em andamento.
 
 ### F5.1 — Add Reel UX
 
-Implementado, revisado e mergeado em `dev`.
+Implementado, revisado, mergeado em `dev`, implantado e aceito em produção
+em 2026-09-19.
 
 F5.1 adiciona ao App Shell autenticado uma entrada Web para registrar um Reel
 público do Instagram através do contrato FastAPI já existente.
@@ -63,15 +64,24 @@ O fluxo preserva as fronteiras estabelecidas nas fases anteriores:
   proprietário;
 - nenhum novo contrato de backend, schema ou workflow é introduzido pelo F5.1.
 
-O artefato de frontend para promoção foi preparado de forma imutável, mas a
-produção permanece no F4 até autorização humana explícita de deploy.
+O frontend F5.1 foi promovido a partir do artefato imutável e permanece
+saudável em produção. A aceitação autenticada da interface e um E2E real de
+ingestão Web foram concluídos com sucesso.
+
+O Reel de aceitação #26 (`DdcX68ZRQun`) percorreu MGB-015, MGB-020 e MGB-030,
+teve mídia persistida no R2 e terminou em `downloaded | inbox | failed`. A falha
+terminal foi `STT_SYNC_RECOGNIZE_UNSUPPORTED`, uma limitação conhecida do
+Speech-to-Text síncrono e não uma falha do fluxo Add Reel.
+
+A evidência de produção F5.1 foi selada separadamente da evidência F4 com
+SHA-256 `e7dc4b42ddab75f6da1e992afdef0000d3109e1092645aec8964c307d6347d9d`.
 
 ### Próxima etapa após F5.1
 
 Não existe F5.2 aprovado.
 
-Depois do fechamento de produção do F5.1, a próxima etapa volta para discovery
-baseada em uso real antes de novo compromisso de implementação.
+Com o fechamento de produção do F5.1 concluído, a próxima etapa volta para
+discovery baseada em uso real antes de novo compromisso de implementação.
 
 Dimensões candidatas para investigação:
 

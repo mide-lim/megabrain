@@ -2,15 +2,18 @@
 
 ## Status
 
-PREPARED / PRODUCTION DEPLOYMENT NOT YET AUTHORIZED
+DEPLOYED / ACCEPTED / EVIDENCE SEALED
 
 F5.1 source implementation and QA are complete and merged into `dev`.
 
-This document records the immutable frontend candidate and defines the
-human-gated production promotion boundary.
+The immutable frontend candidate was explicitly authorized, deployed and
+accepted in production on 2026-09-19.
 
-Creating, reviewing, or merging this documentation does not authorize
-production deployment.
+This document records the completed production promotion, acceptance evidence
+and rollback boundary.
+
+This closeout record does not grant authority for any future production
+mutation.
 
 ## Product change
 
@@ -88,23 +91,33 @@ Operator release location:
 The exported image archive is an operational release artifact and is not
 committed to Git.
 
-## Current production baseline
+## Current production state
 
-Production remains on the sealed F4 frontend:
+Production runs the immutable F5.1 frontend:
+
+`sha256:9a8af64f45d6eff9b60a052f08e5043434abb49440eaf47f84b351b99c284c04`
+
+The production frontend is running and healthy at source revision:
+
+`de3f59b03826ea23a51b7d07e035904dee653cbe`
+
+The previous sealed F4 frontend remains locally available as the rollback
+anchor:
 
 `sha256:deb256b6b6b9c622c6d4df9b1afaafc4135fb1381aab055d54753794c15f8c68`
 
-Preparing this F5.1 release did not replace or restart the production frontend.
+The runtime promotion did not redeploy or reconfigure PostgreSQL, n8n, Caddy,
+FastAPI Web, Downloader, Enricher, or R2 infrastructure. The controlled
+acceptance test intentionally created one Reel and its normal pipeline data
+through the existing production contracts.
 
-No database, n8n workflow, Caddy, backend, R2, or production lifecycle mutation
-is part of the F5.1 frontend promotion.
+## Promotion scope and result
 
-## Intended promotion scope
-
-The production change, when separately authorized, is limited to replacing the
+The explicitly authorized production change was limited to replacing the
 `megabrain-frontend` runtime with the immutable F5.1 candidate.
 
-The following components must remain unchanged:
+The following components were not redeployed or reconfigured by the frontend
+promotion:
 
 - PostgreSQL;
 - FastAPI Web;
@@ -119,9 +132,9 @@ The following components must remain unchanged:
 - Cloudflare R2;
 - Caddy routing and TLS.
 
-## Pre-deployment gate
+## Pre-deployment gate — completed
 
-Before production replacement, the operator must prove:
+Before production replacement, the operator proved:
 
 - immutable release checksums pass;
 - candidate image ID matches this document;
@@ -132,11 +145,13 @@ Before production replacement, the operator must prove:
 - rollback image is locally available;
 - public `/internal` boundaries remain closed.
 
-Failure of any gate stops promotion.
+Failure of any gate would have stopped promotion.
 
-## Production acceptance
+All pre-deployment checks passed before explicit human deployment authorization.
 
-After an explicitly authorized deployment, acceptance must include:
+## Production acceptance — completed
+
+After the explicitly authorized deployment, acceptance included:
 
 - frontend health;
 - public login route;
@@ -156,11 +171,45 @@ After an explicitly authorized deployment, acceptance must include:
 - MGB-030 enrichment lifecycle;
 - zero unintended lifecycle authority changes.
 
-Production evidence must be sealed independently from the F4 evidence.
+Production acceptance completed successfully.
+
+The controlled real Web submission created:
+
+- Reel ID: `26`;
+- shortcode: `DdcX68ZRQun`;
+- lifecycle: `downloaded | inbox | failed`;
+- source-neutral Web ingestion: PASS;
+- R2 object presence and size validation: PASS;
+- MGB-015 execution `123`: success;
+- MGB-020 execution `124`: success;
+- MGB-030 execution `125`: success;
+- pre-existing 15 Reel lifecycle hash unchanged: PASS;
+- final nonterminal n8n executions: `0`.
+
+The MGB-030 workflow completed successfully, while the enrichment attempt
+recorded terminal transcription failure
+`STT_SYNC_RECOGNIZE_UNSUPPORTED | transcription | retryable=false`. This is a
+known synchronous Speech-to-Text limitation and does not invalidate the F5.1
+Add Reel path.
+
+Human UI acceptance also passed for Inbox, Library, Categories, Settings, Reel
+Detail and the Add Reel dialog.
+
+## Production evidence
+
+The F5.1 acceptance evidence is sealed independently from the F4 evidence:
+
+`/home/megabrain/backups/f5.1-release/evidence/f5-1-production-acceptance-20260919.txt`
+
+Evidence SHA-256:
+
+`e7dc4b42ddab75f6da1e992afdef0000d3109e1092645aec8964c307d6347d9d`
+
+The sealed evidence must not be appended to or rewritten.
 
 ## Rollback
 
-The rollback anchor is the currently deployed sealed F4 frontend image:
+The rollback anchor remains the previously deployed sealed F4 frontend image:
 
 `sha256:deb256b6b6b9c622c6d4df9b1afaafc4135fb1381aab055d54753794c15f8c68`
 
@@ -188,6 +237,11 @@ The following actions are distinct gates:
 
 Completion of one gate never implies authorization for the next.
 
-At the time this document is created, gates 1–4 are complete.
+Gates 1–10 completed on 2026-09-19, including explicit deployment
+authorization, production acceptance and independent evidence sealing.
 
-Production deployment has not occurred and is not authorized by this document.
+PR #45 synchronizes this production closeout back into `dev`; merging that PR is
+a source-governance action only and does not authorize another production
+deployment.
+
+Any future production action remains separately human-gated.

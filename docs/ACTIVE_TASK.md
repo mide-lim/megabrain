@@ -2,27 +2,35 @@
 
 ## Tarefa atual
 
-**F5.1 — Add Reel UX: production promotion preparation.**
+**F5.1 — Add Reel UX: production accepted / closeout recorded.**
 
-F4 production cutover is closed and sealed.
+F4 production cutover remains closed and sealed. Its frontend image is preserved
+as the F5.1 rollback anchor.
 
-F5.1 source implementation, remediation, CI and review are complete. PR #44 was
-merged into `dev`; the canonical source revision is
+F5.1 source implementation, remediation and CI completed through PR #44, merged
+into `dev` at canonical source revision
 `de3f59b03826ea23a51b7d07e035904dee653cbe`.
 
-An immutable F5.1 frontend candidate has been built and validated. Production
-still runs the sealed F4 frontend. No F5.1 production deployment has occurred.
+The immutable F5.1 frontend was explicitly authorized, deployed and accepted in
+production on 2026-09-19. Production runs image
+`sha256:9a8af64f45d6eff9b60a052f08e5043434abb49440eaf47f84b351b99c284c04`.
 
-The current work is limited to production-promotion documentation, immutable
-artifact verification, rollback preparation and a human-gated deployment
-preflight.
+Human UI acceptance passed for Inbox, Library, Categories, Settings, Reel Detail
+and the Add Reel dialog. The controlled Web ingestion created Reel #26
+(`DdcX68ZRQun`) and executed MGB-015 #123, MGB-020 #124 and MGB-030 #125
+successfully. The Reel reached `downloaded | inbox | failed`; the enrichment
+attempt recorded the known `STT_SYNC_RECOGNIZE_UNSUPPORTED` transcription
+limitation rather than an Add Reel failure.
+
+Production acceptance evidence is sealed independently from F4 with SHA-256
+`e7dc4b42ddab75f6da1e992afdef0000d3109e1092645aec8964c307d6347d9d`.
 
 FastAPI remains the authority for authentication, session, CSRF, API,
 registration, deduplication, lifecycle and dispatch. F5.1 changes only the
 Next.js owner-facing Reel creation UX.
 
-Production deployment remains a separate Red action requiring explicit human
-authorization.
+No F5.2 is approved. The next product step returns to discovery based on real
+usage. Future production mutations remain separately human-gated.
 
 ## Estado
 
