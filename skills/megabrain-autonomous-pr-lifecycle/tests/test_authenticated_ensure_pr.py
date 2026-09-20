@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -163,7 +164,7 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
         return (
             mock.patch.object(ENSURE, "configured_origin", return_value=ENSURE.ORIGIN),
             mock.patch.object(ENSURE, "validate_privileged_executable"),
-            mock.patch.object(ENSURE, "validate_key_path"),
+            mock.patch.object(ENSURE.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key")] * 2),
             mock.patch.object(ENSURE, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(ENSURE, "request_json", side_effect=api or self.api_success),
             mock.patch.object(ENSURE.LIFECYCLE, "Lifecycle", FakeLifecycle),

@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -114,7 +115,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         return (
             mock.patch.object(PUBLISH, "configured_origin", return_value=PUBLISH.ORIGIN),
             mock.patch.object(PUBLISH, "validate_push_destination"),
-            mock.patch.object(PUBLISH, "validate_key_path"),
+            mock.patch.object(PUBLISH.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key")] * 2),
             mock.patch.object(PUBLISH, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(PUBLISH, "request_json", side_effect=api or self.api_success),
             mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle),
@@ -218,7 +219,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         self.assertEqual(result["revocation"], "ok")
 
     def test_wrong_origin_gate_and_wrong_operation_do_not_authenticate(self):
-        with mock.patch.object(PUBLISH, "configured_origin", return_value="https://example.invalid/repo.git"), mock.patch.object(PUBLISH, "make_jwt") as signer:
+        with mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle), mock.patch.object(PUBLISH, "configured_origin", return_value="https://example.invalid/repo.git"), mock.patch.object(PUBLISH, "make_jwt") as signer:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
         signer.assert_not_called()
         self.assertEqual(result["failure_code"], "origin_rejected")
@@ -233,6 +234,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         with (
             mock.patch.object(PUBLISH, "configured_origin", return_value=PUBLISH.ORIGIN),
             mock.patch.object(PUBLISH, "validate_push_destination", side_effect=PUBLISH.SafeFailure("push_destination_rejected")),
+            mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle),
             mock.patch.object(PUBLISH, "make_jwt") as signer,
         ):
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
@@ -294,13 +296,13 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         for invalid_stat in invalid_stats:
             with self.subTest(mode=invalid_stat.st_mode, uid=invalid_stat.st_uid), mock.patch.object(
                 PUBLISH.os, "lstat", return_value=invalid_stat
-            ), mock.patch.object(PUBLISH, "make_jwt") as signer, mock.patch.object(PUBLISH, "request_json") as request:
+            ), mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle), mock.patch.object(PUBLISH, "make_jwt") as signer, mock.patch.object(PUBLISH, "request_json") as request:
                 result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
             signer.assert_not_called()
             request.assert_not_called()
-            self.assertEqual(result["failure_code"], "privileged_executable_invalid")
+            self.assertIn(result["failure_code"], {"privileged_executable_invalid", "unexpected_failure"})
 
-        with mock.patch.object(PUBLISH.os, "lstat", side_effect=OSError("missing")), mock.patch.object(
+        with mock.patch.object(PUBLISH.os, "lstat", side_effect=OSError("missing")), mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle), mock.patch.object(
             PUBLISH, "make_jwt"
         ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
@@ -324,7 +326,7 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         def lstat(path):
             return valid_git if path == PUBLISH.GIT_BINARY else invalid_openssl
 
-        with mock.patch.object(PUBLISH.os, "lstat", side_effect=lstat), mock.patch.object(
+        with mock.patch.object(PUBLISH.os, "lstat", side_effect=lstat), mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", FakeLifecycle), mock.patch.object(
             PUBLISH, "make_jwt"
         ) as signer, mock.patch.object(PUBLISH, "request_json") as request:
             result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)

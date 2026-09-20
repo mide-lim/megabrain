@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import unittest
+from types import SimpleNamespace
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -109,7 +110,7 @@ class ObserveAdapterTests(unittest.TestCase):
 
     def patches(self, api=None):
         return (mock.patch.object(OBSERVE, "configured_origin", return_value=OBSERVE.ORIGIN),
-                mock.patch.object(OBSERVE, "validate_privileged_executable"), mock.patch.object(OBSERVE, "validate_key_path"),
+                mock.patch.object(OBSERVE, "validate_privileged_executable"), mock.patch.object(OBSERVE.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key")] * 2),
                 mock.patch.object(OBSERVE, "make_jwt", return_value="JWT_FIXTURE"), mock.patch.object(OBSERVE, "request_json", side_effect=api or self.api),
                 mock.patch.object(OBSERVE.LIFECYCLE, "Lifecycle", FakeLifecycle))
 
