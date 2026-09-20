@@ -172,6 +172,33 @@ class ObserveAdapterTests(unittest.TestCase):
             result = OBSERVE.run_operation("observe-ci", "life-1", self.environment)
         self.assertEqual(result["failure_code"], "cleanup_failed"); self.assertFalse(FakeLifecycle.writes)
 
+    def test_runtime_config_change_before_mint_never_mints_or_observes_ci(self):
+        calls = []
+        config_a = SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key-a")
+        config_b = SimpleNamespace(app_id="999", installation_id="456", key_path="/fixture/key-b")
+
+        def baseline_only(method, path, authorization, payload=None):
+            calls.append((method, path, authorization, payload))
+            if method == "GET" and path == "/app/installations/456":
+                self.assertEqual(authorization, "Bearer JWT_FIXTURE")
+                return 200, {"permissions": OBSERVE.EXPECTED_INSTALLATION_PERMISSIONS}
+            self.fail("config change must prevent token mint and protected CI operation")
+
+        patches = self.patches(baseline_only)
+        with (
+            patches[0], patches[1],
+            mock.patch.object(OBSERVE.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[config_a, config_b]),
+            patches[3], patches[4], patches[5],
+            mock.patch.object(FakeLifecycle, "_observe_ci_locked", autospec=True) as observe_ci,
+        ):
+            result = OBSERVE.run_operation("observe-ci", "life-1", self.environment)
+        self.assertEqual(result["failure_code"], "runtime_config_changed_before_mint")
+        self.assertEqual([(method, path) for method, path, _, _ in calls], [("GET", "/app/installations/456")])
+        self.assertEqual(result["revocation"], "not_attempted")
+        self.assertTrue(result["temporary_cleanup"])
+        self.assertFalse(FakeLifecycle.writes)
+        observe_ci.assert_not_called()
+
     def test_api_boundary_allows_only_exact_gets_and_never_logs_or_actions_mutations(self):
         request = OBSERVE.authenticated_observe_request("TOKEN_FIXTURE", state())
         for method, path, payload in (("POST", f"/repos/{OBSERVE.REPOSITORY}/actions/runs/5/rerun", {}), ("POST", f"/repos/{OBSERVE.REPOSITORY}/actions/runs/5/cancel", {}), ("POST", f"/repos/{OBSERVE.REPOSITORY}/dispatches", {}), ("PATCH", f"/repos/{OBSERVE.REPOSITORY}/pulls/7", {}), ("POST", f"/repos/{OBSERVE.REPOSITORY}/pulls/7/merge", {}), ("GET", f"/repos/{OBSERVE.REPOSITORY}/actions/runs/5/logs", None), ("GET", f"/repos/{OBSERVE.REPOSITORY}/contents/x", None)):

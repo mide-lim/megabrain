@@ -30,6 +30,7 @@ L = load("b42_stage2e_lifecycle", "scripts/autonomous_pr_lifecycle.py")
 P2 = load("b42_stage2e_p2", "scripts/authenticated_publish_head.py")
 P3 = load("b42_stage2e_p3", "scripts/authenticated_ensure_pr.py")
 P4 = load("b42_stage2e_p4", "scripts/authenticated_observe_ci.py")
+P1 = load("b42_stage2e_p1", "scripts/authenticated_read_validation.py")
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 
@@ -302,6 +303,71 @@ class TerminalAndOperationClosureTests(DirectGuardFixture):
         self.assertIsNone(current["ci_sha"])
         self.assertIsNone(current["ci_jobs"])
         self.assertIsNone(current["workflow_run_id"])
+
+
+class P1AuthorizationBeforeConfigTests(DirectGuardFixture):
+    """Exercise P1 through its actual lifecycle guard against trusted temp controls."""
+
+    def _adapter_context(self, config, jwt, api, origin):
+        actual = P1.LIFECYCLE.Lifecycle
+
+        def factory(root, lifecycle_id):
+            return actual(root, lifecycle_id, state_root=self.h.state_root, runner=self.h.runner)
+
+        stack = ExitStack()
+        stack.enter_context(mock.patch.object(P1.LIFECYCLE, "CONTRACT_ROOT", self.contract_root))
+        stack.enter_context(mock.patch.object(P1.LIFECYCLE, "RUN_AUTHORIZATION_ROOT", self.authorization_root))
+        stack.enter_context(mock.patch.object(P1.LIFECYCLE, "_trusted_utc_now", side_effect=lambda: self.clock.now))
+        stack.enter_context(mock.patch.object(P1.LIFECYCLE, "Lifecycle", side_effect=factory))
+        stack.enter_context(mock.patch.object(P1.RUNTIME_CONFIG, "load_runtime_settings", config))
+        stack.enter_context(mock.patch.object(P1, "make_jwt", jwt))
+        stack.enter_context(mock.patch.object(P1, "request_json", api))
+        stack.enter_context(mock.patch.object(P1, "configured_origin", origin))
+        return stack
+
+    def _assert_pre_config_failure(self, expected_code):
+        config = mock.Mock()
+        jwt = mock.Mock()
+        api = mock.Mock()
+        origin = mock.Mock()
+        with self._adapter_context(config, jwt, api, origin):
+            result = P1.run_operation(P1.OPERATION, "life-1")
+        self.assertEqual(result["failure_code"], expected_code)
+        config.assert_not_called()
+        jwt.assert_not_called()
+        api.assert_not_called()
+        origin.assert_not_called()
+        self.assertEqual(result["revocation"], "not_attempted")
+        self.assertIsNone(result["temporary_cleanup"])
+        self.assertIsNone(result["token_permissions_valid"])
+        self.assertIsNone(result["scope_valid"])
+        self.assertIsNone(result["ref_valid"])
+
+    def test_p1_missing_authorization_before_config(self):
+        self.preflight()
+        self.auth_path.unlink()
+        self._assert_pre_config_failure("run_authorization_missing")
+
+    def test_p1_operation_denied_before_config(self):
+        self.auth_path.write_text(json.dumps(authorization(self.data, operations=["preflight"])), encoding="utf-8")
+        self.auth_path.chmod(0o600)
+        self.preflight()
+        self._assert_pre_config_failure("run_authorization_operation_denied")
+
+    def test_p1_expired_authorization_before_config(self):
+        self.preflight()
+        self.clock.expired()
+        self._assert_pre_config_failure("run_authorization_expired")
+
+    def test_p1_task_contract_fingerprint_mismatch_before_config(self):
+        self.preflight()
+        mismatched = authorization(self.data, task_contract_fingerprint="0" * 64)
+        self.auth_path.write_text(json.dumps(mismatched), encoding="utf-8")
+        self.auth_path.chmod(0o600)
+        state = self.read_state()
+        state["run_authorization_fingerprint"] = P1.LIFECYCLE.fingerprint(mismatched)
+        self.write_state(state)
+        self._assert_pre_config_failure("run_authorization_contract_mismatch")
 
 
 class AdapterTimingClosureTests(DirectGuardFixture):

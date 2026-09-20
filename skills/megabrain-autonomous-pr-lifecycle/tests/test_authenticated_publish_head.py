@@ -382,6 +382,34 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         ):
             self.assertFalse(PUBLISH._allowed_git_command(command, BRANCH))
 
+    def test_runtime_config_change_before_mint_never_mints_or_publishes(self):
+        calls = []
+        config_a = SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key-a")
+        config_b = SimpleNamespace(app_id="999", installation_id="456", key_path="/fixture/key-b")
+
+        def baseline_only(method, path, authorization, payload=None):
+            calls.append((method, path, authorization, payload))
+            if method == "GET" and path == "/app/installations/456":
+                self.assertEqual(authorization, "Bearer JWT_FIXTURE")
+                return 200, {"permissions": PUBLISH.EXPECTED_INSTALLATION_PERMISSIONS}
+            self.fail("config change must prevent token mint and protected publish")
+
+        patches = self.patches(baseline_only)
+        with (
+            patches[0], patches[1],
+            mock.patch.object(PUBLISH.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[config_a, config_b]),
+            patches[3], patches[4], patches[5], patches[6], patches[7], patches[8],
+            mock.patch.object(FakeLifecycle, "_publish_head_locked", autospec=True) as publish,
+        ):
+            result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
+        self.assertEqual(result["failure_code"], "runtime_config_changed_before_mint")
+        self.assertEqual([(method, path) for method, path, _, _ in calls], [("GET", "/app/installations/456")])
+        self.assertEqual(result["revocation"], "not_attempted")
+        self.assertTrue(result["temporary_cleanup"])
+        self.assertFalse(FakeLifecycle.commands)
+        self.assertFalse(FakeLifecycle.deferred_initial_commits)
+        publish.assert_not_called()
+
     def test_revocation_and_cleanup_fail_closed(self):
         def revocation_fails(method, path, authorization, payload=None):
             if method == "DELETE":

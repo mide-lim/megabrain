@@ -134,7 +134,13 @@ class P1AuthorityOrderingTests(unittest.TestCase):
         ), mock.patch.object(self.read, "request_json", side_effect=api):
             result = self.read.run_operation(self.read.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "runtime_config_changed_before_mint")
-        self.assertFalse(any(method == "POST" for method, _ in calls))
+        self.assertEqual(calls, [("GET", "/app/installations/456")])
+        self.assertEqual(lifecycle._guard.call_count, 2)
+        self.assertEqual(result["revocation"], "not_attempted")
+        self.assertIsNone(result["temporary_cleanup"])
+        self.assertIsNone(result["token_permissions_valid"])
+        self.assertIsNone(result["scope_valid"])
+        self.assertIsNone(result["ref_valid"])
 
 
 if __name__ == "__main__":
