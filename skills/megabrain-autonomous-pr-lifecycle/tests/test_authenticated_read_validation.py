@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -63,15 +64,16 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
     def successful_patches(self, api=None):
         return (
             mock.patch.object(READ, "configured_origin", return_value=READ.ORIGIN),
-            mock.patch.object(READ, "validate_key_path"),
+            mock.patch.object(READ.LIFECYCLE, "Lifecycle", return_value=SimpleNamespace(_guard=mock.Mock(return_value=({}, {})))),
+            mock.patch.object(READ.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key")] * 2),
             mock.patch.object(READ, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(READ, "request_json", side_effect=api or self.api_success),
         )
 
     def test_success_is_fixed_read_only_sanitized_and_cleaned(self) -> None:
         patches = self.successful_patches()
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["status"], "ok")
         self.assertIsNone(result["failure_code"])
         self.assertTrue(result["origin_valid"])
@@ -94,17 +96,15 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             return self.api_success(method, path, authorization, payload)
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["token_permissions_valid"])
 
-    def test_gate_and_unknown_operation_do_not_touch_runtime_dependencies(self) -> None:
-        with mock.patch.object(READ, "configured_origin") as origin:
-            blocked = READ.run_operation(READ.OPERATION, False, self.environment)
-            unknown = READ.run_operation("anything-else", True, self.environment)
-        origin.assert_not_called()
-        self.assertEqual(blocked["failure_code"], "operational_gate_required")
+    def test_unknown_operation_does_not_touch_runtime_dependencies(self) -> None:
+        with mock.patch.object(READ, "configured_origin") as origin, mock.patch.object(READ.RUNTIME_CONFIG, "load_runtime_settings") as config:
+            unknown = READ.run_operation("anything-else", "life-1")
+        origin.assert_not_called(); config.assert_not_called()
         self.assertEqual(unknown["failure_code"], "operation_rejected")
 
     def test_extra_or_write_token_permission_is_rejected_and_revoked(self) -> None:
@@ -118,8 +118,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             self.fail("scope or ref must not be requested")
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "token_permissions_rejected")
         self.assertIs(result["token_permissions_valid"], False)
         self.assertEqual(result["revocation"], "ok")
@@ -138,8 +138,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             self.fail("ref must not be requested")
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "scope_rejected")
         self.assertIs(result["scope_valid"], False)
         self.assertEqual(result["revocation"], "ok")
@@ -152,8 +152,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             self.fail("token must not be minted")
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "installation_permissions_rejected")
         self.assertIs(result["installation_permissions_valid"], False)
         self.assertEqual(result["revocation"], "not_attempted")
@@ -173,8 +173,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             self.fail("unexpected request")
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "ref_rejected")
         self.assertIs(result["ref_valid"], False)
         self.assertEqual(result["revocation"], "ok")
@@ -195,8 +195,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             self.fail("unexpected request")
 
         patches = self.successful_patches(api)
-        with patches[0], patches[1], patches[2], patches[3]:
-            result = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(result["failure_code"], "ref_rejected")
         self.assertIs(result["ref_valid"], False)
         self.assertEqual(result["revocation"], "ok")
@@ -209,8 +209,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
             return self.api_success(method, path, authorization, payload)
 
         patches = self.successful_patches(revoke_fails)
-        with patches[0], patches[1], patches[2], patches[3]:
-            revoked = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            revoked = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(revoked["failure_code"], "revocation_failed")
         self.assertEqual(revoked["revocation"], "failed")
         self.assertTrue(revoked["temporary_cleanup"])
@@ -222,8 +222,8 @@ class AuthenticatedReadValidationTests(unittest.TestCase):
                 raise OSError("cleanup fixture")
 
         patches = self.successful_patches()
-        with patches[0], patches[1], patches[2], patches[3], mock.patch.object(READ.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
-            cleaned = READ.run_operation(READ.OPERATION, True, self.environment)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], mock.patch.object(READ.tempfile, "TemporaryDirectory", return_value=BrokenTemporaryDirectory()):
+            cleaned = READ.run_operation(READ.OPERATION, "life-1")
         self.assertEqual(cleaned["failure_code"], "cleanup_failed")
         self.assertEqual(cleaned["revocation"], "ok")
         self.assertIs(cleaned["temporary_cleanup"], False)

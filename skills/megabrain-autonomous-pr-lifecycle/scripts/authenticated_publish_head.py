@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import re
+import sys
 import stat
 import subprocess
 import tempfile
@@ -50,6 +51,20 @@ def _load_lifecycle() -> Any:
 LIFECYCLE = _load_lifecycle()
 
 
+def _load_runtime_config_bridge() -> Any:
+    path = Path(__file__).with_name("github_app_runtime_config_bridge.py")
+    specification = importlib.util.spec_from_file_location("megabrain_b42_runtime_config_bridge_p2", path)
+    if specification is None or specification.loader is None:
+        raise RuntimeError("runtime_config_bridge_unavailable")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+RUNTIME_CONFIG = _load_runtime_config_bridge()
+
+
 class SafeFailure(Exception):
     """An expected, non-sensitive failure represented by a symbolic code."""
 
@@ -77,18 +92,6 @@ def validate_privileged_executable(path: str) -> None:
         or not executable_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     ):
         raise SafeFailure("privileged_executable_invalid")
-
-
-def _required_environment(environ: Mapping[str, str]) -> tuple[str, str, str]:
-    names = (
-        "MEGABRAIN_GITHUB_APP_ID",
-        "MEGABRAIN_GITHUB_APP_INSTALLATION_ID",
-        "MEGABRAIN_GITHUB_APP_KEY_PATH",
-    )
-    values = tuple(environ.get(name, "") for name in names)
-    if not values[0].isdecimal() or not values[1].isdecimal() or not values[2]:
-        raise SafeFailure("environment_missing")
-    return values  # type: ignore[return-value]
 
 
 def configured_origin() -> str:
@@ -369,7 +372,7 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
         result["failure_code"] = "operation_rejected"
         return result
 
-    environment = os.environ if environ is None else environ
+    del environ  # Legacy caller input is deliberately not a configuration source.
     token: str | None = None
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
     lifecycle: Any = None
@@ -378,18 +381,16 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
     initial_publish_state: dict[str, Any] | None = None
     latched_publish_state: dict[str, Any] | None = None
     try:
-        app_id, installation_id, key_path = _required_environment(environment)
+        source_root = Path.cwd().resolve()
+        lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
+        contract, state = lifecycle._guard(OPERATION)
+        branch = contract["branch"]
         validate_privileged_executable(GIT_BINARY)
         validate_privileged_executable(OPENSSL_BINARY)
         if configured_origin() != ORIGIN:
             raise SafeFailure("origin_rejected")
         validate_push_destination()
         result["origin_valid"] = True
-        source_root = Path.cwd().resolve()
-        lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
-        contract, state = lifecycle._guard(OPERATION)
-        branch = contract["branch"]
-        validate_key_path(key_path)
         temporary_directory = tempfile.TemporaryDirectory(prefix="megabrain-b4-2-p2-")
         result["temporary_cleanup"] = False
         lifecycle.runner = source_runner(temporary_directory.name, branch)
@@ -397,8 +398,9 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
         correction_mode = state.get("pending_correction_sha") is not None
         staging_root = Path(temporary_directory.name) / "staging"
         create_isolated_staging_repository(source_root, staging_root, branch, approved_head, temporary_directory.name)
-        jwt = make_jwt(app_id, key_path)
-        baseline_status, baseline = request_json("GET", f"/app/installations/{installation_id}", f"Bearer {jwt}")
+        settings = RUNTIME_CONFIG.load_runtime_settings()
+        jwt = make_jwt(settings.app_id, settings.key_path)
+        baseline_status, baseline = request_json("GET", f"/app/installations/{settings.installation_id}", f"Bearer {jwt}")
         if baseline_status != 200 or not _valid_installation_permissions(baseline.get("permissions")):
             result["installation_permissions_valid"] = False
             raise SafeFailure("installation_permissions_rejected")
@@ -408,8 +410,10 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
         refreshed_contract, refreshed_state = lifecycle._guard(OPERATION)
         if refreshed_contract != contract or refreshed_state != state:
             raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
+        if RUNTIME_CONFIG.load_runtime_settings() != settings:
+            raise SafeFailure("runtime_config_changed_before_mint")
         requested_permissions = CORRECTION_PUBLISH_TOKEN_REQUEST_PERMISSIONS if correction_mode else PUBLISH_TOKEN_REQUEST_PERMISSIONS
-        mint_status, minted = request_json("POST", f"/app/installations/{installation_id}/access_tokens", f"Bearer {jwt}", {"repositories": ["megabrain"], "permissions": requested_permissions})
+        mint_status, minted = request_json("POST", f"/app/installations/{settings.installation_id}/access_tokens", f"Bearer {jwt}", {"repositories": ["megabrain"], "permissions": requested_permissions})
         jwt = ""
         candidate = minted.get("token") if mint_status == 201 and isinstance(minted, Mapping) else None
         if not isinstance(candidate, str) or not candidate:

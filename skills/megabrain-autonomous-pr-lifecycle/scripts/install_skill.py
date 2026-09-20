@@ -13,6 +13,7 @@ DEFAULT_DESTINATION = Path.home() / ".hermes/skills/megabrain/megabrain-autonomo
 ARTIFACTS = {
     Path("SKILL.md"): 0o644,
     Path("scripts/autonomous_pr_lifecycle.py"): 0o700,
+    Path("scripts/github_app_runtime_config_bridge.py"): 0o700,
     Path("scripts/authenticated_read_validation.py"): 0o700,
     Path("scripts/authenticated_publish_head.py"): 0o700,
     Path("scripts/authenticated_ensure_pr.py"): 0o700,
@@ -27,6 +28,7 @@ VERSIONED_SOURCE_FILES = set(ARTIFACTS) | {
     Path("tests/test_authenticated_observe_ci.py"),
     Path("tests/test_p5_local_correction.py"),
     Path("tests/test_stage2e_closure.py"),
+    Path("tests/test_protected_runtime_config_integration.py"),
 }
 
 

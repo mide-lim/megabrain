@@ -23,7 +23,7 @@ CONTRACT_ROOT = Path("/etc/megabrain/hermes-contracts/b4.2")
 RUN_AUTHORIZATION_ROOT = Path("/etc/megabrain/hermes-authorizations/b4.3")
 MAX_RUN_AUTHORIZATION_TTL = dt.timedelta(hours=24)
 RUN_AUTHORIZATION_OPERATIONS = frozenset({
-    "preflight", "publish-head", "ensure-pr", "observe-ci",
+    "preflight", "validate-read-dev-ref", "publish-head", "ensure-pr", "observe-ci",
     "authorize-correction", "finalize-correction", "report-ready",
 })
 RUN_AUTHORIZATION_FIELDS = frozenset({
