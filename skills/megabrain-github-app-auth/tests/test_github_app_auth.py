@@ -9,12 +9,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
 SKILL_DIRECTORY = Path(__file__).resolve().parents[1]
 SCRIPTS_DIRECTORY = SKILL_DIRECTORY / "scripts"
 HELPER_PATH = SCRIPTS_DIRECTORY / "github_app_auth.py"
+RUNTIME_PATH = SCRIPTS_DIRECTORY / "github_app_runtime_config.py"
+BOOTSTRAP_PATH = SCRIPTS_DIRECTORY / "bootstrap_runtime_config.py"
 INSTALLER_PATH = SCRIPTS_DIRECTORY / "install_skill.py"
 
 
@@ -28,6 +31,8 @@ def load_module(name: str, path: Path):
 
 
 AUTH = load_module("canonical_github_app_auth", HELPER_PATH)
+RUNTIME = load_module("canonical_github_app_runtime_config", RUNTIME_PATH)
+BOOTSTRAP = load_module("canonical_bootstrap_runtime_config", BOOTSTRAP_PATH)
 
 
 class GithubAppAuthTests(unittest.TestCase):
@@ -62,7 +67,7 @@ class GithubAppAuthTests(unittest.TestCase):
     def successful_patches(self, git_result=True, api=None):
         return (
             mock.patch.object(AUTH, "configured_origin", return_value=AUTH.EXPECTED_ORIGIN),
-            mock.patch.object(AUTH, "validate_key_path"),
+            mock.patch.object(AUTH, "load_runtime_config", return_value=RUNTIME.RuntimeConfig("123", "456", "/fixture/key")),
             mock.patch.object(AUTH, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(AUTH, "request_json", side_effect=api or self.api_success),
             mock.patch.object(AUTH, "run_git_probe", return_value=git_result),
@@ -192,35 +197,177 @@ class GithubAppAuthTests(unittest.TestCase):
         self.assertEqual(result["revocation"], "failed")
         self.assertTrue(result["askpass_cleanup"])
 
-    def test_key_mode_rejection_requires_no_network_or_signing(self) -> None:
-        with tempfile.NamedTemporaryFile() as key_file:
-            os.chmod(key_file.name, 0o644)
-            environment = dict(self.environment, MEGABRAIN_GITHUB_APP_KEY_PATH=key_file.name)
-            with mock.patch.object(AUTH, "configured_origin", return_value=AUTH.EXPECTED_ORIGIN), mock.patch.object(
-                AUTH, "make_jwt"
-            ) as signer, mock.patch.object(AUTH, "request_json") as request:
-                result = AUTH.run_operation(AUTH.OPERATION, True, environment)
-        signer.assert_not_called()
-        request.assert_not_called()
-        self.assertEqual(result["failure_code"], "key_invalid")
-
-    def test_invalid_runtime_identifiers_require_no_signing_or_network(self) -> None:
-        environment = dict(self.environment, MEGABRAIN_GITHUB_APP_ID="not-a-number")
+    def test_runtime_config_rejection_requires_no_network_or_signing(self) -> None:
         with mock.patch.object(AUTH, "configured_origin", return_value=AUTH.EXPECTED_ORIGIN), mock.patch.object(
-            AUTH, "make_jwt"
-        ) as signer, mock.patch.object(AUTH, "request_json") as request:
-            result = AUTH.run_operation(AUTH.OPERATION, True, environment)
+            AUTH, "load_runtime_config", side_effect=AUTH.SafeFailure("runtime_config_mode_rejected")
+        ), mock.patch.object(AUTH, "make_jwt") as signer, mock.patch.object(AUTH, "request_json") as request:
+            result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
         signer.assert_not_called()
         request.assert_not_called()
-        self.assertEqual(result["failure_code"], "environment_missing")
+        self.assertEqual(result["failure_code"], "runtime_config_mode_rejected")
+
+    def test_environment_values_are_ignored_by_runtime_loader_path(self) -> None:
+        with mock.patch.object(AUTH, "configured_origin", return_value=AUTH.EXPECTED_ORIGIN), mock.patch.object(
+            AUTH, "load_runtime_config", side_effect=AUTH.SafeFailure("runtime_config_missing")
+        ) as loader, mock.patch.object(AUTH, "make_jwt") as signer, mock.patch.object(AUTH, "request_json") as request:
+            result = AUTH.run_operation(AUTH.OPERATION, True, self.environment)
+        loader.assert_called_once_with()
+        signer.assert_not_called()
+        request.assert_not_called()
+        self.assertEqual(result["failure_code"], "runtime_config_missing")
 
     def test_gate_and_operation_rejection_do_not_touch_runtime_dependencies(self) -> None:
-        with mock.patch.object(AUTH, "configured_origin") as origin:
+        with mock.patch.object(AUTH, "configured_origin") as origin, mock.patch.object(AUTH, "load_runtime_config") as loader:
             gate_result = AUTH.run_operation(AUTH.OPERATION, False, self.environment)
             operation_result = AUTH.run_operation("not-allowed", True, self.environment)
         origin.assert_not_called()
+        loader.assert_not_called()
         self.assertEqual(gate_result["failure_code"], "operational_gate_required")
         self.assertEqual(operation_result["failure_code"], "operation_rejected")
+
+
+class RuntimeConfigTests(unittest.TestCase):
+    @contextmanager
+    def fixture(self, config_text=None, *, config_mode=0o600, key_mode=0o600):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "runtime.conf"
+            key = root / "private-key.pem"
+            key.write_text("fixture-key", encoding="utf-8")
+            os.chmod(key, key_mode)
+            if config_text is not None:
+                config.write_bytes(config_text if isinstance(config_text, bytes) else config_text.encode("utf-8"))
+                os.chmod(config, config_mode)
+            with mock.patch.object(RUNTIME, "CONFIG_PATH", config), mock.patch.object(
+                RUNTIME, "APPROVED_KEY_PATH", key
+            ), mock.patch.object(RUNTIME, "_validate_parent_chain"):
+                yield config, key
+
+    def valid_text(self, key: Path) -> str:
+        return "github_app_id=123\ngithub_app_installation_id=456\nprivate_key_path=" + str(key) + "\n"
+
+    def test_valid_config_returns_immutable_settings(self) -> None:
+        with self.fixture() as (config, key):
+            config.write_text(self.valid_text(key), encoding="utf-8")
+            os.chmod(config, 0o600)
+            settings = RUNTIME.load_runtime_config()
+        self.assertEqual((settings.app_id, settings.installation_id, settings.key_path), ("123", "456", str(key)))
+        with self.assertRaises(AttributeError):
+            settings.app_id = "789"
+
+    def test_missing_symlink_owner_group_and_mode_fail_closed(self) -> None:
+        with self.fixture() as (config, key):
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_config_missing"):
+                RUNTIME.load_runtime_config()
+            config.symlink_to(key)
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_config_type_rejected"):
+                RUNTIME.load_runtime_config()
+            config.unlink()
+            config.write_text(self.valid_text(key), encoding="utf-8")
+            for mode in (0o640, 0o644, 0o700):
+                os.chmod(config, mode)
+                with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_config_mode_rejected"):
+                    RUNTIME.load_runtime_config()
+
+    def test_schema_and_encoding_rejections(self) -> None:
+        cases = {
+            "unknown": "unknown=value\ngithub_app_id=123\ngithub_app_installation_id=456\n",
+            "duplicate": "github_app_id=123\ngithub_app_id=456\nprivate_key_path=/x\n",
+            "missing": "github_app_id=123\nprivate_key_path=/x\n",
+            "blank": "github_app_id=123\n\nprivate_key_path=/x\n",
+            "quote": "github_app_id='123'\ngithub_app_installation_id=456\nprivate_key_path=/x\n",
+            "shell": "github_app_id=$(123)\ngithub_app_installation_id=456\nprivate_key_path=/x\n",
+            "expansion": "github_app_id=$VALUE\ngithub_app_installation_id=456\nprivate_key_path=/x\n",
+            "whitespace": "github_app_id=123 \ngithub_app_installation_id=456\nprivate_key_path=/x\n",
+            "identifier": "github_app_id=x\ngithub_app_installation_id=456\nprivate_key_path=/x\n",
+        }
+        for label, text in cases.items():
+            with self.subTest(label=label), self.fixture(text) as (config, _key):
+                with self.assertRaises(RUNTIME.RuntimeConfigError):
+                    RUNTIME.load_runtime_config()
+        for payload, code in ((b"\xff", "runtime_config_encoding_rejected"), (b"\xef\xbb\xbfgithub_app_id=123\n", "runtime_config_bom_rejected")):
+            with self.subTest(code=code), self.fixture(payload) as (_config, _key):
+                with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, code):
+                    RUNTIME.load_runtime_config()
+
+    def test_key_path_and_key_trust_rejections(self) -> None:
+        with self.fixture() as (config, key):
+            config.write_text("github_app_id=123\ngithub_app_installation_id=456\nprivate_key_path=relative.pem\n", encoding="utf-8")
+            os.chmod(config, 0o600)
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_config_key_path_rejected"):
+                RUNTIME.load_runtime_config()
+            config.write_text(self.valid_text(key), encoding="utf-8")
+            key.unlink()
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_key_missing"):
+                RUNTIME.load_runtime_config()
+            key.write_text("fixture", encoding="utf-8")
+            os.chmod(key, 0o644)
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_key_mode_rejected"):
+                RUNTIME.load_runtime_config()
+            key.unlink()
+            key.symlink_to(config)
+            with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_key_type_rejected"):
+                RUNTIME.load_runtime_config()
+
+    def test_changed_config_between_lstat_and_fstat_is_rejected(self) -> None:
+        with self.fixture() as (config, key):
+            config.write_text(self.valid_text(key), encoding="utf-8")
+            os.chmod(config, 0o600)
+            original_open = RUNTIME.os.open
+            replacement = config.with_name("replacement.conf")
+            replacement.write_text(self.valid_text(key), encoding="utf-8")
+            os.chmod(replacement, 0o600)
+
+            def swap_then_open(path, flags, *args, **kwargs):
+                if Path(path) == config:
+                    os.replace(replacement, config)
+                return original_open(path, flags, *args, **kwargs)
+
+            with mock.patch.object(RUNTIME.os, "open", side_effect=swap_then_open):
+                with self.assertRaisesRegex(RUNTIME.RuntimeConfigError, "runtime_config_changed"):
+                    RUNTIME.load_runtime_config()
+
+
+class BootstrapTests(unittest.TestCase):
+    def test_non_tty_rejection_has_no_file_or_network_side_effect(self) -> None:
+        with mock.patch.object(BOOTSTRAP.os, "open") as open_file:
+            result = BOOTSTRAP.run_bootstrap(stdin=mock.Mock(isatty=mock.Mock(return_value=False)), stdout=mock.Mock(isatty=mock.Mock(return_value=False)))
+        open_file.assert_not_called()
+        self.assertEqual(result, {"status": "failed", "failure_code": "bootstrap_tty_required", "config_written": False})
+
+    def test_replacement_requires_separate_human_maintenance(self) -> None:
+        tty = mock.Mock(isatty=mock.Mock(return_value=True))
+        result = BOOTSTRAP.run_bootstrap(replace=True, stdin=tty, stdout=tty)
+        self.assertEqual(result["failure_code"], "bootstrap_replacement_requires_human_maintenance")
+        self.assertFalse(result["config_written"])
+
+    def test_bootstrap_writes_only_hermetic_fixed_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "runtime.conf"
+            key = root / "private-key.pem"
+            key.write_text("fixture", encoding="utf-8")
+            fake_runtime = mock.Mock()
+            fake_runtime.CONFIG_PATH = config
+            fake_runtime.APPROVED_KEY_PATH = key
+            fake_runtime._identity.return_value = (os.getuid(), os.getgid())
+            fake_runtime.load_runtime_config.return_value = object()
+            tty = mock.Mock(isatty=mock.Mock(return_value=True))
+            with mock.patch.object(BOOTSTRAP, "RUNTIME", fake_runtime), mock.patch.object(
+                BOOTSTRAP.getpass, "getpass", side_effect=["123", "456"]
+            ):
+                result = BOOTSTRAP.run_bootstrap(stdin=tty, stdout=tty)
+            self.assertEqual(result, {"status": "ok", "failure_code": None, "config_written": True})
+            self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+            self.assertEqual(config.read_text(encoding="utf-8"), "github_app_id=123\ngithub_app_installation_id=456\nprivate_key_path=" + str(key) + "\n")
+            fake_runtime._validate_parent_chain.assert_called_once()
+            fake_runtime._validate_key.assert_called_once()
+            fake_runtime.load_runtime_config.assert_called_once_with()
+
+    def test_bootstrap_module_has_no_network_git_or_signing_imports(self) -> None:
+        content = BOOTSTRAP_PATH.read_text(encoding="utf-8")
+        for forbidden in ("urllib", "subprocess", "openssl", "request_json", "make_jwt", "GIT_ASKPASS"):
+            self.assertNotIn(forbidden, content)
 
 
 class CanonicalInstallationTests(unittest.TestCase):
@@ -233,6 +380,8 @@ class CanonicalInstallationTests(unittest.TestCase):
         self.assertEqual(source_files, {
             Path("SKILL.md"),
             Path("scripts/github_app_auth.py"),
+            Path("scripts/github_app_runtime_config.py"),
+            Path("scripts/bootstrap_runtime_config.py"),
             Path("scripts/install_skill.py"),
             Path("tests/test_github_app_auth.py"),
         })
@@ -252,6 +401,8 @@ class CanonicalInstallationTests(unittest.TestCase):
         expected_artifacts = {
             Path("SKILL.md"): 0o644,
             Path("scripts/github_app_auth.py"): 0o700,
+            Path("scripts/github_app_runtime_config.py"): 0o700,
+            Path("scripts/bootstrap_runtime_config.py"): 0o700,
         }
         with tempfile.TemporaryDirectory() as temporary_root:
             destination = Path(temporary_root) / "fresh" / "megabrain-github-app-auth"

@@ -14,6 +14,8 @@ DEFAULT_DESTINATION = Path.home() / ".hermes/skills/megabrain/megabrain-github-a
 ARTIFACTS = {
     Path("SKILL.md"): 0o644,
     Path("scripts/github_app_auth.py"): 0o700,
+    Path("scripts/github_app_runtime_config.py"): 0o700,
+    Path("scripts/bootstrap_runtime_config.py"): 0o700,
 }
 VERSIONED_SOURCE_FILES = set(ARTIFACTS) | {
     Path("scripts/install_skill.py"),

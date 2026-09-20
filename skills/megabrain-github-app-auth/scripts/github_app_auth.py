@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -51,16 +53,25 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _required_environment(environ: Mapping[str, str]) -> tuple[str, str, str]:
-    names = (
-        "MEGABRAIN_GITHUB_APP_ID",
-        "MEGABRAIN_GITHUB_APP_INSTALLATION_ID",
-        "MEGABRAIN_GITHUB_APP_KEY_PATH",
-    )
-    values = tuple(environ.get(name, "") for name in names)
-    if not values[0].isdecimal() or not values[1].isdecimal() or not values[2]:
-        raise SafeFailure("environment_missing")
-    return values  # type: ignore[return-value]
+def _load_runtime_module() -> Any:
+    path = Path(__file__).with_name("github_app_runtime_config.py")
+    specification = importlib.util.spec_from_file_location("megabrain_runtime_config", path)
+    if specification is None or specification.loader is None:
+        raise SafeFailure("runtime_loader_unavailable")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+RUNTIME = _load_runtime_module()
+
+
+def load_runtime_config() -> Any:
+    try:
+        return RUNTIME.load_runtime_config()
+    except RUNTIME.RuntimeConfigError as exc:
+        raise SafeFailure(exc.code) from exc
 
 
 def configured_origin() -> str:
@@ -252,16 +263,16 @@ def run_operation(
         result["failure_code"] = "operational_gate_required"
         return result
 
-    environment = os.environ if environ is None else environ
+    del environ
     token: str | None = None
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
     askpass_path: str | None = None
     try:
-        app_id, installation_id, key_path = _required_environment(environment)
         if configured_origin() != EXPECTED_ORIGIN:
             raise SafeFailure("origin_rejected")
         result["origin_valid"] = True
-        validate_key_path(key_path)
+        settings = load_runtime_config()
+        app_id, installation_id, key_path = settings.app_id, settings.installation_id, settings.key_path
         jwt = make_jwt(app_id, key_path)
         baseline_status, baseline_body = request_json(
             "GET", f"/app/installations/{installation_id}", f"Bearer {jwt}"

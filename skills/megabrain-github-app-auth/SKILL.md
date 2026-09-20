@@ -54,10 +54,11 @@ The default target is exactly:
 ~/.hermes/skills/megabrain/megabrain-github-app-auth
 ```
 
-The installer reconstructs only `SKILL.md` and `scripts/github_app_auth.py` from
-this directory, atomically replacing an existing target. It does not read from
-or copy from `~/.hermes`, does not read secret files, and does not create any
-credential or configuration file. Reinstallation is the supported way to
+The installer reconstructs only `SKILL.md`, `scripts/github_app_auth.py`,
+`scripts/github_app_runtime_config.py`, and `scripts/bootstrap_runtime_config.py`
+from this directory, atomically replacing an existing target. It does not read
+from or copy from `~/.hermes`, does not read secret files, and does not create
+credential or configuration files. Reinstallation is the supported way to
 refresh the derived artifact after an approved source update.
 
 ## Runtime interface
@@ -66,23 +67,23 @@ Run only from the checked-out MegaBrain repository after a fresh operational
 authorization:
 
 ```sh
-MEGABRAIN_GITHUB_APP_ID=... \
-MEGABRAIN_GITHUB_APP_INSTALLATION_ID=... \
-MEGABRAIN_GITHUB_APP_KEY_PATH=... \
 python3 skills/megabrain-github-app-auth/scripts/github_app_auth.py \
   --operation probe-read-dev --operational-gate-approved
 ```
 
-Supply these three values only through the runtime environment:
+The helper reads only the fixed inert host file
+`/home/megabrain-hermes/.config/megabrain-hermes/github-app/runtime.conf` after
+fixed-operation, operational-gate, and origin validation. The file contains
+only decimal App and installation identifiers plus the exact approved key path;
+it contains no key contents, JWT, token, PAT, password, askpass content, Task
+Contract, or Run Authorization. It must be a regular non-symlink file owned by
+`megabrain-hermes:megabrain-hermes` at mode `0400` or `0600`. The helper does
+not accept environment, CLI, repository, `.env`, profile-search, or arbitrary
+path fallback for runtime settings.
 
-- `MEGABRAIN_GITHUB_APP_ID`
-- `MEGABRAIN_GITHUB_APP_INSTALLATION_ID`
-- `MEGABRAIN_GITHUB_APP_KEY_PATH`
-
-Do not place them in a repository file, `.env`, Hermes configuration, command
-history, output, or log. The key must be an existing regular file with no group
-or other permissions (mode no broader than `0600`). The helper signs RS256 JWT
-payload bytes through `openssl` without writing a JWT or token to disk.
+`bootstrap_runtime_config.py` is a separate local-TTY-only bootstrap utility.
+Its real execution requires a separate human authorization; it is not part of
+a B4.1 operational gate and does not authorize a probe or any GitHub mutation.
 
 The helper emits a single sanitized JSON result. It never prints the App ID,
 installation ID, key path/content, JWT, token, authorization header, raw HTTP
