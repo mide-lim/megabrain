@@ -493,7 +493,11 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
             result["failure_code"] = "publish_state_commit_rejected"
         else:
             try:
-                lifecycle._commit_deferred_initial_publish_state(
+                # The source lifecycle is deliberately restricted to pre-auth
+                # local validation and must not be reused for post-teardown
+                # token-free remote revalidation.
+                post_teardown_lifecycle = LIFECYCLE.Lifecycle(source_root, lifecycle_id)
+                post_teardown_lifecycle._commit_deferred_initial_publish_state(
                     initial_publish_state, result["remote_sha_verified"], deferred_publish_state,
                 )
             except LIFECYCLE.StopNeedsHuman as exc:

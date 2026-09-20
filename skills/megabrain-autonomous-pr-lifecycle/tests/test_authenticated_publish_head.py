@@ -29,6 +29,7 @@ def load(name: str, path: Path):
 
 
 PUBLISH = load("b42_authenticated_publish_head", MODULE_PATH)
+REAL_LIFECYCLE = PUBLISH.LIFECYCLE.Lifecycle
 
 
 class FakeLifecycle:
@@ -167,6 +168,153 @@ class AuthenticatedPublishHeadTests(unittest.TestCase):
         self.assertEqual(len(FakeLifecycle.deferred_initial_commits), 1)
         self.assertEqual(events, ["revoked"])
         self.assertEqual(FakeLifecycle.deferred_initial_commits[0][1], SHA)
+
+    def test_real_lifecycle_deferred_initial_commit_revalidates_exact_remote_before_state_write(self):
+        events = []
+        contract = {"branch": BRANCH}
+        initial_state = {"head_sha": SHA, "published_once": False, "corrections": 0}
+        expected_state = dict(initial_state)
+        expected_state.update({
+            "head_sha": SHA, "ci_sha": None, "ci_failure": None, "ci_jobs": None,
+            "workflow_run_id": None, "ci_snapshot": None, "published_once": True,
+        })
+
+        def runner(command, _cwd):
+            if command == ["git", "symbolic-ref", "--short", "HEAD"]:
+                return BRANCH
+            if command == ["git", "remote", "get-url", "origin"]:
+                return PUBLISH.ORIGIN
+            if command == ["git", "rev-parse", "HEAD"]:
+                return SHA
+            if command == ["git", "status", "--porcelain=v1", "--untracked-files=all"]:
+                return ""
+            if command == ["git", "ls-remote", "origin", f"refs/heads/{BRANCH}"]:
+                events.append("remote_revalidation")
+                return f"{SHA}\trefs/heads/{BRANCH}"
+            self.fail(f"unexpected real lifecycle command: {command}")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary) / "state"
+            lifecycle = REAL_LIFECYCLE(Path(temporary) / "source", "life-1", state_root=state_root, runner=runner)
+            lifecycle._guard = mock.Mock(return_value=(contract, initial_state))
+            original_write_state = lifecycle._write_state
+
+            def write_state(value):
+                events.append("state_write")
+                original_write_state(value)
+
+            lifecycle._write_state = write_state
+            lifecycle._commit_deferred_initial_publish_state(initial_state, SHA, expected_state)
+            written = json.loads((state_root / "life-1" / "state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(events, ["remote_revalidation", "state_write"])
+        self.assertTrue(written["published_once"])
+        self.assertEqual(written["head_sha"], SHA)
+
+    def test_initial_publish_uses_fresh_real_lifecycle_after_teardown(self):
+        events = []
+        instances = []
+        contract = {"branch": BRANCH}
+        initial_state = {"head_sha": SHA, "published_once": False, "corrections": 0}
+        expected_state = dict(initial_state)
+        expected_state.update({
+            "head_sha": SHA, "ci_sha": None, "ci_failure": None, "ci_jobs": None,
+            "workflow_run_id": None, "ci_snapshot": None, "published_once": True,
+        })
+
+        class RecordingTemporaryDirectory:
+            name = "/fixture/temporary-credentials"
+
+            def cleanup(self):
+                events.append("cleanup")
+
+        def post_teardown_runner(command, _cwd):
+            self.assertNotIn("MEGABRAIN_GITHUB_APP_TOKEN", os.environ)
+            self.assertNotIn("GIT_ASKPASS", os.environ)
+            if command == ["git", "symbolic-ref", "--short", "HEAD"]:
+                return BRANCH
+            if command == ["git", "remote", "get-url", "origin"]:
+                return PUBLISH.ORIGIN
+            if command == ["git", "rev-parse", "HEAD"]:
+                return SHA
+            if command == ["git", "status", "--porcelain=v1", "--untracked-files=all"]:
+                return ""
+            if command == ["git", "ls-remote", "origin", f"refs/heads/{BRANCH}"]:
+                events.append("post_teardown_remote_revalidation")
+                return f"{SHA}\trefs/heads/{BRANCH}"
+            self.fail(f"unexpected post-teardown command: {command}")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state_root = Path(temporary) / "state"
+
+            def lifecycle_factory(root, lifecycle_id):
+                if len(instances) < 2:
+                    instance = FakeLifecycle(root, lifecycle_id)
+                else:
+                    events.append("fresh_lifecycle")
+                    instance = REAL_LIFECYCLE(root, lifecycle_id, state_root=state_root, runner=post_teardown_runner)
+                    instance._guard = mock.Mock(return_value=(contract, initial_state))
+                    original_write_state = instance._write_state
+
+                    def write_state(value):
+                        events.append("state_write")
+                        original_write_state(value)
+
+                    instance._write_state = write_state
+                instances.append(instance)
+                return instance
+
+            def controlled(_temporary, _askpass, token, _branch, _staging_root):
+                self.assertEqual(token, "TOKEN_FIXTURE")
+
+                def run(command, _cwd):
+                    self.assertEqual(command, ["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"])
+                    events.append("push")
+                    return ""
+
+                return run
+
+            def publish_with_readback(self, *, state_writer=None):
+                self.runner(["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"], self.root)
+                events.append("remote_readback")
+                state_writer(expected_state)
+                return {"state": "PUBLISHED", "head_sha": SHA}
+
+            def api(method, path, authorization, payload=None):
+                if method == "DELETE" and path == "/installation/token":
+                    events.append("revoke")
+                return self.api_success(method, path, authorization, payload)
+
+            patches = self.patches(api)
+            with (
+                patches[0], patches[1], patches[2], patches[3], patches[4],
+                mock.patch.object(PUBLISH.LIFECYCLE, "Lifecycle", side_effect=lifecycle_factory),
+                patches[6], mock.patch.object(PUBLISH, "controlled_runner", side_effect=controlled), patches[8],
+                mock.patch.object(PUBLISH.tempfile, "TemporaryDirectory", return_value=RecordingTemporaryDirectory()),
+                mock.patch.object(FakeLifecycle, "_publish_head_locked", publish_with_readback),
+            ):
+                result = PUBLISH.run_operation(PUBLISH.OPERATION, "life-1", self.environment)
+            written = (json.loads((state_root / "life-1" / "state.json").read_text(encoding="utf-8"))
+                       if len(instances) == 3 else None)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["remote_sha_verified"], SHA)
+        self.assertEqual(result["revocation"], "ok")
+        self.assertTrue(result["temporary_cleanup"])
+        self.assertEqual(len(instances), 3)
+        self.assertIsNot(instances[2], instances[0])
+        self.assertIsNotNone(written)
+        assert written is not None
+        with self.assertRaisesRegex(PUBLISH.LIFECYCLE.StopNeedsHuman, "git_command_rejected"):
+            instances[0].runner(["git", "ls-remote", "origin", f"refs/heads/{BRANCH}"], instances[0].root)
+        with self.assertRaisesRegex(PUBLISH.LIFECYCLE.StopNeedsHuman, "git_command_rejected"):
+            instances[0].runner(["git", "push", "origin", f"HEAD:refs/heads/{BRANCH}"], instances[0].root)
+        self.assertEqual(
+            events,
+            ["push", "remote_readback", "revoke", "cleanup", "fresh_lifecycle", "post_teardown_remote_revalidation", "state_write"],
+        )
+        self.assertTrue(written["published_once"])
+        self.assertEqual(written["head_sha"], SHA)
 
     def test_isolated_staging_directory_is_removed_after_authenticated_publish(self):
         staging_parents = []
