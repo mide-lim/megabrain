@@ -44,7 +44,7 @@ from app.categories import (
 )
 from app.presentation import reel_detail_context
 from app.r2 import presigned_video_url
-from app.reels import fetch_reel, set_curation_status
+from app.reels import fetch_reel, request_transcription, set_curation_status
 
 
 VERSION = "0.1.0"
@@ -255,6 +255,10 @@ class CurationStatusRequest(BaseModel):
     curation_status: Literal["inbox", "organized"]
 
 
+class TranscriptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
 class WebReelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -263,6 +267,10 @@ class WebReelRequest(BaseModel):
 
 class WebReelRequestInvalid(ValueError):
     """Raised when the local web reel request contract is invalid."""
+
+
+class TranscriptionRequestInvalid(ValueError):
+    """Raised when the transcription request contract is invalid."""
 
 
 class ReelCategoryResponse(BaseModel):
@@ -378,6 +386,17 @@ async def _parse_web_reel_request(request: Request) -> WebReelRequest:
         return WebReelRequest.model_validate(parsed)
     except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
         raise WebReelRequestInvalid("Invalid reel request") from None
+
+
+async def _parse_transcription_request(request: Request) -> TranscriptionRequest:
+    if not _is_json_media_type(request.headers.get("content-type")):
+        raise TranscriptionRequestInvalid("Invalid transcription request")
+    try:
+        body = await request.body()
+        parsed = json.loads(body)
+        return TranscriptionRequest.model_validate(parsed)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
+        raise TranscriptionRequestInvalid("Invalid transcription request") from None
 
 
 def _web_reel_success_response(
@@ -574,6 +593,85 @@ def set_reel_curation_api(
     if reel is None:
         raise HTTPException(status_code=404, detail="Reel not found")
     return ReelLifecycleResponse(**reel)
+
+
+@app.post(
+    "/api/reels/{reel_id}/transcription",
+    response_model=ReelLifecycleResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    }
+                }
+            },
+        },
+        "responses": {
+            "200": {"description": "Current transcription lifecycle"},
+            "202": {"description": "Transcription request queued"},
+            "404": {"description": "Reel not found"},
+            "409": {"description": "Reel is not ready for transcription"},
+            "422": {"description": "Invalid transcription request"},
+            "503": {"description": "Transcription request temporarily unavailable"},
+        },
+    },
+)
+async def request_reel_transcription_api(
+    reel_id: int,
+    request: Request,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> JSONResponse:
+    try:
+        await _parse_transcription_request(request)
+    except TranscriptionRequestInvalid:
+        return _web_reel_error_response(422, "invalid_request", "Invalid transcription request")
+
+    try:
+        result = request_transcription(reel_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        return _web_reel_error_response(
+            503,
+            "transcription_request_unavailable",
+            "Transcription request temporarily unavailable",
+        )
+
+    if result.outcome == "not_found":
+        return _web_reel_error_response(404, "reel_not_found", "Reel not found")
+    if result.outcome == "not_ready":
+        return _web_reel_error_response(
+            409,
+            "reel_not_ready",
+            "Reel is not ready for transcription",
+        )
+    if result.outcome == "accepted_new_request":
+        response_status = 202
+    elif result.outcome in {"already_queued", "already_processing", "already_completed"}:
+        response_status = 200
+    else:
+        return _web_reel_error_response(
+            503,
+            "transcription_request_unavailable",
+            "Transcription request temporarily unavailable",
+        )
+    if result.lifecycle is None:
+        return _web_reel_error_response(
+            503,
+            "transcription_request_unavailable",
+            "Transcription request temporarily unavailable",
+        )
+
+    lifecycle = ReelLifecycleResponse(**result.lifecycle)
+    return JSONResponse(
+        status_code=response_status,
+        content=lifecycle.model_dump(),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get(
