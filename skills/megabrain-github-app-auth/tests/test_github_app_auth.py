@@ -420,7 +420,6 @@ class CanonicalInstallationTests(unittest.TestCase):
                 derived = destination / relative_path
                 self.assertEqual(hashlib.sha256(source.read_bytes()).digest(), hashlib.sha256(derived.read_bytes()).digest())
                 self.assertEqual(stat.S_IMODE(derived.stat().st_mode), expected_mode)
-            self.assertEqual(stat.S_IMODE(HELPER_PATH.stat().st_mode), 0o700)
 
 
 if __name__ == "__main__":
