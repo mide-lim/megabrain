@@ -110,9 +110,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH activated_reel AS (\n    UPDATE app.reels\n    SET\n        transcription_status = 'processing',\n        transcription_attempt_id = $1::UUID,\n        updated_at = NOW()\n    WHERE id = $2::BIGINT\n      AND transcription_status = 'queued'\n      AND transcription_attempt_id IS NULL\n    RETURNING id\n), created_attempt AS (\n    INSERT INTO app.reel_enrichment_attempts (\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint,\n        retry_of_attempt_id, status, started_at\n    )\n    SELECT\n        $1::UUID, activated_reel.id, $3, $4, $5::BIGINT, $6, $7, $8,\n        $9::UUID, 'processing', NOW()\n    FROM activated_reel\n    RETURNING\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint\n)\nSELECT\n    created_attempt.*,\n    $10::TEXT AS shortcode\nFROM created_attempt;",
+        "query": "WITH consumer_lock AS MATERIALIZED (\n    /* MGB030_TRANSCRIPTION_CLAIM_LOCK_KEY = 308030 */\n    SELECT pg_try_advisory_xact_lock(308030::BIGINT) AS acquired\n), candidate AS MATERIALIZED (\n    SELECT\n        reel.id AS reel_id,\n        reel.shortcode,\n        reel.object_key,\n        reel.sha256,\n        reel.file_size_bytes\n    FROM app.reels AS reel\n    CROSS JOIN consumer_lock\n    WHERE consumer_lock.acquired\n      AND ($3::BIGINT IS NULL OR reel.id = $3::BIGINT)\n      AND reel.download_status = 'downloaded'\n      AND reel.transcription_status = 'queued'\n      AND reel.transcription_attempt_id IS NULL\n      AND reel.object_key IS NOT NULL\n      AND reel.object_key <> ''\n      AND reel.sha256 ~ '^[0-9a-f]{64}$'\n      AND reel.file_size_bytes > 0\n      AND NOT EXISTS (\n          SELECT 1\n          FROM app.reels AS processing_reel\n          WHERE processing_reel.transcription_status = 'processing'\n      )\n      AND NOT EXISTS (\n          SELECT 1\n          FROM app.reel_enrichments AS enrichment\n          WHERE enrichment.reel_id = reel.id\n            AND enrichment.source_object_key = reel.object_key\n            AND enrichment.source_sha256 = reel.sha256\n            AND enrichment.pipeline_version = $2::TEXT\n      )\n    ORDER BY reel.updated_at ASC, reel.id ASC\n    FOR UPDATE SKIP LOCKED\n    LIMIT 1\n), activated_reel AS (\n    UPDATE app.reels AS reel\n    SET\n        transcription_status = 'processing',\n        transcription_attempt_id = $1::UUID,\n        updated_at = NOW()\n    FROM candidate\n    WHERE reel.id = candidate.reel_id\n      AND transcription_status = 'queued'\n      AND reel.transcription_attempt_id IS NULL\n    RETURNING\n        reel.id AS reel_id,\n        candidate.shortcode,\n        candidate.object_key AS source_object_key,\n        candidate.sha256 AS expected_sha256,\n        candidate.file_size_bytes AS expected_size_bytes\n), created_attempt AS (\n    INSERT INTO app.reel_enrichment_attempts (\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint,\n        retry_of_attempt_id, status, started_at\n    )\n    SELECT\n        $1::UUID,\n        activated_reel.reel_id,\n        activated_reel.source_object_key,\n        activated_reel.expected_sha256,\n        activated_reel.expected_size_bytes,\n        $2::TEXT,\n        $4::TEXT,\n        $5::TEXT,\n        (\n            SELECT previous_attempt.attempt_id\n            FROM app.reel_enrichment_attempts AS previous_attempt\n            WHERE previous_attempt.reel_id = activated_reel.reel_id\n              AND previous_attempt.source_object_key = activated_reel.source_object_key\n              AND previous_attempt.expected_sha256 = activated_reel.expected_sha256\n              AND previous_attempt.pipeline_version = $2::TEXT\n              AND previous_attempt.status = 'failed'\n            ORDER BY previous_attempt.finished_at DESC NULLS LAST,\n                     previous_attempt.started_at DESC,\n                     previous_attempt.attempt_id DESC\n            LIMIT 1\n        ),\n        'processing',\n        NOW()\n    FROM activated_reel\n    RETURNING\n        attempt_id, reel_id, source_object_key, expected_sha256,\n        expected_size_bytes, pipeline_version, contract_version, language_hint, retry_of_attempt_id\n)\nSELECT created_attempt.*, activated_reel.shortcode\nFROM created_attempt\nJOIN activated_reel ON activated_reel.reel_id = created_attempt.reel_id;",
         "options": {
-          "queryReplacement": "={{ [$json.attempt_id, $json.reel_id, $json.object_key, $json.sha256, $json.file_size_bytes, $json.pipeline_version, $json.contract_version, $json.language_hint, $json.retry_of_attempt_id, $json.shortcode] }}"
+          "queryReplacement": "={{ [$json.attempt_id, $json.pipeline_version, $json.reel_id, $json.contract_version, $json.language_hint] }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
@@ -126,6 +126,34 @@
           "name": "__CREDENTIAL_NAME_POSTGRES__"
         }
       }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 240],
+      "id": "__NODE_ID_MGB_030_14__",
+      "name": "SCHEDULE — Consumir fila de transcrição"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  reel_id: null,\n  pipeline_version: '__PIPELINE_VERSION_SPRINT_3__',\n  contract_version: '__CONTRACT_VERSION__',\n  language_hint: null,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [208, 240],
+      "id": "__NODE_ID_MGB_030_15__",
+      "name": "DATA — Preparar consumidor periódico"
     },
     {
       "parameters": {
@@ -260,6 +288,8 @@
     "DB — Localizar Reel elegível": { "main": [[{ "node": "IF — Precisa enriquecer?", "type": "main", "index": 0 }]] },
     "IF — Precisa enriquecer?": { "main": [[{ "node": "DB — Enfileirar transcrição", "type": "main", "index": 0 }], []] },
     "DB — Enfileirar transcrição": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }]] },
+    "SCHEDULE — Consumir fila de transcrição": { "main": [[{ "node": "DATA — Preparar consumidor periódico", "type": "main", "index": 0 }]] },
+    "DATA — Preparar consumidor periódico": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }]] },
     "DATA — Criar attempt_id": { "main": [[{ "node": "DB — Criar tentativa processing", "type": "main", "index": 0 }]] },
     "DB — Criar tentativa processing": { "main": [[{ "node": "HTTP — Enricher /v1/enrichments", "type": "main", "index": 0 }]] },
     "HTTP — Enricher /v1/enrichments": { "main": [[{ "node": "DATA — Validar resposta Enricher", "type": "main", "index": 0 }], [{ "node": "DATA — Normalizar falha Enricher", "type": "main", "index": 0 }]] },
