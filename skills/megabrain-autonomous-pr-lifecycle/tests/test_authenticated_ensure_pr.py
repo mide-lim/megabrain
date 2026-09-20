@@ -160,18 +160,34 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
             return 204, {}
         self.fail(f"unexpected request: {method} {path}")
 
-    def patches(self, api=None):
+    def patches(self, api=None, revoke_ok=True):
+        credential = SimpleNamespace(
+            token="TOKEN_FIXTURE",
+            actor_login="mide-lim",
+            permissions={"pull_requests": "write", "metadata": "read"},
+            scope={"total_count": 1, "repositories": [{"full_name": ENSURE.REPOSITORY}]},
+        )
+
+        @contextmanager
+        def user_attribution_and_lifecycle():
+            with (
+                mock.patch.object(ENSURE.USER_ATTRIBUTION, "mint_scoped_pr_credential", return_value=credential),
+                mock.patch.object(ENSURE.USER_ATTRIBUTION, "revoke_scoped_pr_credential", return_value=revoke_ok),
+                mock.patch.object(ENSURE.LIFECYCLE, "Lifecycle", FakeLifecycle),
+            ):
+                yield
+
         return (
             mock.patch.object(ENSURE, "configured_origin", return_value=ENSURE.ORIGIN),
             mock.patch.object(ENSURE, "validate_privileged_executable"),
             mock.patch.object(ENSURE.RUNTIME_CONFIG, "load_runtime_settings", side_effect=[SimpleNamespace(app_id="123", installation_id="456", key_path="/fixture/key")] * 2),
             mock.patch.object(ENSURE, "make_jwt", return_value="JWT_FIXTURE"),
             mock.patch.object(ENSURE, "request_json", side_effect=api or self.api_success),
-            mock.patch.object(ENSURE.LIFECYCLE, "Lifecycle", FakeLifecycle),
+            user_attribution_and_lifecycle(),
         )
 
-    def run_success(self, api=None):
-        patches = self.patches(api)
+    def run_success(self, api=None, revoke_ok=True):
+        patches = self.patches(api, revoke_ok=revoke_ok)
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             return ENSURE.run_operation(ENSURE.OPERATION, "life-1", self.environment)
 
@@ -180,6 +196,7 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["contract_valid"])
         self.assertTrue(result["preconditions_valid"])
+        self.assertTrue(result["actor_login_valid"])
         self.assertTrue(result["pr_token_permissions_valid"])
         self.assertTrue(result["scope_valid"])
         self.assertEqual(result["pr_number"], 7)
@@ -309,12 +326,8 @@ class AuthenticatedEnsurePrTests(unittest.TestCase):
         self.assertEqual(result["failure_code"], "remote_head_drift")
         self.assertFalse(FakeLifecycle.state_writes)
 
-        def revocation_fails(method, path, authorization, payload=None):
-            if method == "DELETE":
-                return 500, {}
-            return self.api_success(method, path, authorization, payload)
         FakeLifecycle.ensure_failure = None
-        result = self.run_success(revocation_fails)
+        result = self.run_success(revoke_ok=False)
         self.assertEqual(result["failure_code"], "revocation_failed")
         self.assertFalse(FakeLifecycle.state_writes)
 
