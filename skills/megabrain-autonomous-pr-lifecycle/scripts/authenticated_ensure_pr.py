@@ -64,6 +64,20 @@ def _load_runtime_config_bridge() -> Any:
 RUNTIME_CONFIG = _load_runtime_config_bridge()
 
 
+def _load_user_attribution() -> Any:
+    path = Path(__file__).with_name("github_app_user_attribution.py")
+    specification = importlib.util.spec_from_file_location("megabrain_b42_user_attribution_p3", path)
+    if specification is None or specification.loader is None:
+        raise RuntimeError("user_attribution_unavailable")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+USER_ATTRIBUTION = _load_user_attribution()
+
+
 class SafeFailure(Exception):
     """An expected non-sensitive failure represented by a symbolic code."""
 
@@ -295,6 +309,7 @@ def _base_result() -> dict[str, Any]:
         "contract_valid": False,
         "preconditions_valid": False,
         "installation_permissions_valid": None,
+        "actor_login_valid": None,
         "pr_token_permissions_valid": None,
         "scope_valid": None,
         "pr_number": None,
@@ -313,6 +328,7 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
 
     del environ  # Legacy caller input is deliberately not a configuration source.
     token: str | None = None
+    credential: Any = None
     lifecycle: Any = None
     deferred_state: dict[str, Any] | None = None
     temporary_directory: tempfile.TemporaryDirectory[str] | None = None
@@ -361,21 +377,27 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
             raise LIFECYCLE.StopNeedsHuman("state_changed_before_authentication")
         if RUNTIME_CONFIG.load_runtime_settings() != settings:
             raise SafeFailure("runtime_config_changed_before_mint")
-        mint_status, minted = request_json(
-            "POST", f"/app/installations/{settings.installation_id}/access_tokens", f"Bearer {jwt}",
-            {"repositories": ["megabrain"], "permissions": PR_TOKEN_REQUEST_PERMISSIONS},
-        )
         jwt = ""
-        candidate = minted.get("token") if mint_status == 201 and isinstance(minted, Mapping) else None
+        try:
+            credential = USER_ATTRIBUTION.mint_scoped_pr_credential(settings.installation_id)
+        except USER_ATTRIBUTION.UserAttributionError as exc:
+            raise SafeFailure(exc.code) from exc
+        candidate = getattr(credential, "token", None)
+        actor_login = getattr(credential, "actor_login", None)
+        permissions = getattr(credential, "permissions", None)
+        scope = getattr(credential, "scope", None)
         if not isinstance(candidate, str) or not candidate:
             raise SafeFailure("token_mint_failed")
         token = candidate
-        if not _valid_pr_token_permissions(minted.get("permissions")):
+        if actor_login != "mide-lim":
+            result["actor_login_valid"] = False
+            raise SafeFailure("user_attribution_actor_rejected")
+        result["actor_login_valid"] = True
+        if not _valid_pr_token_permissions(permissions):
             result["pr_token_permissions_valid"] = False
             raise SafeFailure("token_permissions_rejected")
         result["pr_token_permissions_valid"] = True
-        scope_status, scope = request_json("GET", "/installation/repositories", f"token {token}")
-        if scope_status != 200 or not _valid_scope(scope):
+        if not _valid_scope(scope):
             result["scope_valid"] = False
             raise SafeFailure("scope_rejected")
         result["scope_valid"] = True
@@ -398,13 +420,13 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
     except Exception:
         result["failure_code"] = "unexpected_failure"
     finally:
-        if token is not None:
+        if credential is not None:
             try:
-                revoke_status, _ = request_json("DELETE", "/installation/token", f"token {token}")
-                result["revocation"] = "ok" if revoke_status == 204 else "failed"
-                if revoke_status != 204:
+                revoked = USER_ATTRIBUTION.revoke_scoped_pr_credential(credential)
+                result["revocation"] = "ok" if revoked else "failed"
+                if not revoked:
                     result["failure_code"] = "revocation_failed"
-            except SafeFailure:
+            except Exception:
                 result["revocation"] = "failed"
                 result["failure_code"] = "revocation_failed"
         if temporary_directory is not None:
@@ -415,6 +437,7 @@ def run_operation(operation: str, lifecycle_id: str, environ: Mapping[str, str] 
                 result["temporary_cleanup"] = False
                 result["failure_code"] = "cleanup_failed"
         token = None
+        credential = None
         if result["failure_code"] is None:
             if (lifecycle is None or deferred_state is None or expected_state is None
                     or expected_fingerprint is None or head is None):

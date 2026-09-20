@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
@@ -482,7 +483,38 @@ class AdapterTimingClosureTests(DirectGuardFixture):
         def counted(lifecycle, *args, **kwargs):
             counts["authorization_checks"] += 1
             return original(lifecycle, *args, **kwargs)
-        with self.adapter_context(module, api), mock.patch.object(actual, "_validate_run_authorization", autospec=True, side_effect=counted):
+
+        adapter_stack = self.adapter_context(module, api)
+        if module is P3:
+            credential = SimpleNamespace(
+                token="fixture",
+                actor_login="mide-lim",
+                permissions={"pull_requests": "write", "metadata": "read"},
+                scope={"total_count": 1, "repositories": [{"full_name": module.REPOSITORY}]},
+            )
+
+            def mint_scoped_pr_credential(_installation_id):
+                counts["token_mint_count"] += 1
+                if phase == "pre_mutation":
+                    self.clock.expired()
+                return credential
+
+            def revoke_scoped_pr_credential(_credential):
+                counts["revoke_count"] += 1
+                if phase == "post_remote_pre_cas":
+                    self.clock.expired()
+                return True
+
+            adapter_stack.enter_context(mock.patch.object(
+                module.USER_ATTRIBUTION, "mint_scoped_pr_credential",
+                side_effect=mint_scoped_pr_credential,
+            ))
+            adapter_stack.enter_context(mock.patch.object(
+                module.USER_ATTRIBUTION, "revoke_scoped_pr_credential",
+                side_effect=revoke_scoped_pr_credential,
+            ))
+
+        with adapter_stack, mock.patch.object(actual, "_validate_run_authorization", autospec=True, side_effect=counted):
             result = module.run_operation(operation, "life-1", self.environment)
         counts["remote_mutation_count"] += self.h.push_count
         counts["cleanup_count"] = int(result["temporary_cleanup"] is True)
