@@ -232,7 +232,11 @@ def _write_fixed_file(path: Path, value: str) -> None:
     _validate_parent_chain(uid, gid)
     if os.geteuid() != uid or os.getegid() != gid or path.parent != CONFIG_DIRECTORY:
         raise UserAttributionError("user_attribution_write_rejected")
-    if not value or "\n" in value or "\r" in value or len(value.encode("utf-8")) > MAX_FILE_BYTES - 1:
+    if not value or "\r" in value or len(value.encode("utf-8")) > MAX_FILE_BYTES - 1:
+        raise UserAttributionError("user_attribution_write_rejected")
+    if path != CONFIG_PATH and "\n" in value:
+        raise UserAttributionError("user_attribution_write_rejected")
+    if path == CONFIG_PATH and (value.startswith("\n") or value.endswith("\n") or "\n\n" in value):
         raise UserAttributionError("user_attribution_write_rejected")
     descriptor, temporary_name = tempfile.mkstemp(prefix=".user-attribution-", dir=CONFIG_DIRECTORY)
     temporary_path = Path(temporary_name)
