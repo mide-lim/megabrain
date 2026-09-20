@@ -1,6 +1,8 @@
 """Hermetic tests for GitHub App user-to-server PR attribution."""
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -34,6 +36,23 @@ def settings():
 
 
 class UserAttributionTests(unittest.TestCase):
+    def test_fixed_config_writer_accepts_multiline_config_only_for_fixed_config_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            config_path = directory / "user-attribution.conf"
+            secret_path = directory / "client-secret.txt"
+            uid, gid = os.geteuid(), os.getegid()
+            with (
+                mock.patch.object(ATTR, "CONFIG_DIRECTORY", directory),
+                mock.patch.object(ATTR, "CONFIG_PATH", config_path),
+                mock.patch.object(ATTR, "_identity", return_value=(uid, gid)),
+                mock.patch.object(ATTR, "_validate_parent_chain"),
+            ):
+                ATTR._write_fixed_file(config_path, "first=value\nsecond=value")
+                self.assertEqual(config_path.read_text(encoding="utf-8"), "first=value\nsecond=value\n")
+                with self.assertRaisesRegex(ATTR.UserAttributionError, "user_attribution_write_rejected"):
+                    ATTR._write_fixed_file(secret_path, "secret\nsecond-line")
+
     def test_scoped_permission_and_scope_validators_are_exact(self):
         self.assertTrue(ATTR._valid_scoped_permissions({"pull_requests": "write"}))
         self.assertTrue(ATTR._valid_scoped_permissions({"pull_requests": "write", "metadata": "read"}))
