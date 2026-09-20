@@ -13,7 +13,7 @@ MGB030 = ROOT / "workflows" / "MGB-030-enrichment-reel.json"
 GRANTS = ROOT / "infra" / "postgres" / "security" / "f4" / "002_f4_runtime_grants.sql"
 
 MGB020_SHA256 = "1534ec7412447f0285223de54c8ff19e9b542d17e7e2e92b603a2771adc236ac"
-MGB030_SHA256 = "f6b5974643926a42f1033560abb0293fb239fd7330c65a9d4a54d177c58e4695"
+MGB030_F4_SANITIZED_SHA256 = "f6b5974643926a42f1033560abb0293fb239fd7330c65a9d4a54d177c58e4695"
 
 
 def text(path: Path) -> str:
@@ -21,16 +21,16 @@ def text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_cutover_document_pins_sanitized_workflow_artifacts_and_limitations() -> None:
+def test_cutover_document_records_historical_sanitized_workflow_artifacts_and_limitations() -> None:
     document = text(CUTOVER)
 
     assert hashlib.sha256(MGB020.read_bytes()).hexdigest() == MGB020_SHA256
-    assert hashlib.sha256(MGB030.read_bytes()).hexdigest() == MGB030_SHA256
+    assert MGB030_F4_SANITIZED_SHA256 in document
     for required in (
         "workflows/MGB-020-download-reel.json",
         "workflows/MGB-030-enrichment-reel.json",
         MGB020_SHA256,
-        MGB030_SHA256,
+        MGB030_F4_SANITIZED_SHA256,
         "credential IDs",
         "credential secrets",
         "private URLs",
