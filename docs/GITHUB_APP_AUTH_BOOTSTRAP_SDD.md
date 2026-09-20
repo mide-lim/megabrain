@@ -8,6 +8,27 @@ installation token, temporary `GIT_ASKPASS`, immediate Git child operation,
 token revocation, and guaranteed cleanup. The capability must be usable by a
 future B4.2 PR lifecycle without implementing it now.
 
+## B4.1-R2A — Protected Runtime Configuration
+
+The B4.1 probe retains its distinct explicit human operational gate and remains
+read-only. It does not receive B4.2 Task Contract or B4.3 Run Authorization
+semantics. After the fixed operation, operational gate, and fixed-origin checks,
+it loads only the inert fixed host configuration at
+`/home/megabrain-hermes/.config/megabrain-hermes/github-app/runtime.conf`.
+
+The strict three-key schema contains decimal App and installation identifiers
+and the exact approved key path only. The loader rejects non-fixed paths,
+symlinks, unsafe parent directories, ownership/group mismatch, modes other than
+`0400` or `0600`, malformed UTF-8, BOM, blank/comment/whitespace syntax,
+duplicate or unknown keys, and an alternate key path. It returns immutable
+settings only; it never evaluates shell data or accepts environment, CLI,
+repository, `.env`, or profile fallback.
+
+`bootstrap_runtime_config.py` may create the fixed file only under a separately
+approved local-TTY human maintenance action. R2A implements and hermetically
+tests that utility but does not execute it against the host. It never creates a
+JWT or token, signs, calls GitHub, invokes Git, or authorizes a probe.
+
 ## Known Context and Assumptions
 
 - `origin` is the HTTPS repository `https://github.com/mide-lim/megabrain.git`.
@@ -140,8 +161,11 @@ runtime is read or modified.
   name; remove it in `finally`.
 - Disable interactive prompts and configured credential helpers for the Git
   child process to prove the ephemeral askpass path is used.
-- Never retain credentials in shell history, repository files, profile config,
-  output, logs, or parent environment.
+- Never retain JWTs, installation tokens, private-key contents, PATs, passwords,
+  or askpass content in shell history, repository files, profile configuration,
+  output, logs, or parent environment. The fixed inert runtime configuration may
+  retain only the validated App identifier, installation identifier, and exact
+  approved key path.
 - Treat revoked-token failure and cleanup failure as operation failure. Do not
   retain the token for retry.
 - B4.1 contains no administrative, merge, bypass, ruleset, deploy, or
