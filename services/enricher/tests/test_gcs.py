@@ -69,8 +69,17 @@ def test_upload_uses_attempt_namespace_create_only_and_wav_content_type(
     assert result.generation == "42"
 
 
-def test_upload_object_precondition_collision_is_a_stable_error(tmp_path: Path) -> None:
+def test_upload_object_precondition_collision_preserves_existing_object(
+    tmp_path: Path,
+) -> None:
     class CollisionBlob(FakeBlob):
+        def __init__(self) -> None:
+            super().__init__()
+            self.object_contents = b"existing-object-sentinel"
+            self.upload_attempts = 0
+            self.overwrite_attempts = 0
+            self.delete_calls = 0
+
         def upload_from_filename(
             self,
             filename: str,
@@ -78,12 +87,19 @@ def test_upload_object_precondition_collision_is_a_stable_error(tmp_path: Path) 
             content_type: str,
             if_generation_match: int,
         ) -> None:
+            self.upload_attempts += 1
             self.upload_call = (filename, content_type, if_generation_match)
+            if if_generation_match != 0:
+                self.overwrite_attempts += 1
             raise google_exceptions.PreconditionFailed("object already exists")
+
+        def delete(self) -> None:
+            self.delete_calls += 1
 
     audio_path = tmp_path / "audio.wav"
     audio_path.write_bytes(b"wav")
     blob = CollisionBlob()
+    existing_object_before = blob.object_contents
     store = GoogleTemporaryAudioStore(
         bucket="configured-temp-bucket",
         client=FakeStorageClient(FakeBucket(blob)),
@@ -98,3 +114,7 @@ def test_upload_object_precondition_collision_is_a_stable_error(tmp_path: Path) 
     assert raised.value.error_code == "STT_BATCH_OBJECT_CONFLICT"
     assert str(raised.value) == "Temporary transcription audio object already exists"
     assert blob.upload_call == (str(audio_path), "audio/wav", 0)
+    assert blob.upload_attempts == 1
+    assert blob.overwrite_attempts == 0
+    assert blob.object_contents == existing_object_before
+    assert blob.delete_calls == 0

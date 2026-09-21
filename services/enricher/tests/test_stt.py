@@ -7,6 +7,7 @@ import pytest
 from google.api_core import exceptions as google_exceptions
 from google.auth import exceptions as google_auth_exceptions
 
+from app import main
 from app.stt.base import (
     BatchSubmissionResult,
     SpeechToTextAdapter,
@@ -329,6 +330,61 @@ class SizedAudioPath:
 
     def read_bytes(self) -> bytes:
         return b"audio"
+
+
+def test_application_configuration_without_temp_bucket_keeps_sync_recognize(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOOGLE_STT_TEMP_BUCKET", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    adapter = main._stt_adapter()
+    client = FakeGoogleClient(response={"text": "texto", "language": "pt-BR"})
+    adapter._client = client
+
+    result = adapter.transcribe(
+        SizedAudioPath(1),  # type: ignore[arg-type]
+        duration_seconds=60.0,
+    )
+
+    assert adapter._temporary_audio_store is None
+    assert isinstance(result, TranscriptionResult)
+    assert result.transcript_text == "texto"
+    assert client.request is not None
+
+
+def test_application_configuration_without_temp_bucket_blocks_batch_before_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ObservedTemporaryStore:
+        construction_count = 0
+        upload_call_count = 0
+
+        def __init__(self, *, bucket: str) -> None:
+            type(self).construction_count += 1
+
+        def upload(self, *, attempt_id: object, path: Path) -> TemporaryAudioObject:
+            type(self).upload_call_count += 1
+            raise AssertionError("GCS upload must not be attempted")
+
+    monkeypatch.delenv("GOOGLE_STT_TEMP_BUCKET", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setattr(main, "GoogleTemporaryAudioStore", ObservedTemporaryStore)
+    adapter = main._stt_adapter()
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    adapter._client = client
+
+    with pytest.raises(SpeechToTextError) as raised:
+        adapter.transcribe(
+            SizedAudioPath(1),  # type: ignore[arg-type]
+            duration_seconds=60.1,
+            attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    assert adapter._temporary_audio_store is None
+    assert ObservedTemporaryStore.construction_count == 0
+    assert ObservedTemporaryStore.upload_call_count == 0
+    assert raised.value.error_code == "STT_BATCH_CONFIGURATION_REQUIRED"
+    assert client.batch_calls == 0
 
 
 @pytest.mark.parametrize(
