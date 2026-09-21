@@ -8,11 +8,14 @@ from google.api_core import exceptions as google_exceptions
 from google.auth import exceptions as google_auth_exceptions
 
 from app.stt.base import (
+    BatchSubmissionResult,
     SpeechToTextAdapter,
+    SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
     TranscriptionResult,
 )
 from app.stt.google import GoogleSpeechToTextAdapter
+from app.gcs import TemporaryAudioObject, TemporaryAudioStoreError
 
 _UNSET = object()
 
@@ -102,6 +105,40 @@ def test_google_adapter_accepts_exact_synchronous_limits() -> None:
 
     assert result.transcript_text == "texto"
     assert client.request is not None
+
+
+def test_sync_route_does_not_require_temporary_bucket_configuration() -> None:
+    client = FakeGoogleClient(response={"text": "texto", "language": "pt-BR"})
+    adapter = GoogleSpeechToTextAdapter(client=client, project_id="test-project")
+
+    result = adapter.transcribe(
+        SizedAudioPath(1),  # type: ignore[arg-type]
+        duration_seconds=60.0,
+    )
+
+    assert isinstance(result, TranscriptionResult)
+    assert result.transcript_text == "texto"
+    assert client.request is not None
+
+
+def test_google_adapter_uses_us_regional_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.cloud import speech_v2
+
+    observed_options: list[object] = []
+
+    class Client:
+        pass
+
+    def fake_speech_client(*, client_options: object) -> Client:
+        observed_options.append(client_options)
+        return Client()
+
+    monkeypatch.setattr(speech_v2, "SpeechClient", fake_speech_client)
+    adapter = GoogleSpeechToTextAdapter(project_id="test-project")
+
+    adapter._get_client()
+
+    assert observed_options == [{"api_endpoint": "us-speech.googleapis.com"}]
 
 
 def test_google_adapter_is_injectable_and_does_not_require_credentials() -> None:
@@ -221,3 +258,241 @@ def test_google_sdk_errors_are_sanitized_and_stable(
     assert raised.value.stage == "transcription"
     assert raised.value.retryable is retryable
     assert "secret" not in str(raised.value)
+
+
+@dataclass
+class FakeBatchClient:
+    operation: object | None = None
+    error: Exception | None = None
+    batch_request: object | None = None
+    batch_retry: object = _UNSET
+    batch_calls: int = 0
+    recognize_calls: int = 0
+
+    def recognize(self, *, request: object, retry: object = _UNSET) -> object:
+        self.recognize_calls += 1
+        return {"text": "texto", "language": "pt-BR"}
+
+    def batch_recognize(self, *, request: object, retry: object = _UNSET) -> object:
+        self.batch_calls += 1
+        self.batch_request = request
+        self.batch_retry = retry
+        if self.error is not None:
+            raise self.error
+        return self.operation
+
+
+class FakeBatchOperation:
+    class RawOperation:
+        name = "projects/123/locations/us/operations/v2-test-operation"
+
+    operation = RawOperation()
+
+    def result(self) -> None:
+        raise AssertionError("Batch operation must not be awaited")
+
+    def done(self) -> None:
+        raise AssertionError("Batch operation must not be polled")
+
+
+class FakeTemporaryStore:
+    def __init__(self) -> None:
+        self.upload_calls: list[tuple[object, Path]] = []
+        self.delete_calls = 0
+
+    @property
+    def configured(self) -> bool:
+        return True
+
+    def upload(self, *, attempt_id: object, path: Path) -> TemporaryAudioObject:
+        self.upload_calls.append((attempt_id, path))
+        return TemporaryAudioObject(
+            bucket="test-temp-bucket",
+            object_name=f"f6/transcription/{attempt_id}/audio.wav",
+            uri=f"gs://test-temp-bucket/f6/transcription/{attempt_id}/audio.wav",
+            generation="1",
+        )
+
+    def delete(self) -> None:
+        self.delete_calls += 1
+
+
+class SizedAudioPath:
+    def __init__(self, size: int) -> None:
+        self._size = size
+
+    def stat(self):  # type: ignore[no-untyped-def]
+        class Stat:
+            st_size = self._size
+
+        return Stat()
+
+    def read_bytes(self) -> bytes:
+        return b"audio"
+
+
+@pytest.mark.parametrize(
+    ("duration_seconds", "size_bytes", "expected_method"),
+    [
+        (59.9, 10_485_759, "recognize"),
+        (60.0, 10_485_760, "recognize"),
+        (60.0, 10_485_761, "batch_recognize"),
+        (60.1, 10_485_760, "batch_recognize"),
+        (60.1, 10_485_761, "batch_recognize"),
+        (3600.0, 1, "batch_recognize"),
+    ],
+)
+def test_google_adapter_routes_using_normalized_duration_and_size_boundaries(
+    duration_seconds: float,
+    size_bytes: int,
+    expected_method: str,
+) -> None:
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    adapter = GoogleSpeechToTextAdapter(
+        client=client,
+        project_id="test-project",
+        temporary_audio_store=FakeTemporaryStore(),
+    )
+
+    result = adapter.transcribe(
+        SizedAudioPath(size_bytes),  # type: ignore[arg-type]
+        duration_seconds=duration_seconds,
+        attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )
+
+    if expected_method == "recognize":
+        assert isinstance(result, TranscriptionResult)
+        assert client.recognize_calls == 1
+        assert client.batch_calls == 0
+    else:
+        assert isinstance(result, BatchSubmissionResult)
+        assert client.recognize_calls == 0
+        assert client.batch_calls == 1
+
+
+def test_batch_submission_has_exact_operation_name_and_does_not_wait() -> None:
+    store = FakeTemporaryStore()
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    adapter = GoogleSpeechToTextAdapter(
+        client=client,
+        project_id="test-project",
+        temporary_audio_store=store,
+    )
+
+    result = adapter.transcribe(
+        SizedAudioPath(1),  # type: ignore[arg-type]
+        language_hint=None,
+        duration_seconds=60.1,
+        attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )
+
+    assert result == BatchSubmissionResult(
+        provider="google",
+        model="chirp_3",
+        provider_request_id="projects/123/locations/us/operations/v2-test-operation",
+        state="processing",
+    )
+    assert client.batch_retry is None
+    assert client.batch_request == {
+        "recognizer": "projects/test-project/locations/us/recognizers/_",
+        "config": {
+            "auto_decoding_config": {},
+            "language_codes": ["pt-BR"],
+            "model": "chirp_3",
+            "features": {"enable_automatic_punctuation": True},
+        },
+        "files": [
+            {
+                "uri": "gs://test-temp-bucket/f6/transcription/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/audio.wav"
+            }
+        ],
+        "recognition_output_config": {"inline_response_config": {}},
+    }
+    assert len(store.upload_calls) == 1
+    assert store.upload_calls[0][0] == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    assert getattr(store.upload_calls[0][1], "_size") == 1
+    assert store.delete_calls == 0
+
+
+def test_batch_requires_configured_temporary_bucket_without_calling_provider() -> None:
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    adapter = GoogleSpeechToTextAdapter(client=client, project_id="test-project")
+
+    with pytest.raises(SpeechToTextError) as raised:
+        adapter.transcribe(
+            SizedAudioPath(1),  # type: ignore[arg-type]
+            duration_seconds=60.1,
+            attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    assert raised.value.error_code == "STT_BATCH_CONFIGURATION_REQUIRED"
+    assert client.batch_calls == 0
+
+
+def test_batch_duration_above_one_hour_fails_without_upload_or_submission() -> None:
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    store = FakeTemporaryStore()
+    adapter = GoogleSpeechToTextAdapter(
+        client=client,
+        project_id="test-project",
+        temporary_audio_store=store,
+    )
+
+    with pytest.raises(SpeechToTextError) as raised:
+        adapter.transcribe(
+            SizedAudioPath(1),  # type: ignore[arg-type]
+            duration_seconds=3600.1,
+            attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    assert raised.value.error_code == "STT_BATCH_UNSUPPORTED_DURATION"
+    assert store.upload_calls == []
+    assert client.batch_calls == 0
+
+
+def test_batch_object_collision_fails_without_provider_submission() -> None:
+    class ConflictStore(FakeTemporaryStore):
+        def upload(self, *, attempt_id: object, path: Path) -> TemporaryAudioObject:
+            raise TemporaryAudioStoreError(
+                "STT_BATCH_OBJECT_CONFLICT", "Temporary object already exists"
+            )
+
+    client = FakeBatchClient(operation=FakeBatchOperation())
+    adapter = GoogleSpeechToTextAdapter(
+        client=client,
+        project_id="test-project",
+        temporary_audio_store=ConflictStore(),
+    )
+
+    with pytest.raises(SpeechToTextError) as raised:
+        adapter.transcribe(
+            SizedAudioPath(1),  # type: ignore[arg-type]
+            duration_seconds=60.1,
+            attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    assert raised.value.error_code == "STT_BATCH_OBJECT_CONFLICT"
+    assert client.batch_calls == 0
+
+
+def test_ambiguous_batch_submission_is_not_resubmitted_or_cleaned_up() -> None:
+    store = FakeTemporaryStore()
+    client = FakeBatchClient(error=TimeoutError("secret transport detail"))
+    adapter = GoogleSpeechToTextAdapter(
+        client=client,
+        project_id="test-project",
+        temporary_audio_store=store,
+    )
+
+    with pytest.raises(SpeechToTextError) as raised:
+        adapter.transcribe(
+            SizedAudioPath(1),  # type: ignore[arg-type]
+            duration_seconds=60.1,
+            attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    assert raised.value.error_code == "STT_BATCH_SUBMISSION_UNKNOWN"
+    assert "secret" not in str(raised.value)
+    assert client.batch_calls == 1
+    assert len(store.upload_calls) == 1
+    assert store.delete_calls == 0

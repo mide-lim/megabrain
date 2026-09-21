@@ -137,6 +137,27 @@ class EnrichmentResponse(StrictModel):
     warnings: list[str]
 
 
+class BatchSubmission(StrictModel):
+    state: Literal["processing"]
+    provider: str
+    model: str
+    provider_request_id: str
+
+
+class BatchEnrichmentResponse(StrictModel):
+    contract_version: str
+    attempt_id: UUID
+    reel_id: int
+    shortcode: str
+    pipeline_version: str
+    processor_version: str
+    source: SourceMetadata
+    media: MediaMetadata
+    transcription_input: TranscriptionInput
+    batch_submission: BatchSubmission
+    warnings: list[str]
+
+
 class MediaProcessingError(RuntimeError):
     """A stable, sanitized failure raised by local media processing."""
 

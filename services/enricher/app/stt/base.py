@@ -3,6 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,6 +14,16 @@ class TranscriptionResult:
     provider: str
     model: str
     provider_request_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BatchSubmissionResult:
+    """A submitted provider operation that has not reached a terminal state."""
+
+    provider: str
+    model: str
+    provider_request_id: str
+    state: Literal["processing"]
 
 
 class SynchronousRecognitionUnsupportedError(RuntimeError):
@@ -41,5 +53,6 @@ class SpeechToTextAdapter(ABC):
         *,
         language_hint: str | None = None,
         duration_seconds: float | None = None,
-    ) -> TranscriptionResult:
-        """Transcribe one local audio file into a provider-neutral result."""
+        attempt_id: UUID | str | None = None,
+    ) -> TranscriptionResult | BatchSubmissionResult:
+        """Transcribe or submit one local audio file into a provider-neutral result."""

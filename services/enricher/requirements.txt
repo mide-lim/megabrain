@@ -1,6 +1,7 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 google-cloud-speech==2.33.0
+google-cloud-storage==3.14.1
 boto3==1.40.18
 pytest==8.4.1
 httpx==0.28.1
