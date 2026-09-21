@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
+from app.gcs import TemporaryAudioStoreError
 from app.stt.base import (
+    BatchSubmissionResult,
     SpeechToTextAdapter,
     SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
@@ -12,10 +15,11 @@ from app.stt.base import (
 
 
 class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
-    """Injectable Google STT V2 adapter using synchronous Recognize only."""
+    """Injectable Google STT V2 adapter for sync and batch submission."""
 
     MAX_SYNC_CONTENT_BYTES = 10_485_760
     MAX_SYNC_DURATION_SECONDS = 60.0
+    MAX_BATCH_DURATION_SECONDS = 3600.0
 
     def __init__(
         self,
@@ -25,12 +29,14 @@ class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
         location: str = "us",
         recognizer: str = "_",
         model: str = "chirp_3",
+        temporary_audio_store: Any | None = None,
     ) -> None:
         self._client = client
         self._project_id = project_id
         self._location = location
         self._recognizer = recognizer
         self._model = model
+        self._temporary_audio_store = temporary_audio_store
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -47,13 +53,21 @@ class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
         *,
         language_hint: str | None = None,
         duration_seconds: float | None = None,
-    ) -> TranscriptionResult:
-        self._ensure_sync_supported(
-            content_size=audio_path.stat().st_size,
+        attempt_id: UUID | str | None = None,
+    ) -> TranscriptionResult | BatchSubmissionResult:
+        content_size = audio_path.stat().st_size
+        if self._is_sync_safe(
+            content_size=content_size,
             duration_seconds=duration_seconds,
-        )
-        return self.transcribe_bytes(
-            audio_path.read_bytes(),
+        ):
+            return self.transcribe_bytes(
+                audio_path.read_bytes(),
+                language_hint=language_hint,
+                duration_seconds=duration_seconds,
+            )
+        return self._submit_batch(
+            audio_path,
+            attempt_id=attempt_id,
             language_hint=language_hint,
             duration_seconds=duration_seconds,
         )
@@ -160,6 +174,96 @@ class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
             raise SynchronousRecognitionUnsupportedError(
                 "Audio exceeds synchronous Recognize limits"
             )
+
+    @classmethod
+    def _is_sync_safe(
+        cls,
+        *,
+        content_size: int,
+        duration_seconds: float | None,
+    ) -> bool:
+        return content_size <= cls.MAX_SYNC_CONTENT_BYTES and (
+            duration_seconds is None
+            or duration_seconds <= cls.MAX_SYNC_DURATION_SECONDS
+        )
+
+    def _submit_batch(
+        self,
+        audio_path: Path,
+        *,
+        attempt_id: UUID | str | None,
+        language_hint: str | None,
+        duration_seconds: float | None,
+    ) -> BatchSubmissionResult:
+        normalized_duration = duration_seconds if duration_seconds is not None else 0.0
+        if normalized_duration > self.MAX_BATCH_DURATION_SECONDS:
+            raise SpeechToTextError(
+                "STT_BATCH_UNSUPPORTED_DURATION",
+                "Audio exceeds BatchRecognize duration limit",
+                retryable=False,
+            )
+        if attempt_id is None or self._temporary_audio_store is None or not getattr(
+            self._temporary_audio_store, "configured", False
+        ):
+            raise SpeechToTextError(
+                "STT_BATCH_CONFIGURATION_REQUIRED",
+                "Batch transcription requires temporary storage configuration",
+                retryable=False,
+            )
+        try:
+            temporary_audio = self._temporary_audio_store.upload(
+                attempt_id=attempt_id,
+                path=audio_path,
+            )
+        except TemporaryAudioStoreError as error:
+            raise SpeechToTextError(
+                error.error_code,
+                str(error),
+                retryable=False,
+            ) from None
+
+        language = language_hint or "pt-BR"
+        request = {
+            "recognizer": (
+                f"projects/{self._project_id}/locations/{self._location}"
+                f"/recognizers/{self._recognizer}"
+            ),
+            "config": {
+                "auto_decoding_config": {},
+                "language_codes": [language],
+                "model": self._model,
+                "features": {"enable_automatic_punctuation": True},
+            },
+            "files": [{"uri": temporary_audio.uri}],
+            "recognition_output_config": {"inline_response_config": {}},
+        }
+        try:
+            operation = self._get_client().batch_recognize(request=request, retry=None)
+            operation_name = self._operation_name(operation)
+        except Exception:  # noqa: BLE001 - submission status is ambiguous.
+            raise SpeechToTextError(
+                "STT_BATCH_SUBMISSION_UNKNOWN",
+                "Batch transcription submission outcome is unknown",
+                retryable=False,
+            ) from None
+        if operation_name is None:
+            raise SpeechToTextError(
+                "STT_BATCH_SUBMISSION_UNKNOWN",
+                "Batch transcription submission outcome is unknown",
+                retryable=False,
+            )
+        return BatchSubmissionResult(
+            provider="google",
+            model=self._model,
+            provider_request_id=operation_name,
+            state="processing",
+        )
+
+    @staticmethod
+    def _operation_name(operation: Any) -> str | None:
+        raw_operation = getattr(operation, "operation", None)
+        name = getattr(raw_operation, "name", None) or getattr(operation, "name", None)
+        return str(name) if name else None
 
     @staticmethod
     def _normalize_response(response: Any) -> tuple[str, str | None, str | None]:

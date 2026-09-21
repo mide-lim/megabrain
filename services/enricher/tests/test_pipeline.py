@@ -18,7 +18,7 @@ from app.media import (
     TranscriptionInput,
     VideoMetadata,
 )
-from app.stt.base import SpeechToTextError, TranscriptionResult
+from app.stt.base import BatchSubmissionResult, SpeechToTextError, TranscriptionResult
 
 
 def payload(content: bytes = b"video") -> EnrichmentRequest:
@@ -112,8 +112,53 @@ def test_audio_is_extracted_transcribed_and_normalized(
     assert result.transcription.engine.model == "chirp_3"
     assert result.transcription_input == audio_input
     adapter.transcribe.assert_called_once_with(
-        Path("audio.wav"), language_hint="pt-BR", duration_seconds=2.0
+        Path("audio.wav"),
+        language_hint="pt-BR",
+        duration_seconds=2.0,
+        attempt_id=payload().attempt_id,
     )
+
+
+def test_batch_submission_returns_non_terminal_response_without_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio_input = TranscriptionInput(
+        format="wav", sample_rate_hz=48_000, channels=1, duration_seconds=60.1
+    )
+
+    @contextmanager
+    def fake_audio(_path: Path):
+        yield ExtractedAudio(Path("audio.wav"), audio_input)
+
+    adapter = Mock()
+    adapter.transcribe.return_value = BatchSubmissionResult(
+        provider="google",
+        model="chirp_3",
+        provider_request_id="projects/123/locations/us/operations/v2-test-operation",
+        state="processing",
+    )
+    monkeypatch.setattr(main, "temporary_audio", fake_audio)
+
+    response = main.enrich_media(
+        payload(),
+        Path("video"),
+        source(),
+        metadata=metadata(audio=True),
+        stt_adapter=adapter,
+    ).model_dump(mode="json")
+
+    assert response["attempt_id"] == str(payload().attempt_id)
+    assert response["reel_id"] == 42
+    assert response["pipeline_version"] == "sprint-3-v1"
+    assert response["source"]["object_key"] == payload().object_key
+    assert response["batch_submission"] == {
+        "state": "processing",
+        "provider": "google",
+        "model": "chirp_3",
+        "provider_request_id": "projects/123/locations/us/operations/v2-test-operation",
+    }
+    assert "transcription" not in response
+    assert "processing" not in response
 
 
 def test_response_exposes_only_approved_transcription_fields(

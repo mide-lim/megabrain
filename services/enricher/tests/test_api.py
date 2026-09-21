@@ -284,6 +284,72 @@ def test_enrichment_returns_completed_pipeline_response(
     assert "success" not in response.json()
 
 
+def test_enrichment_returns_pending_batch_submission_response(monkeypatch) -> None:
+    attempt_id = uuid4()
+    pending = main.BatchEnrichmentResponse.model_validate(
+        {
+            "contract_version": "1.0",
+            "attempt_id": attempt_id,
+            "reel_id": 42,
+            "shortcode": "ABC_123-x",
+            "pipeline_version": "sprint-3-v1",
+            "processor_version": main.VERSION,
+            "source": {
+                "object_key": enrichment_payload(attempt_id)["object_key"],
+                "sha256": "a" * 64,
+                "size_bytes": 1234,
+            },
+            "media": {
+                "container_format": "mp4",
+                "duration_seconds": 60.1,
+                "video": {"codec": "h264", "width": 1080, "height": 1920},
+                "audio": {"codec": "aac", "sample_rate_hz": 48_000, "channels": 2},
+            },
+            "transcription_input": {
+                "format": "wav",
+                "sample_rate_hz": 48_000,
+                "channels": 1,
+                "duration_seconds": 60.1,
+            },
+            "batch_submission": {
+                "state": "processing",
+                "provider": "google",
+                "model": "chirp_3",
+                "provider_request_id": "projects/123/locations/us/operations/v2-test-operation",
+            },
+            "warnings": [],
+        }
+    )
+    monkeypatch.setattr(main, "process_source", lambda *_args, **_kwargs: pending)
+    monkeypatch.setattr(main, "_r2_client", lambda: object())
+    monkeypatch.setattr(main, "_stt_adapter", lambda: object())
+    monkeypatch.setenv("R2_BUCKET", "test-bucket")
+
+    response = client.post(
+        "/v1/enrichments",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(attempt_id),
+        },
+        json=enrichment_payload(attempt_id),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["attempt_id"] == str(attempt_id)
+    assert response.json()["reel_id"] == 42
+    assert response.json()["source"]["object_key"] == enrichment_payload(attempt_id)[
+        "object_key"
+    ]
+    assert response.json()["batch_submission"] == {
+        "state": "processing",
+        "provider": "google",
+        "model": "chirp_3",
+        "provider_request_id": "projects/123/locations/us/operations/v2-test-operation",
+    }
+    assert "transcription" not in response.json()
+    assert "processing" not in response.json()
+
+
 def test_transient_google_error_uses_retryable_transcription_envelope(
     monkeypatch,
 ) -> None:
@@ -360,6 +426,7 @@ def test_openapi_contract_has_only_approved_error_stages_and_fields() -> None:
 
     assert set(schema["paths"]["/v1/enrichments"]["post"]["responses"]) == {
         "200",
+        "202",
         "401",
         "404",
         "409",

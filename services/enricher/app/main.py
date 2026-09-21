@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.gcs import GoogleTemporaryAudioStore
 from app.media import (
+    BatchEnrichmentResponse,
+    BatchSubmission,
     EnrichmentRequest,
     EnrichmentResponse,
     ErrorResponse,
@@ -30,6 +33,7 @@ from app.media import (
 )
 from app.r2 import verified_r2_object
 from app.stt.base import (
+    BatchSubmissionResult,
     SpeechToTextAdapter,
     SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
@@ -59,7 +63,13 @@ MediaPipeline = Callable[[Path], Any]
 
 
 def _stt_adapter() -> GoogleSpeechToTextAdapter:
-    return GoogleSpeechToTextAdapter(project_id=os.environ["GOOGLE_CLOUD_PROJECT"])
+    bucket = os.getenv("GOOGLE_STT_TEMP_BUCKET", "").strip()
+    return GoogleSpeechToTextAdapter(
+        project_id=os.environ["GOOGLE_CLOUD_PROJECT"],
+        temporary_audio_store=(
+            GoogleTemporaryAudioStore(bucket=bucket) if bucket else None
+        ),
+    )
 
 
 def enrich_media(
@@ -70,7 +80,7 @@ def enrich_media(
     metadata: MediaMetadata | None = None,
     stt_adapter: SpeechToTextAdapter,
     started_at: datetime | None = None,
-) -> EnrichmentResponse:
+) -> EnrichmentResponse | BatchEnrichmentResponse:
     started = started_at or datetime.now(timezone.utc)
     media = metadata or probe_media(media_path)
     transcription_input = None
@@ -89,6 +99,26 @@ def enrich_media(
                 extracted.path,
                 language_hint=payload.language_hint,
                 duration_seconds=extracted.metadata.duration_seconds,
+                attempt_id=payload.attempt_id,
+            )
+        if isinstance(result, BatchSubmissionResult):
+            return BatchEnrichmentResponse(
+                contract_version=payload.contract_version,
+                attempt_id=payload.attempt_id,
+                reel_id=payload.reel_id,
+                shortcode=payload.shortcode,
+                pipeline_version=payload.pipeline_version,
+                processor_version=VERSION,
+                source=source,
+                media=media,
+                transcription_input=transcription_input,
+                batch_submission=BatchSubmission(
+                    state=result.state,
+                    provider=result.provider,
+                    model=result.model,
+                    provider_request_id=result.provider_request_id,
+                ),
+                warnings=[],
             )
         text = result.transcript_text.strip()
         transcription = Transcription(
@@ -166,7 +196,7 @@ def _error(
     message: str,
     retryable: bool,
     attempt_id: UUID | None,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
         error_code=error_code,
@@ -274,6 +304,7 @@ def health() -> dict[str, str]:
     "/v1/enrichments",
     response_model=EnrichmentResponse,
     responses={
+        202: {"model": BatchEnrichmentResponse},
         401: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
@@ -337,6 +368,10 @@ async def create_enrichment(
             "STT_UNAVAILABLE": 503,
             "STT_REQUEST_REJECTED": 422,
             "STT_SYNC_RECOGNIZE_UNSUPPORTED": 422,
+            "STT_BATCH_UNSUPPORTED_DURATION": 422,
+            "STT_BATCH_CONFIGURATION_REQUIRED": 422,
+            "STT_BATCH_OBJECT_CONFLICT": 409,
+            "STT_BATCH_SUBMISSION_UNKNOWN": 503,
         }.get(error.error_code, 500)
         return _error(
             status,
@@ -356,4 +391,7 @@ async def create_enrichment(
             attempt_id=payload.attempt_id,
         )
 
-    return JSONResponse(status_code=200, content=result.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=202 if isinstance(result, BatchEnrichmentResponse) else 200,
+        content=result.model_dump(mode="json"),
+    )
