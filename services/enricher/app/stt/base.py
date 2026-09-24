@@ -26,6 +26,18 @@ class BatchSubmissionResult:
     state: Literal["processing"]
 
 
+@dataclass(frozen=True, slots=True)
+class BatchReconciliationResult:
+    """The result of one exact known BatchRecognize operation lookup."""
+
+    state: Literal["pending", "terminal_success", "terminal_provider_failure"]
+    provider: str
+    model: str
+    provider_request_id: str
+    transcript_text: str | None
+    transcript_language: str | None
+
+
 class SynchronousRecognitionUnsupportedError(RuntimeError):
     """The audio cannot be processed with synchronous Recognize."""
 
@@ -36,6 +48,17 @@ class SynchronousRecognitionUnsupportedError(RuntimeError):
 
 class SpeechToTextError(RuntimeError):
     """A stable, sanitized transcription provider failure."""
+
+    stage = "transcription"
+
+    def __init__(self, error_code: str, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.retryable = retryable
+
+
+class ReconciliationError(RuntimeError):
+    """A sanitized control-plane failure while reading a known Batch operation."""
 
     stage = "transcription"
 

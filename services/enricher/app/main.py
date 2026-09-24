@@ -25,6 +25,9 @@ from app.media import (
     MediaMetadata,
     MediaProcessingError,
     ProcessingMetadata,
+    ReconciliationErrorResponse,
+    ReconciliationPendingResponse,
+    ReconciliationRequest,
     SourceMetadata,
     Transcription,
     TranscriptionEngine,
@@ -34,6 +37,7 @@ from app.media import (
 from app.r2 import verified_r2_object
 from app.stt.base import (
     BatchSubmissionResult,
+    ReconciliationError,
     SpeechToTextAdapter,
     SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
@@ -181,6 +185,131 @@ def process_source(
         )
 
 
+def reconcile_source(
+    payload: ReconciliationRequest,
+    *,
+    client: Any,
+    bucket: str,
+    stt_adapter: GoogleSpeechToTextAdapter,
+) -> EnrichmentResponse | ReconciliationPendingResponse | ReconciliationErrorResponse:
+    result = stt_adapter.reconcile_batch(
+        provider_request_id=payload.provider_request_id,
+        expected_input_uri=stt_adapter.batch_input_uri(attempt_id=payload.attempt_id),
+    )
+    source_identity = SourceMetadata(
+        object_key=payload.object_key,
+        sha256=payload.expected_sha256,
+        size_bytes=payload.expected_size_bytes or 0,
+    )
+    if result.state == "pending":
+        return ReconciliationPendingResponse(
+            contract_version=payload.contract_version,
+            attempt_id=payload.attempt_id,
+            reel_id=payload.reel_id,
+            shortcode=payload.shortcode,
+            pipeline_version=payload.pipeline_version,
+            source=source_identity,
+            batch_submission=BatchSubmission(
+                state="processing",
+                provider=result.provider,
+                model=result.model,
+                provider_request_id=result.provider_request_id,
+            ),
+        )
+    if result.state == "terminal_provider_failure":
+        stt_adapter.cleanup_batch_audio(attempt_id=payload.attempt_id)
+        return ReconciliationErrorResponse(
+            error_code="STT_BATCH_PROVIDER_FAILED",
+            stage=ErrorStage.TRANSCRIPTION,
+            message="Batch transcription provider failed",
+            retryable=False,
+            attempt_id=payload.attempt_id,
+            reel_id=payload.reel_id,
+            pipeline_version=payload.pipeline_version,
+            provider_request_id=payload.provider_request_id,
+            provider_terminal=True,
+        )
+    if result.state != "terminal_success":
+        raise ReconciliationError(
+            "STT_RECONCILIATION_INVALID_RESPONSE",
+            "Batch transcription reconciliation response was invalid",
+            retryable=False,
+        )
+
+    started_at = datetime.now(timezone.utc)
+    with verified_r2_object(
+        client=client,
+        bucket=bucket,
+        object_key=payload.object_key,
+        shortcode=payload.shortcode,
+        expected_sha256=payload.expected_sha256,
+        expected_size_bytes=payload.expected_size_bytes,
+    ) as (media_path, source):
+        media = probe_media(media_path)
+        if media.audio is None:
+            raise ReconciliationError(
+                "STT_RECONCILIATION_INVALID_RESPONSE",
+                "Batch transcription reconciliation response was invalid",
+                retryable=False,
+            )
+        with temporary_audio(media_path) as extracted:
+            transcription_input = extracted.metadata
+
+    text = (result.transcript_text or "").strip()
+    response = EnrichmentResponse(
+        contract_version=payload.contract_version,
+        attempt_id=payload.attempt_id,
+        reel_id=payload.reel_id,
+        shortcode=payload.shortcode,
+        pipeline_version=payload.pipeline_version,
+        processor_version=VERSION,
+        source=source,
+        media=media,
+        transcription_input=transcription_input,
+        transcription=Transcription(
+            outcome="transcribed" if text else "empty_transcript",
+            transcript_text=text,
+            transcript_language=result.transcript_language,
+            engine=TranscriptionEngine(
+                provider="google",
+                model="chirp_3",
+                request_id=payload.provider_request_id,
+            ),
+        ),
+        processing=ProcessingMetadata(
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+        ),
+        warnings=[],
+    )
+    stt_adapter.cleanup_batch_audio(attempt_id=payload.attempt_id)
+    return response
+
+
+def _reconciliation_error(
+    status_code: int,
+    *,
+    payload: ReconciliationRequest,
+    error_code: str,
+    stage: ErrorStage,
+    message: str,
+    retryable: bool,
+    provider_terminal: bool,
+) -> JSONResponse:
+    body = ReconciliationErrorResponse(
+        error_code=error_code,
+        stage=stage,
+        message=message,
+        retryable=retryable,
+        attempt_id=payload.attempt_id,
+        reel_id=payload.reel_id,
+        pipeline_version=payload.pipeline_version,
+        provider_request_id=payload.provider_request_id,
+        provider_terminal=provider_terminal,
+    )
+    return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
+
+
 def _attempt_id(value: Any) -> UUID | None:
     try:
         return UUID(str(value))
@@ -214,7 +343,7 @@ def _error(
 
 @app.middleware("http")
 async def authenticate_enrichment(request: Request, call_next: Any) -> JSONResponse:
-    if request.url.path == "/v1/enrichments":
+    if request.url.path in {"/v1/enrichments", "/v1/enrichments/reconcile"}:
         received_key = request.headers.get("X-MegaBrain-Key")
         if (
             not API_KEY
@@ -393,5 +522,99 @@ async def create_enrichment(
 
     return JSONResponse(
         status_code=202 if isinstance(result, BatchEnrichmentResponse) else 200,
+        content=result.model_dump(mode="json"),
+    )
+
+
+@app.post(
+    "/v1/enrichments/reconcile",
+    response_model=None,
+    responses={
+        200: {"model": EnrichmentResponse},
+        202: {"model": ReconciliationPendingResponse},
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ReconciliationErrorResponse},
+        429: {"model": ReconciliationErrorResponse},
+        500: {"model": ReconciliationErrorResponse},
+        502: {"model": ReconciliationErrorResponse},
+        503: {"model": ReconciliationErrorResponse},
+        504: {"model": ReconciliationErrorResponse},
+    },
+)
+async def reconcile_enrichment(
+    request: Request,
+    payload: ReconciliationRequest,
+    _x_megabrain_key: str | None = Header(default=None, alias="X-MegaBrain-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> JSONResponse:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip()
+    if content_type != "application/json":
+        return _error(
+            422,
+            error_code="INVALID_REQUEST",
+            stage=ErrorStage.INPUT,
+            message="Content-Type must be application/json",
+            retryable=False,
+            attempt_id=payload.attempt_id,
+        )
+
+    if _attempt_id(idempotency_key) != payload.attempt_id:
+        return _error(
+            409,
+            error_code="ATTEMPT_CONFLICT",
+            stage=ErrorStage.INPUT,
+            message="Idempotency-Key must match attempt_id",
+            retryable=False,
+            attempt_id=payload.attempt_id,
+        )
+
+    try:
+        result = reconcile_source(
+            payload,
+            client=_r2_client(),
+            bucket=os.environ["R2_BUCKET"],
+            stt_adapter=_stt_adapter(),
+        )
+    except ReconciliationError as error:
+        status = {
+            "STT_RECONCILIATION_TIMEOUT": 504,
+            "STT_RECONCILIATION_RATE_LIMITED": 429,
+            "STT_RECONCILIATION_UNAVAILABLE": 503,
+        }.get(error.error_code, 502)
+        return _reconciliation_error(
+            status,
+            payload=payload,
+            error_code=error.error_code,
+            stage=ErrorStage.TRANSCRIPTION,
+            message=str(error),
+            retryable=error.retryable,
+            provider_terminal=False,
+        )
+    except MediaProcessingError as error:
+        return _reconciliation_error(
+            404 if error.error_code == "OBJECT_NOT_FOUND" else 422,
+            payload=payload,
+            error_code=error.error_code,
+            stage=error.stage,
+            message=str(error),
+            retryable=error.retryable,
+            provider_terminal=False,
+        )
+    except (KeyError, OSError, RuntimeError):
+        return _reconciliation_error(
+            500,
+            payload=payload,
+            error_code="STT_RECONCILIATION_FAILED",
+            stage=ErrorStage.INTERNAL,
+            message="Batch transcription reconciliation failed",
+            retryable=False,
+            provider_terminal=False,
+        )
+
+    if isinstance(result, ReconciliationErrorResponse):
+        return JSONResponse(status_code=502, content=result.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=202 if isinstance(result, ReconciliationPendingResponse) else 200,
         content=result.model_dump(mode="json"),
     )

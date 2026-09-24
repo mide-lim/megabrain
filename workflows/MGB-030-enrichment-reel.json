@@ -7,7 +7,10 @@
       },
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "id": "__NODE_ID_MGB_030_01__",
       "name": "SUB — Receber Reel downloaded"
     },
@@ -18,7 +21,10 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [208, 0],
+      "position": [
+        208,
+        0
+      ],
       "id": "__NODE_ID_MGB_030_02__",
       "name": "DATA — Preparar parâmetros"
     },
@@ -32,7 +38,10 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [432, 0],
+      "position": [
+        432,
+        0
+      ],
       "id": "__NODE_ID_MGB_030_03__",
       "name": "DB — Localizar Reel elegível",
       "credentials": {
@@ -69,7 +78,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [640, 0],
+      "position": [
+        640,
+        0
+      ],
       "id": "__NODE_ID_MGB_030_04__",
       "name": "IF — Precisa enriquecer?"
     },
@@ -103,7 +115,10 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [848, -80],
+      "position": [
+        848,
+        -80
+      ],
       "id": "__NODE_ID_MGB_030_05__",
       "name": "DATA — Criar attempt_id"
     },
@@ -117,7 +132,10 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [1056, -80],
+      "position": [
+        1056,
+        -80
+      ],
       "id": "__NODE_ID_MGB_030_06__",
       "name": "DB — Criar tentativa processing",
       "credentials": {
@@ -140,18 +158,24 @@
       },
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 240],
+      "position": [
+        0,
+        240
+      ],
       "id": "__NODE_ID_MGB_030_14__",
       "name": "SCHEDULE — Consumir fila de transcrição"
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "return {\n  reel_id: null,\n  pipeline_version: '__PIPELINE_VERSION_SPRINT_3__',\n  contract_version: '__CONTRACT_VERSION__',\n  language_hint: null,\n};"
+        "jsCode": "return { reel_id: null, pipeline_version: '__PIPELINE_VERSION_SPRINT_3__', contract_version: '__CONTRACT_VERSION__', language_hint: null };"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [208, 240],
+      "position": [
+        208,
+        240
+      ],
       "id": "__NODE_ID_MGB_030_15__",
       "name": "DATA — Preparar consumidor periódico"
     },
@@ -181,7 +205,10 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1264, -80],
+      "position": [
+        1264,
+        -80
+      ],
       "id": "__NODE_ID_MGB_030_07__",
       "name": "HTTP — Enricher /v1/enrichments",
       "retryOnFail": false,
@@ -190,11 +217,14 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const attempt = $('DB — Criar tentativa processing').item.json;\nconst nonEmpty = (value) => typeof value === 'string' && value.trim() !== '';\nconst positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;\nconst nonNegative = (value) => Number.isFinite(Number(value)) && Number(value) >= 0;\nconst audio = $json.media?.audio;\nconst transcriptionInput = $json.transcription_input;\nconst outcome = $json.transcription?.outcome;\nconst hasValidAudio = audio !== null\n  && nonEmpty(audio?.codec)\n  && positive(audio?.sample_rate_hz)\n  && positive(audio?.channels)\n  && (audio?.duration_seconds === null || audio?.duration_seconds === undefined || nonNegative(audio.duration_seconds));\nconst hasValidTranscriptionInput = transcriptionInput !== null\n  && nonEmpty(transcriptionInput?.format)\n  && positive(transcriptionInput?.sample_rate_hz)\n  && positive(transcriptionInput?.channels)\n  && nonNegative(transcriptionInput?.duration_seconds);\nconst validOutcome = (outcome === 'no_audio'\n  && audio === null\n  && transcriptionInput === null\n  && $json.transcription.transcript_text === null\n  && $json.transcription.transcript_language === null)\n  || (outcome === 'transcribed'\n  && hasValidAudio\n  && hasValidTranscriptionInput\n  && nonEmpty($json.transcription.transcript_text))\n  || (outcome === 'empty_transcript'\n  && hasValidAudio\n  && hasValidTranscriptionInput\n  && $json.transcription.transcript_text === '');\nconst valid = $json.attempt_id === attempt.attempt_id\n  && Number($json.reel_id) === Number(attempt.reel_id)\n  && $json.shortcode === attempt.shortcode\n  && $json.pipeline_version === attempt.pipeline_version\n  && $json.contract_version === attempt.contract_version\n  && $json.source?.object_key === attempt.source_object_key\n  && $json.source?.sha256 === attempt.expected_sha256\n  && Number($json.source?.size_bytes) === Number(attempt.expected_size_bytes)\n  && positive($json.source?.size_bytes)\n  && nonEmpty($json.processor_version)\n  && nonEmpty($json.media?.container_format)\n  && nonNegative($json.media?.duration_seconds)\n  && nonEmpty($json.media?.video?.codec)\n  && positive($json.media?.video?.width)\n  && positive($json.media?.video?.height)\n  && nonEmpty($json.processing?.completed_at)\n  && validOutcome;\n\nif (!valid) {\n  return {\n    attempt_id: attempt.attempt_id,\n    error_code: 'INVALID_ENRICHER_RESPONSE',\n    error_stage: 'orchestration',\n    error_message: 'Enricher response did not match the active attempt contract',\n    retryable: false,\n    valid_response: false,\n  };\n}\n\nreturn { ...$json, valid_response: true };"
+        "jsCode": "const attempt = $('DB — Criar tentativa processing').item.json;\nconst nonEmpty = (value) => typeof value === 'string' && value.trim() !== '';\nconst positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;\nconst nonNegative = (value) => Number.isFinite(Number(value)) && Number(value) >= 0;\nconst correlated = $json.attempt_id === attempt.attempt_id\n  && Number($json.reel_id) === Number(attempt.reel_id)\n  && $json.shortcode === attempt.shortcode\n  && $json.pipeline_version === attempt.pipeline_version\n  && $json.contract_version === attempt.contract_version\n  && $json.source?.object_key === attempt.source_object_key\n  && $json.source?.sha256 === attempt.expected_sha256\n  && Number($json.source?.size_bytes) === Number(attempt.expected_size_bytes)\n  && positive($json.source?.size_bytes);\nconst batchPending = correlated\n  && nonEmpty($json.processor_version)\n  && nonEmpty($json.media?.container_format)\n  && nonNegative($json.media?.duration_seconds)\n  && nonEmpty($json.media?.video?.codec)\n  && positive($json.media?.video?.width)\n  && positive($json.media?.video?.height)\n  && $json.batch_submission?.state === 'processing'\n  && $json.batch_submission?.provider === 'google'\n  && $json.batch_submission?.model === 'chirp_3'\n  && nonEmpty($json.batch_submission?.provider_request_id)\n  && $json.transcription === undefined\n  && $json.processing === undefined;\nconst audio = $json.media?.audio;\nconst transcriptionInput = $json.transcription_input;\nconst outcome = $json.transcription?.outcome;\nconst hasValidAudio = audio !== null && nonEmpty(audio?.codec)\n  && positive(audio?.sample_rate_hz) && positive(audio?.channels)\n  && (audio?.duration_seconds === null || audio?.duration_seconds === undefined || nonNegative(audio.duration_seconds));\nconst hasValidTranscriptionInput = transcriptionInput !== null && nonEmpty(transcriptionInput?.format)\n  && positive(transcriptionInput?.sample_rate_hz) && positive(transcriptionInput?.channels)\n  && nonNegative(transcriptionInput?.duration_seconds);\nconst validOutcome = (outcome === 'no_audio' && audio === null && transcriptionInput === null\n  && $json.transcription.transcript_text === null && $json.transcription.transcript_language === null)\n  || (outcome === 'transcribed' && hasValidAudio && hasValidTranscriptionInput\n  && nonEmpty($json.transcription.transcript_text))\n  || (outcome === 'empty_transcript' && hasValidAudio && hasValidTranscriptionInput\n  && $json.transcription.transcript_text === '');\nconst terminalSuccess = correlated && nonEmpty($json.processor_version)\n  && nonEmpty($json.media?.container_format) && nonNegative($json.media?.duration_seconds)\n  && nonEmpty($json.media?.video?.codec) && positive($json.media?.video?.width)\n  && positive($json.media?.video?.height) && nonEmpty($json.processing?.completed_at)\n  && validOutcome;\nif (!batchPending && !terminalSuccess) {\n  return { attempt_id: attempt.attempt_id, error_code: 'INVALID_ENRICHER_RESPONSE', error_stage: 'orchestration', error_message: 'Enricher response did not match the active attempt contract', retryable: false, valid_response: false };\n}\nreturn { ...$json, response_kind: batchPending ? 'batch_pending' : 'terminal_success', valid_response: true };"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1472, -160],
+      "position": [
+        1472,
+        -160
+      ],
       "id": "__NODE_ID_MGB_030_08__",
       "name": "DATA — Validar resposta Enricher"
     },
@@ -225,7 +255,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [1680, -160],
+      "position": [
+        1680,
+        -160
+      ],
       "id": "__NODE_ID_MGB_030_09__",
       "name": "IF — Resposta válida?"
     },
@@ -239,7 +272,10 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [1888, -240],
+      "position": [
+        1888,
+        -240
+      ],
       "id": "__NODE_ID_MGB_030_10__",
       "name": "DB — Persistir resultado e concluir tentativa",
       "credentials": {
@@ -256,7 +292,10 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1472, 48],
+      "position": [
+        1472,
+        48
+      ],
       "id": "__NODE_ID_MGB_030_11__",
       "name": "DATA — Normalizar falha Enricher"
     },
@@ -270,9 +309,367 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [1888, 16],
+      "position": [
+        1888,
+        16
+      ],
       "id": "__NODE_ID_MGB_030_12__",
       "name": "DB — Registrar falha da tentativa",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_03__",
+              "leftValue": "={{ $json.response_kind }}",
+              "rightValue": "batch_pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1888,
+        -160
+      ],
+      "id": "__NODE_ID_MGB_030_16__",
+      "name": "IF — Batch pendente?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH active_attempt AS MATERIALIZED (\n    SELECT attempt.attempt_id, attempt.provider_request_id\n    FROM app.reel_enrichment_attempts AS attempt\n    JOIN app.reels AS reel ON reel.id = attempt.reel_id\n    WHERE attempt.attempt_id = $1::UUID\n      AND attempt.reel_id = $2::BIGINT\n      AND attempt.source_object_key = $3::TEXT\n      AND attempt.expected_sha256 = $4::TEXT\n      AND attempt.expected_size_bytes = $5::BIGINT\n      AND attempt.pipeline_version = $6::TEXT\n      AND attempt.contract_version = $7::TEXT\n      AND attempt.status = 'processing'\n      AND reel.id = $2::BIGINT\n      AND reel.transcription_status = 'processing'\n      AND reel.transcription_attempt_id = $1::UUID\n    FOR UPDATE\n), written_lro AS (\n    UPDATE app.reel_enrichment_attempts AS attempt\n    SET enricher_version = $8::TEXT,\n        stt_provider = 'google',\n        stt_model = 'chirp_3',\n        provider_request_id = $9::TEXT\n    FROM active_attempt\n    WHERE attempt.attempt_id = active_attempt.attempt_id\n      AND active_attempt.provider_request_id IS NULL\n    RETURNING attempt.attempt_id, attempt.provider_request_id\n), accepted_existing_lro AS (\n    SELECT active_attempt.attempt_id, active_attempt.provider_request_id\n    FROM active_attempt\n    WHERE active_attempt.provider_request_id = $9::TEXT\n)\nSELECT * FROM written_lro\nUNION ALL\nSELECT * FROM accepted_existing_lro;",
+        "options": {
+          "queryReplacement": "={{ [$json.attempt_id, $json.reel_id, $json.source.object_key, $json.source.sha256, $json.source.size_bytes, $json.pipeline_version, $json.contract_version, $json.processor_version, $json.batch_submission.provider_request_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2096,
+        -120
+      ],
+      "id": "__NODE_ID_MGB_030_17__",
+      "name": "DB — Persistir LRO Batch",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH consumer_lock AS MATERIALIZED (\n    SELECT pg_try_advisory_xact_lock(308030::BIGINT) AS acquired\n), processing AS MATERIALIZED (\n    SELECT attempt.attempt_id, attempt.reel_id, reel.shortcode,\n           attempt.source_object_key, attempt.expected_sha256,\n           attempt.expected_size_bytes, attempt.pipeline_version,\n           attempt.contract_version, attempt.language_hint,\n           attempt.provider_request_id\n    FROM app.reel_enrichment_attempts AS attempt\n    JOIN app.reels AS reel ON reel.id = attempt.reel_id\n    WHERE attempt.status = 'processing'\n      AND reel.transcription_status = 'processing'\n      AND reel.transcription_attempt_id = attempt.attempt_id\n    ORDER BY attempt.started_at ASC, attempt.attempt_id ASC\n    LIMIT 1\n)\nSELECT CASE\n    WHEN NOT consumer_lock.acquired THEN 'BUSY'\n    WHEN processing.attempt_id IS NULL THEN 'CLAIM'\n    WHEN processing.provider_request_id IS NULL THEN 'RECOVERY_REQUIRED'\n    ELSE 'RECONCILE'\nEND AS flow_state,\nprocessing.*\nFROM consumer_lock\nLEFT JOIN processing ON TRUE;",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        432,
+        240
+      ],
+      "id": "__NODE_ID_MGB_030_18__",
+      "name": "DB — Determinar fluxo periódico",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_04__",
+              "leftValue": "={{ $json.flow_state }}",
+              "rightValue": "RECONCILE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        240
+      ],
+      "id": "__NODE_ID_MGB_030_19__",
+      "name": "IF — Reconciliar LRO?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_05__",
+              "leftValue": "={{ $json.flow_state }}",
+              "rightValue": "CLAIM",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        848,
+        320
+      ],
+      "id": "__NODE_ID_MGB_030_20__",
+      "name": "IF — Claim autorizado?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "__ENRICHER_SERVICE_URL__/reconcile",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-MegaBrain-Key",
+              "value": "__MEGABRAIN_INTERNAL_API_KEY__"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.attempt_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { contract_version: $json.contract_version, attempt_id: $json.attempt_id, reel_id: Number($json.reel_id), shortcode: $json.shortcode, object_key: $json.source_object_key, expected_sha256: $json.expected_sha256, expected_size_bytes: Number($json.expected_size_bytes), pipeline_version: $json.pipeline_version, language_hint: $json.language_hint, provider_request_id: $json.provider_request_id } }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        160
+      ],
+      "id": "__NODE_ID_MGB_030_21__",
+      "name": "HTTP — Enricher /v1/enrichments/reconcile",
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const attempt = $('DB — Determinar fluxo periódico').item.json;\nconst nonEmpty = (value) => typeof value === 'string' && value.trim() !== '';\nconst positive = (value) => Number.isFinite(Number(value)) && Number(value) > 0;\nconst correlated = $json.attempt_id === attempt.attempt_id\n  && Number($json.reel_id) === Number(attempt.reel_id)\n  && $json.shortcode === attempt.shortcode\n  && $json.pipeline_version === attempt.pipeline_version\n  && $json.contract_version === attempt.contract_version\n  && $json.source?.object_key === attempt.source_object_key\n  && $json.source?.sha256 === attempt.expected_sha256\n  && Number($json.source?.size_bytes) === Number(attempt.expected_size_bytes)\n  && positive($json.source?.size_bytes);\nconst pending = correlated && $json.batch_submission?.state === 'processing'\n  && $json.batch_submission?.provider === 'google' && $json.batch_submission?.model === 'chirp_3'\n  && $json.batch_submission?.provider_request_id === attempt.provider_request_id\n  && $json.transcription === undefined && $json.processing === undefined;\nconst terminal = correlated && $json.transcription?.engine?.provider === 'google'\n  && $json.transcription?.engine?.model === 'chirp_3'\n  && $json.transcription?.engine?.request_id === attempt.provider_request_id\n  && nonEmpty($json.processing?.completed_at);\nreturn { ...$json, reconciliation_kind: pending ? 'pending' : (terminal ? 'terminal_success' : 'invalid'), valid_reconciliation: pending || terminal };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        160
+      ],
+      "id": "__NODE_ID_MGB_030_22__",
+      "name": "DATA — Validar resposta reconciliação"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_06__",
+              "leftValue": "={{ $json.valid_reconciliation }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        160
+      ],
+      "id": "__NODE_ID_MGB_030_23__",
+      "name": "IF — Resposta reconciliação válida?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_07__",
+              "leftValue": "={{ $json.reconciliation_kind }}",
+              "rightValue": "pending",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1680,
+        120
+      ],
+      "id": "__NODE_ID_MGB_030_24__",
+      "name": "IF — Reconciliação pendente?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH active_attempt AS MATERIALIZED (\n    SELECT attempt.attempt_id\n    FROM app.reel_enrichment_attempts AS attempt\n    JOIN app.reels AS reel ON reel.id = attempt.reel_id\n    WHERE attempt.attempt_id = $1::UUID\n      AND attempt.reel_id = $2::BIGINT\n      AND attempt.source_object_key = $3::TEXT\n      AND attempt.expected_sha256 = $4::TEXT\n      AND attempt.expected_size_bytes = $5::BIGINT\n      AND attempt.pipeline_version = $6::TEXT\n      AND attempt.contract_version = $7::TEXT\n      AND attempt.status = 'processing'\n      AND attempt.provider_request_id = $8::TEXT\n      AND reel.id = $2::BIGINT\n      AND reel.transcription_status = 'processing'\n      AND reel.transcription_attempt_id = $1::UUID\n    FOR UPDATE\n), completed_attempt AS (\n    UPDATE app.reel_enrichment_attempts AS attempt\n    SET status = 'completed', finished_at = NOW(), enricher_version = $9::TEXT,\n        stt_provider = 'google', stt_model = 'chirp_3'\n    FROM active_attempt\n    WHERE attempt.attempt_id = active_attempt.attempt_id\n    RETURNING attempt.attempt_id\n), persisted_result AS (\n    INSERT INTO app.reel_enrichments (\n        reel_id, source_attempt_id, source_object_key, source_sha256, source_size_bytes,\n        pipeline_version, completed_at, container_format, media_duration_seconds,\n        video_codec, video_width, video_height, audio_present, audio_codec,\n        audio_sample_rate_hz, audio_channels, audio_duration_seconds,\n        transcription_audio_format, transcription_audio_sample_rate_hz,\n        transcription_audio_channels, transcription_audio_duration_seconds,\n        outcome, transcript_text, transcript_language\n    )\n    SELECT $2::BIGINT, completed_attempt.attempt_id, $3::TEXT, $4::TEXT, $5::BIGINT,\n        $6::TEXT, $10::TIMESTAMPTZ, $11::TEXT, $12::NUMERIC, $13::TEXT,\n        $14::INTEGER, $15::INTEGER, $16::BOOLEAN, $17::TEXT, $18::INTEGER,\n        $19::INTEGER, $20::NUMERIC, $21::TEXT, $22::INTEGER, $23::INTEGER,\n        $24::NUMERIC, $25::TEXT, $26::TEXT, $27::TEXT\n    FROM completed_attempt\n    RETURNING id\n)\nUPDATE app.reels AS reel\nSET transcription_status = 'completed', transcription_attempt_id = NULL, updated_at = NOW()\nWHERE reel.id = $2::BIGINT\n  AND reel.transcription_status = 'processing'\n  AND reel.transcription_attempt_id = $1::UUID\n  AND EXISTS (SELECT 1 FROM persisted_result)\nRETURNING reel.id;",
+        "options": {
+          "queryReplacement": "={{ [$json.attempt_id, $json.reel_id, $json.source.object_key, $json.source.sha256, $json.source.size_bytes, $json.pipeline_version, $json.contract_version, $json.transcription.engine.request_id, $json.processor_version, $json.processing.completed_at, $json.media.container_format, $json.media.duration_seconds, $json.media.video.codec, $json.media.video.width, $json.media.video.height, $json.media.audio !== null, $json.media.audio?.codec ?? null, $json.media.audio?.sample_rate_hz ?? null, $json.media.audio?.channels ?? null, $json.media.audio?.duration_seconds ?? null, $json.transcription_input?.format ?? null, $json.transcription_input?.sample_rate_hz ?? null, $json.transcription_input?.channels ?? null, $json.transcription_input?.duration_seconds ?? null, $json.transcription.outcome, $json.transcription.transcript_text, $json.transcription.transcript_language] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1888,
+        200
+      ],
+      "id": "__NODE_ID_MGB_030_25__",
+      "name": "DB — Persistir reconciliação e concluir",
+      "credentials": {
+        "postgres": {
+          "id": "__CREDENTIAL_ID_POSTGRES__",
+          "name": "__CREDENTIAL_NAME_POSTGRES__"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const attempt = $('DB — Determinar fluxo periódico').item.json;\nconst parse = (value) => { let parsed = value; for (let depth = 0; depth < 3 && typeof parsed === 'string'; depth += 1) { try { parsed = JSON.parse(parsed); continue; } catch {} const separator = parsed.indexOf(' - '); if (separator === -1) break; parsed = parsed.slice(separator + 3); } return parsed; };\nconst envelope = [$json, $json.body, $json.error?.body, $json.error?.message, $json.error?.response?.body, $json.error?.response?.data].map(parse).find((value) => value && typeof value === 'object' && typeof value.error_code === 'string' && typeof value.stage === 'string' && typeof value.message === 'string' && typeof value.retryable === 'boolean' && typeof value.provider_terminal === 'boolean');\nif (envelope && envelope.attempt_id === attempt.attempt_id && Number(envelope.reel_id) === Number(attempt.reel_id) && envelope.pipeline_version === attempt.pipeline_version && envelope.provider_request_id === attempt.provider_request_id) {\n  return { ...attempt, error_code: envelope.error_code, error_stage: envelope.stage, error_message: envelope.message, retryable: envelope.retryable, provider_terminal: envelope.provider_terminal === true };\n}\nreturn { ...attempt, error_code: 'STT_RECONCILIATION_FAILED', error_stage: 'orchestration', error_message: 'Reconciliation failed without a valid correlated error envelope', retryable: true, provider_terminal: false };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        320
+      ],
+      "id": "__NODE_ID_MGB_030_26__",
+      "name": "DATA — Normalizar falha reconciliação"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "__CONDITION_ID_MGB_030_08__",
+              "leftValue": "={{ $json.provider_terminal }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        320
+      ],
+      "id": "__NODE_ID_MGB_030_27__",
+      "name": "IF — Falha terminal do provider?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH failed_attempt AS (\n    UPDATE app.reel_enrichment_attempts AS attempt\n    SET status = 'failed', finished_at = NOW(), error_code = $9::TEXT,\n        error_stage = $10::TEXT, error_message = $11::TEXT, retryable = FALSE\n    WHERE attempt.attempt_id = $1::UUID\n      AND attempt.provider_request_id = $2::TEXT\n      AND attempt.reel_id = $3::BIGINT\n      AND attempt.source_object_key = $4::TEXT\n      AND attempt.expected_sha256 = $5::TEXT\n      AND attempt.expected_size_bytes = $6::BIGINT\n      AND attempt.pipeline_version = $7::TEXT\n      AND attempt.contract_version = $8::TEXT\n      AND attempt.status = 'processing'\n    RETURNING attempt.attempt_id, attempt.reel_id\n)\nUPDATE app.reels AS reel\nSET transcription_status = 'failed', transcription_attempt_id = NULL, updated_at = NOW()\nFROM failed_attempt\nWHERE reel.id = failed_attempt.reel_id\n  AND reel.transcription_status = 'processing'\n  AND reel.transcription_attempt_id = failed_attempt.attempt_id\nRETURNING failed_attempt.attempt_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.attempt_id, $json.provider_request_id, $json.reel_id, $json.source_object_key, $json.expected_sha256, $json.expected_size_bytes, $json.pipeline_version, $json.contract_version, $json.error_code, $json.error_stage, $json.error_message] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1680,
+        360
+      ],
+      "id": "__NODE_ID_MGB_030_28__",
+      "name": "DB — Registrar falha Batch",
       "credentials": {
         "postgres": {
           "id": "__CREDENTIAL_ID_POSTGRES__",
@@ -283,21 +680,324 @@
   ],
   "pinData": {},
   "connections": {
-    "SUB — Receber Reel downloaded": { "main": [[{ "node": "DATA — Preparar parâmetros", "type": "main", "index": 0 }]] },
-    "DATA — Preparar parâmetros": { "main": [[{ "node": "DB — Localizar Reel elegível", "type": "main", "index": 0 }]] },
-    "DB — Localizar Reel elegível": { "main": [[{ "node": "IF — Precisa enriquecer?", "type": "main", "index": 0 }]] },
-    "IF — Precisa enriquecer?": { "main": [[{ "node": "DB — Enfileirar transcrição", "type": "main", "index": 0 }], []] },
-    "DB — Enfileirar transcrição": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }]] },
-    "SCHEDULE — Consumir fila de transcrição": { "main": [[{ "node": "DATA — Preparar consumidor periódico", "type": "main", "index": 0 }]] },
-    "DATA — Preparar consumidor periódico": { "main": [[{ "node": "DATA — Criar attempt_id", "type": "main", "index": 0 }]] },
-    "DATA — Criar attempt_id": { "main": [[{ "node": "DB — Criar tentativa processing", "type": "main", "index": 0 }]] },
-    "DB — Criar tentativa processing": { "main": [[{ "node": "HTTP — Enricher /v1/enrichments", "type": "main", "index": 0 }]] },
-    "HTTP — Enricher /v1/enrichments": { "main": [[{ "node": "DATA — Validar resposta Enricher", "type": "main", "index": 0 }], [{ "node": "DATA — Normalizar falha Enricher", "type": "main", "index": 0 }]] },
-    "DATA — Validar resposta Enricher": { "main": [[{ "node": "IF — Resposta válida?", "type": "main", "index": 0 }]] },
-    "IF — Resposta válida?": { "main": [[{ "node": "DB — Persistir resultado e concluir tentativa", "type": "main", "index": 0 }], [{ "node": "DB — Registrar falha da tentativa", "type": "main", "index": 0 }]] },
-    "DATA — Normalizar falha Enricher": { "main": [[{ "node": "DB — Registrar falha da tentativa", "type": "main", "index": 0 }]] },
-    "DB — Persistir resultado e concluir tentativa": { "main": [[]] },
-    "DB — Registrar falha da tentativa": { "main": [[]] }
+    "SUB — Receber Reel downloaded": {
+      "main": [
+        [
+          {
+            "node": "DATA — Preparar parâmetros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Preparar parâmetros": {
+      "main": [
+        [
+          {
+            "node": "DB — Localizar Reel elegível",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Localizar Reel elegível": {
+      "main": [
+        [
+          {
+            "node": "IF — Precisa enriquecer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Precisa enriquecer?": {
+      "main": [
+        [
+          {
+            "node": "DB — Enfileirar transcrição",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "DB — Enfileirar transcrição": {
+      "main": [
+        [
+          {
+            "node": "DATA — Criar attempt_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SCHEDULE — Consumir fila de transcrição": {
+      "main": [
+        [
+          {
+            "node": "DATA — Preparar consumidor periódico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Preparar consumidor periódico": {
+      "main": [
+        [
+          {
+            "node": "DB — Determinar fluxo periódico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Criar attempt_id": {
+      "main": [
+        [
+          {
+            "node": "DB — Criar tentativa processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Criar tentativa processing": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Enricher /v1/enrichments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Enricher /v1/enrichments": {
+      "main": [
+        [
+          {
+            "node": "DATA — Validar resposta Enricher",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DATA — Normalizar falha Enricher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Validar resposta Enricher": {
+      "main": [
+        [
+          {
+            "node": "IF — Resposta válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Resposta válida?": {
+      "main": [
+        [
+          {
+            "node": "IF — Batch pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB — Registrar falha da tentativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Normalizar falha Enricher": {
+      "main": [
+        [
+          {
+            "node": "DB — Registrar falha da tentativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Persistir resultado e concluir tentativa": {
+      "main": [
+        []
+      ]
+    },
+    "DB — Registrar falha da tentativa": {
+      "main": [
+        []
+      ]
+    },
+    "IF — Batch pendente?": {
+      "main": [
+        [
+          {
+            "node": "DB — Persistir LRO Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB — Persistir resultado e concluir tentativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Persistir LRO Batch": {
+      "main": [
+        []
+      ]
+    },
+    "DB — Determinar fluxo periódico": {
+      "main": [
+        [
+          {
+            "node": "IF — Reconciliar LRO?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Reconciliar LRO?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Enricher /v1/enrichments/reconcile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF — Claim autorizado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Claim autorizado?": {
+      "main": [
+        [
+          {
+            "node": "DATA — Criar attempt_id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "HTTP — Enricher /v1/enrichments/reconcile": {
+      "main": [
+        [
+          {
+            "node": "DATA — Validar resposta reconciliação",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DATA — Normalizar falha reconciliação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DATA — Validar resposta reconciliação": {
+      "main": [
+        [
+          {
+            "node": "IF — Resposta reconciliação válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Resposta reconciliação válida?": {
+      "main": [
+        [
+          {
+            "node": "IF — Reconciliação pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF — Reconciliação pendente?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "DB — Persistir reconciliação e concluir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB — Persistir reconciliação e concluir": {
+      "main": [
+        []
+      ]
+    },
+    "DATA — Normalizar falha reconciliação": {
+      "main": [
+        [
+          {
+            "node": "IF — Falha terminal do provider?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Falha terminal do provider?": {
+      "main": [
+        [
+          {
+            "node": "DB — Registrar falha Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "DB — Registrar falha Batch": {
+      "main": [
+        []
+      ]
+    }
   },
   "active": false,
   "settings": {

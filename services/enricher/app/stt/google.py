@@ -6,7 +6,9 @@ from uuid import UUID
 
 from app.gcs import TemporaryAudioStoreError
 from app.stt.base import (
+    BatchReconciliationResult,
     BatchSubmissionResult,
+    ReconciliationError,
     SpeechToTextAdapter,
     SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
@@ -46,6 +48,165 @@ class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
                 client_options={"api_endpoint": "us-speech.googleapis.com"}
             )
         return self._client
+
+    def batch_input_uri(self, *, attempt_id: UUID | str) -> str:
+        if self._temporary_audio_store is None:
+            raise ReconciliationError(
+                "STT_RECONCILIATION_CONFIGURATION_REQUIRED",
+                "Batch transcription reconciliation requires temporary storage configuration",
+                retryable=False,
+            )
+        try:
+            return self._temporary_audio_store.uri_for(attempt_id=attempt_id)
+        except TemporaryAudioStoreError:
+            raise ReconciliationError(
+                "STT_RECONCILIATION_CONFIGURATION_REQUIRED",
+                "Batch transcription reconciliation requires temporary storage configuration",
+                retryable=False,
+            ) from None
+
+    def cleanup_batch_audio(self, *, attempt_id: UUID | str) -> None:
+        if self._temporary_audio_store is None:
+            return
+        try:
+            self._temporary_audio_store.cleanup(attempt_id=attempt_id)
+        except TemporaryAudioStoreError:
+            return
+
+    def reconcile_batch(
+        self,
+        *,
+        provider_request_id: str,
+        expected_input_uri: str | None = None,
+    ) -> BatchReconciliationResult:
+        """Read one exact known BatchRecognize operation without submitting work."""
+        try:
+            operation = self._get_client().transport.operations_client.get_operation(
+                name=provider_request_id,
+                retry=None,
+            )
+        except Exception as error:  # noqa: BLE001 - SDK failures vary.
+            raise self._translate_reconciliation_error(error) from None
+
+        if not getattr(operation, "done", False):
+            return BatchReconciliationResult(
+                state="pending",
+                provider="google",
+                model=self._model,
+                provider_request_id=provider_request_id,
+                transcript_text=None,
+                transcript_language=None,
+            )
+        if self._operation_has_field(operation, "error"):
+            return BatchReconciliationResult(
+                state="terminal_provider_failure",
+                provider="google",
+                model=self._model,
+                provider_request_id=provider_request_id,
+                transcript_text=None,
+                transcript_language=None,
+            )
+        if not self._operation_has_field(operation, "response") or not expected_input_uri:
+            raise ReconciliationError(
+                "STT_RECONCILIATION_INVALID_RESPONSE",
+                "Batch transcription reconciliation response was invalid",
+                retryable=False,
+            )
+
+        try:
+            from google.cloud import speech_v2
+
+            response_pb = speech_v2.types.BatchRecognizeResponse.pb()()
+            if not operation.response.Unpack(response_pb):
+                raise ValueError
+            response = speech_v2.types.BatchRecognizeResponse(response_pb)
+            if len(response.results) != 1:
+                raise ValueError
+            file_result = response.results.get(expected_input_uri)
+            if file_result is None or file_result.uri != expected_input_uri:
+                raise ValueError
+            inline = file_result.inline_result
+            if inline is None:
+                raise ValueError
+            text, language, _request_id = self._normalize_response(inline.transcript)
+        except Exception:  # noqa: BLE001 - provider response is untrusted input.
+            raise ReconciliationError(
+                "STT_RECONCILIATION_INVALID_RESPONSE",
+                "Batch transcription reconciliation response was invalid",
+                retryable=False,
+            ) from None
+
+        return BatchReconciliationResult(
+            state="terminal_success",
+            provider="google",
+            model=self._model,
+            provider_request_id=provider_request_id,
+            transcript_text=text,
+            transcript_language=language,
+        )
+
+    @staticmethod
+    def _operation_has_field(operation: Any, field: str) -> bool:
+        has_field = getattr(operation, "HasField", None)
+        if callable(has_field):
+            try:
+                return bool(has_field(field))
+            except (TypeError, ValueError):
+                return False
+        value = getattr(operation, field, None)
+        return value is not None
+
+    @staticmethod
+    def _translate_reconciliation_error(error: Exception) -> ReconciliationError:
+        from google.api_core import exceptions as google_errors
+        from google.auth import exceptions as google_auth_errors
+
+        if isinstance(
+            error, (google_errors.DeadlineExceeded, google_errors.GatewayTimeout)
+        ):
+            return ReconciliationError(
+                "STT_RECONCILIATION_TIMEOUT",
+                "Batch transcription reconciliation timed out",
+                retryable=True,
+            )
+        if isinstance(error, google_errors.ResourceExhausted):
+            return ReconciliationError(
+                "STT_RECONCILIATION_RATE_LIMITED",
+                "Batch transcription reconciliation rate limit exceeded",
+                retryable=True,
+            )
+        if isinstance(
+            error,
+            (
+                google_errors.ServiceUnavailable,
+                google_errors.Aborted,
+                google_errors.InternalServerError,
+                google_errors.BadGateway,
+            ),
+        ):
+            return ReconciliationError(
+                "STT_RECONCILIATION_UNAVAILABLE",
+                "Batch transcription reconciliation unavailable",
+                retryable=True,
+            )
+        if isinstance(
+            error,
+            (
+                google_errors.Unauthenticated,
+                google_errors.PermissionDenied,
+                google_auth_errors.DefaultCredentialsError,
+            ),
+        ):
+            return ReconciliationError(
+                "STT_RECONCILIATION_AUTH_FAILED",
+                "Batch transcription reconciliation authentication failed",
+                retryable=False,
+            )
+        return ReconciliationError(
+            "STT_RECONCILIATION_FAILED",
+            "Batch transcription reconciliation failed",
+            retryable=False,
+        )
 
     def transcribe(
         self,

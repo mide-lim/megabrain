@@ -71,6 +71,11 @@ class EnrichmentRequest(StrictModel):
         return value
 
 
+class ReconciliationRequest(EnrichmentRequest):
+    expected_size_bytes: int = Field(gt=0, le=9_223_372_036_854_775_807)
+    provider_request_id: str = Field(min_length=1)
+
+
 class SourceMetadata(StrictModel):
     object_key: str
     sha256: str
@@ -156,6 +161,28 @@ class BatchEnrichmentResponse(StrictModel):
     transcription_input: TranscriptionInput
     batch_submission: BatchSubmission
     warnings: list[str]
+
+
+class ReconciliationPendingResponse(StrictModel):
+    contract_version: str
+    attempt_id: UUID
+    reel_id: int
+    shortcode: str
+    pipeline_version: str
+    source: SourceMetadata
+    batch_submission: BatchSubmission
+
+
+class ReconciliationErrorResponse(StrictModel):
+    error_code: str
+    stage: ErrorStage
+    message: str
+    retryable: bool
+    attempt_id: UUID
+    reel_id: int
+    pipeline_version: str
+    provider_request_id: str
+    provider_terminal: bool
 
 
 class MediaProcessingError(RuntimeError):

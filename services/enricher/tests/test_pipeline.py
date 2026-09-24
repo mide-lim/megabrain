@@ -14,11 +14,19 @@ from app.media import (
     EnrichmentRequest,
     ExtractedAudio,
     MediaMetadata,
+    MediaProcessingError,
+    ReconciliationRequest,
     SourceMetadata,
     TranscriptionInput,
     VideoMetadata,
 )
-from app.stt.base import BatchSubmissionResult, SpeechToTextError, TranscriptionResult
+from app.stt.base import (
+    BatchReconciliationResult,
+    BatchSubmissionResult,
+    ReconciliationError,
+    SpeechToTextError,
+    TranscriptionResult,
+)
 
 
 def payload(content: bytes = b"video") -> EnrichmentRequest:
@@ -32,6 +40,13 @@ def payload(content: bytes = b"video") -> EnrichmentRequest:
         expected_size_bytes=len(content),
         pipeline_version="sprint-3-v1",
         language_hint="pt-BR",
+    )
+
+
+def reconciliation_payload(content: bytes = b"video") -> ReconciliationRequest:
+    return ReconciliationRequest(
+        **payload(content).model_dump(),
+        provider_request_id="projects/123/locations/us/operations/v2-test-operation",
     )
 
 
@@ -328,3 +343,138 @@ def test_pipeline_started_at_is_captured_before_r2_download(
 
     assert result == "completed"
     assert events == ["started", "r2", "enrich"]
+
+
+def test_reconcile_terminal_provider_failure_skips_r2_and_returns_explicit_failure() -> None:
+    class Adapter:
+        cleanup_calls = 0
+
+        def batch_input_uri(self, *, attempt_id: object) -> str:
+            return f"gs://temp/f6/transcription/{attempt_id}/audio.wav"
+
+        def reconcile_batch(self, **_kwargs: object) -> BatchReconciliationResult:
+            return BatchReconciliationResult(
+                state="terminal_provider_failure",
+                provider="google",
+                model="chirp_3",
+                provider_request_id=reconciliation_payload().provider_request_id,
+                transcript_text=None,
+                transcript_language=None,
+            )
+
+        def cleanup_batch_audio(self, *, attempt_id: object) -> None:
+            self.cleanup_calls += 1
+
+    adapter = Adapter()
+    response = main.reconcile_source(
+        reconciliation_payload(),
+        client=Mock(side_effect=AssertionError("R2 must not be read")),
+        bucket="bucket",
+        stt_adapter=adapter,  # type: ignore[arg-type]
+    )
+
+    assert isinstance(response, main.ReconciliationErrorResponse)
+    assert response.error_code == "STT_BATCH_PROVIDER_FAILED"
+    assert response.provider_terminal is True
+    assert response.retryable is False
+    assert response.provider_request_id == reconciliation_payload().provider_request_id
+    assert adapter.cleanup_calls == 1
+
+
+def test_reconcile_terminal_success_rereads_r2_without_resubmitting_stt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"video"
+    audio_input = TranscriptionInput(
+        format="wav", sample_rate_hz=48_000, channels=1, duration_seconds=2.0
+    )
+
+    @contextmanager
+    def fake_audio(_path: Path):
+        yield ExtractedAudio(Path("audio.wav"), audio_input)
+
+    class Adapter:
+        cleanup_calls = 0
+        transcribe_calls = 0
+
+        def batch_input_uri(self, *, attempt_id: object) -> str:
+            return f"gs://temp/f6/transcription/{attempt_id}/audio.wav"
+
+        def reconcile_batch(self, **_kwargs: object) -> BatchReconciliationResult:
+            return BatchReconciliationResult(
+                state="terminal_success",
+                provider="google",
+                model="chirp_3",
+                provider_request_id=reconciliation_payload(content).provider_request_id,
+                transcript_text="primeira segunda",
+                transcript_language="pt-BR",
+            )
+
+        def cleanup_batch_audio(self, *, attempt_id: object) -> None:
+            self.cleanup_calls += 1
+
+        def transcribe(self, *_args: object, **_kwargs: object) -> None:
+            self.transcribe_calls += 1
+            raise AssertionError("reconciliation must not submit STT work")
+
+    class R2Client:
+        def head_object(self, **_kwargs: object) -> dict[str, int]:
+            return {"ContentLength": len(content)}
+
+        def download_fileobj(self, _bucket: str, _key: str, output: object) -> None:
+            output.write(content)  # type: ignore[attr-defined]
+
+    adapter = Adapter()
+    monkeypatch.setattr(main, "probe_media", lambda _path: metadata(audio=True))
+    monkeypatch.setattr(main, "temporary_audio", fake_audio)
+
+    response = main.reconcile_source(
+        reconciliation_payload(content),
+        client=R2Client(),
+        bucket="bucket",
+        stt_adapter=adapter,  # type: ignore[arg-type]
+    )
+
+    assert isinstance(response, main.EnrichmentResponse)
+    assert response.transcription.transcript_text == "primeira segunda"
+    assert response.transcription.transcript_language == "pt-BR"
+    assert response.transcription.engine.request_id == reconciliation_payload(content).provider_request_id
+    assert response.transcription_input == audio_input
+    assert adapter.transcribe_calls == 0
+    assert adapter.cleanup_calls == 1
+
+
+def test_reconcile_r2_failure_is_control_error_and_does_not_cleanup() -> None:
+    class Adapter:
+        cleanup_calls = 0
+
+        def batch_input_uri(self, *, attempt_id: object) -> str:
+            return f"gs://temp/f6/transcription/{attempt_id}/audio.wav"
+
+        def reconcile_batch(self, **_kwargs: object) -> BatchReconciliationResult:
+            return BatchReconciliationResult(
+                state="terminal_success",
+                provider="google",
+                model="chirp_3",
+                provider_request_id=reconciliation_payload().provider_request_id,
+                transcript_text="texto",
+                transcript_language="pt-BR",
+            )
+
+        def cleanup_batch_audio(self, *, attempt_id: object) -> None:
+            self.cleanup_calls += 1
+
+    class BrokenR2:
+        def head_object(self, **_kwargs: object) -> dict[str, int]:
+            raise RuntimeError("unreachable")
+
+    adapter = Adapter()
+    with pytest.raises(MediaProcessingError):
+        main.reconcile_source(
+            reconciliation_payload(),
+            client=BrokenR2(),
+            bucket="bucket",
+            stt_adapter=adapter,  # type: ignore[arg-type]
+        )
+
+    assert adapter.cleanup_calls == 0
