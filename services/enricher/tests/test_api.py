@@ -5,8 +5,11 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from google.api_core import exceptions as google_exceptions
 
 from app import main
+from app.gcs import GoogleTemporaryAudioStore
+from app.stt.google import GoogleSpeechToTextAdapter
 from app.stt.base import ReconciliationError, SpeechToTextError
 
 main.API_KEY = "test-key"
@@ -626,3 +629,157 @@ def test_reconciliation_control_error_is_never_provider_terminal(monkeypatch) ->
         "provider_request_id": payload["provider_request_id"],
         "provider_terminal": False,
     }
+
+
+def test_cleanup_requires_authentication_and_matching_idempotency(monkeypatch) -> None:
+    attempt_id = uuid4()
+    cleanup_calls = 0
+
+    class Adapter:
+        def cleanup_batch_audio(self, *, attempt_id: UUID) -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+
+    monkeypatch.setattr(main, "_stt_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        main,
+        "_r2_client",
+        lambda: (_ for _ in ()).throw(AssertionError("cleanup must not read R2")),
+    )
+
+    unauthorized = client.post(
+        "/v1/enrichments/cleanup",
+        headers={"Idempotency-Key": str(attempt_id)},
+        json={"attempt_id": str(attempt_id)},
+    )
+    mismatch = client.post(
+        "/v1/enrichments/cleanup",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(uuid4()),
+        },
+        json={"attempt_id": str(attempt_id)},
+    )
+
+    assert unauthorized.status_code == 401
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error_code"] == "ATTEMPT_CONFLICT"
+    assert cleanup_calls == 0
+
+
+def test_cleanup_only_calls_deterministic_temporary_audio_cleanup(monkeypatch) -> None:
+    attempt_id = uuid4()
+    cleanup_calls: list[UUID] = []
+
+    class Adapter:
+        def cleanup_batch_audio(self, *, attempt_id: UUID) -> None:
+            cleanup_calls.append(attempt_id)
+
+        def batch_recognize(self) -> None:
+            raise AssertionError("cleanup must not submit BatchRecognize")
+
+        def recognize(self) -> None:
+            raise AssertionError("cleanup must not call Recognize")
+
+        def get_operation(self) -> None:
+            raise AssertionError("cleanup must not reconcile an operation")
+
+        def list_operations(self) -> None:
+            raise AssertionError("cleanup must not list operations")
+
+    monkeypatch.setattr(main, "_stt_adapter", lambda: Adapter())
+    monkeypatch.setattr(
+        main,
+        "_r2_client",
+        lambda: (_ for _ in ()).throw(AssertionError("cleanup must not read R2")),
+    )
+
+    response = client.post(
+        "/v1/enrichments/cleanup",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(attempt_id),
+        },
+        json={"attempt_id": str(attempt_id)},
+    )
+
+    assert response.status_code == 204
+    assert cleanup_calls == [attempt_id]
+
+
+def test_cleanup_rejects_non_uuid_attempt_id_before_any_cleanup(monkeypatch) -> None:
+    called = False
+
+    class Adapter:
+        def cleanup_batch_audio(self, **_kwargs: object) -> None:
+            nonlocal called
+            called = True
+
+    monkeypatch.setattr(main, "_stt_adapter", lambda: Adapter())
+
+    response = client.post(
+        "/v1/enrichments/cleanup",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(uuid4()),
+        },
+        json={"attempt_id": "not-a-uuid"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "INVALID_REQUEST"
+    assert called is False
+
+
+def test_cleanup_treats_not_found_and_generation_race_as_safe(monkeypatch) -> None:
+    attempt_id = uuid4()
+
+    class Blob:
+        generation = "73"
+        delete_preconditions: list[str] = []
+
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+
+        def reload(self) -> None:
+            if isinstance(self.error, google_exceptions.NotFound):
+                raise self.error
+
+        def delete(self, *, if_generation_match: str) -> None:
+            self.delete_preconditions.append(if_generation_match)
+            if isinstance(self.error, google_exceptions.PreconditionFailed):
+                raise self.error
+
+    class StorageClient:
+        def __init__(self, blob: Blob) -> None:
+            self._blob = blob
+
+        def bucket(self, _name: str) -> object:
+            return type("Bucket", (), {"blob": lambda _self, _name: self._blob})()
+
+    for error in (
+        google_exceptions.NotFound("already absent"),
+        google_exceptions.PreconditionFailed("generation changed"),
+    ):
+        blob = Blob(error)
+        adapter = GoogleSpeechToTextAdapter(
+            project_id="test-project",
+            temporary_audio_store=GoogleTemporaryAudioStore(
+                bucket="test-temp-bucket",
+                client=StorageClient(blob),
+            ),
+        )
+        monkeypatch.setattr(main, "_stt_adapter", lambda adapter=adapter: adapter)
+
+        response = client.post(
+            "/v1/enrichments/cleanup",
+            headers={
+                "X-MegaBrain-Key": "test-key",
+                "Idempotency-Key": str(attempt_id),
+            },
+            json={"attempt_id": str(attempt_id)},
+        )
+
+        assert response.status_code == 204
+        if isinstance(error, google_exceptions.PreconditionFailed):
+            assert blob.delete_preconditions == ["73"]

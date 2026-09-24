@@ -345,7 +345,7 @@ def test_pipeline_started_at_is_captured_before_r2_download(
     assert events == ["started", "r2", "enrich"]
 
 
-def test_reconcile_terminal_provider_failure_skips_r2_and_returns_explicit_failure() -> None:
+def test_reconcile_terminal_provider_failure_skips_r2_and_returns_without_cleanup() -> None:
     class Adapter:
         cleanup_calls = 0
 
@@ -378,7 +378,7 @@ def test_reconcile_terminal_provider_failure_skips_r2_and_returns_explicit_failu
     assert response.provider_terminal is True
     assert response.retryable is False
     assert response.provider_request_id == reconciliation_payload().provider_request_id
-    assert adapter.cleanup_calls == 1
+    assert adapter.cleanup_calls == 0
 
 
 def test_reconcile_terminal_success_rereads_r2_without_resubmitting_stt(
@@ -441,7 +441,7 @@ def test_reconcile_terminal_success_rereads_r2_without_resubmitting_stt(
     assert response.transcription.engine.request_id == reconciliation_payload(content).provider_request_id
     assert response.transcription_input == audio_input
     assert adapter.transcribe_calls == 0
-    assert adapter.cleanup_calls == 1
+    assert adapter.cleanup_calls == 0
 
 
 def test_reconcile_r2_failure_is_control_error_and_does_not_cleanup() -> None:
