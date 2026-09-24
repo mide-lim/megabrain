@@ -9,6 +9,7 @@ from google.auth import exceptions as google_auth_exceptions
 
 from app import main
 from app.stt.base import (
+    BatchReconciliationResult,
     BatchSubmissionResult,
     SpeechToTextAdapter,
     SpeechToTextError,
@@ -552,3 +553,147 @@ def test_ambiguous_batch_submission_is_not_resubmitted_or_cleaned_up() -> None:
     assert client.batch_calls == 1
     assert len(store.upload_calls) == 1
     assert store.delete_calls == 0
+
+
+def test_reconciliation_pending_reads_exact_operation_once_without_submission() -> None:
+    operation_name = "projects/123/locations/us/operations/v2-test-operation"
+
+    class OperationsClient:
+        calls: list[tuple[str, object]] = []
+
+        def get_operation(self, *, name: str, retry: object) -> object:
+            self.calls.append((name, retry))
+            return type("Operation", (), {"done": False, "name": operation_name})()
+
+    class Client:
+        transport = type("Transport", (), {"operations_client": OperationsClient()})()
+
+        def batch_recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not submit batch work")
+
+        def recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not call synchronous recognize")
+
+    result = GoogleSpeechToTextAdapter(
+        client=Client(), project_id="test-project"
+    ).reconcile_batch(provider_request_id=operation_name)
+
+    assert result == BatchReconciliationResult(
+        state="pending",
+        provider="google",
+        model="chirp_3",
+        provider_request_id=operation_name,
+        transcript_text=None,
+        transcript_language=None,
+    )
+    assert Client.transport.operations_client.calls == [(operation_name, None)]
+
+
+def test_reconciliation_terminal_success_unpacks_only_matching_inline_result() -> None:
+    from google.cloud import speech_v2
+    from google.longrunning import operations_pb2
+
+    operation_name = "projects/123/locations/us/operations/v2-test-operation"
+    input_uri = "gs://test-temp-bucket/f6/transcription/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/audio.wav"
+    response = speech_v2.types.BatchRecognizeResponse(
+        results={
+            input_uri: speech_v2.types.BatchRecognizeFileResult(
+                uri=input_uri,
+                inline_result=speech_v2.types.InlineResult(
+                    transcript=speech_v2.types.BatchRecognizeResults(
+                        results=[
+                            speech_v2.types.SpeechRecognitionResult(
+                                alternatives=[
+                                    speech_v2.types.SpeechRecognitionAlternative(
+                                        transcript="primeira parte"
+                                    )
+                                ],
+                                language_code="",
+                            ),
+                            speech_v2.types.SpeechRecognitionResult(
+                                alternatives=[
+                                    speech_v2.types.SpeechRecognitionAlternative(
+                                        transcript="segunda parte"
+                                    )
+                                ],
+                                language_code="pt-BR",
+                            ),
+                        ]
+                    )
+                ),
+            )
+        }
+    )
+    operation = operations_pb2.Operation(name=operation_name, done=True)
+    operation.response.Pack(speech_v2.types.BatchRecognizeResponse.pb(response))
+
+    class OperationsClient:
+        def get_operation(self, *, name: str, retry: object) -> object:
+            assert name == operation_name
+            assert retry is None
+            return operation
+
+    class Client:
+        transport = type("Transport", (), {"operations_client": OperationsClient()})()
+
+        def batch_recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not submit batch work")
+
+        def recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not call synchronous recognize")
+
+    result = GoogleSpeechToTextAdapter(
+        client=Client(), project_id="test-project"
+    ).reconcile_batch(
+        provider_request_id=operation_name,
+        expected_input_uri=input_uri,
+    )
+
+    assert result == BatchReconciliationResult(
+        state="terminal_success",
+        provider="google",
+        model="chirp_3",
+        provider_request_id=operation_name,
+        transcript_text="primeira parte segunda parte",
+        transcript_language="pt-BR",
+    )
+
+
+def test_reconciliation_terminal_operation_error_is_explicit_provider_failure() -> None:
+    from google.longrunning import operations_pb2
+    from google.rpc import status_pb2
+
+    operation_name = "projects/123/locations/us/operations/v2-test-operation"
+    operation = operations_pb2.Operation(name=operation_name, done=True)
+    operation.error.CopyFrom(status_pb2.Status(code=13, message="raw provider detail"))
+
+    class OperationsClient:
+        def get_operation(self, *, name: str, retry: object) -> object:
+            assert name == operation_name
+            assert retry is None
+            return operation
+
+    class Client:
+        transport = type("Transport", (), {"operations_client": OperationsClient()})()
+
+        def batch_recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not submit batch work")
+
+        def recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not call synchronous recognize")
+
+    result = GoogleSpeechToTextAdapter(
+        client=Client(), project_id="test-project"
+    ).reconcile_batch(
+        provider_request_id=operation_name,
+        expected_input_uri="gs://test-temp-bucket/f6/transcription/test/audio.wav",
+    )
+
+    assert result == BatchReconciliationResult(
+        state="terminal_provider_failure",
+        provider="google",
+        model="chirp_3",
+        provider_request_id=operation_name,
+        transcript_text=None,
+        transcript_language=None,
+    )

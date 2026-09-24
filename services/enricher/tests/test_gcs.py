@@ -118,3 +118,29 @@ def test_upload_object_precondition_collision_preserves_existing_object(
     assert blob.overwrite_attempts == 0
     assert blob.object_contents == existing_object_before
     assert blob.delete_calls == 0
+
+
+def test_cleanup_reloads_generation_and_deletes_with_exact_precondition() -> None:
+    class CleanupBlob(FakeBlob):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reload_calls = 0
+            self.delete_preconditions: list[int] = []
+
+        def reload(self) -> None:
+            self.reload_calls += 1
+            self.generation = 73
+
+        def delete(self, *, if_generation_match: int) -> None:
+            self.delete_preconditions.append(if_generation_match)
+
+    blob = CleanupBlob()
+    store = GoogleTemporaryAudioStore(
+        bucket="configured-temp-bucket",
+        client=FakeStorageClient(FakeBucket(blob)),
+    )
+
+    store.cleanup(attempt_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+    assert blob.reload_calls == 1
+    assert blob.delete_preconditions == [73]

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import main
-from app.stt.base import SpeechToTextError
+from app.stt.base import ReconciliationError, SpeechToTextError
 
 main.API_KEY = "test-key"
 client = TestClient(main.app)
@@ -466,4 +466,163 @@ def test_openapi_contract_has_only_approved_error_stages_and_fields() -> None:
         "transcribed",
         "no_audio",
         "empty_transcript",
+    }
+
+
+def reconciliation_payload(attempt_id: UUID) -> dict[str, object]:
+    return {
+        **enrichment_payload(attempt_id),
+        "provider_request_id": "projects/123/locations/us/operations/v2-test-operation",
+    }
+
+
+def test_reconciliation_requires_exact_auth_content_type_and_idempotency(
+    monkeypatch,
+) -> None:
+    attempt_id = uuid4()
+    payload = reconciliation_payload(attempt_id)
+    called = False
+
+    def should_not_reconcile(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("reconciliation must not be called")
+
+    monkeypatch.setattr(main, "reconcile_source", should_not_reconcile)
+
+    unauthorized = client.post(
+        "/v1/enrichments/reconcile",
+        headers={"Idempotency-Key": str(attempt_id)},
+        json=payload,
+    )
+    wrong_content_type = client.post(
+        "/v1/enrichments/reconcile",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(attempt_id),
+            "Content-Type": "text/plain",
+        },
+        content="not-json",
+    )
+    mismatch = client.post(
+        "/v1/enrichments/reconcile",
+        headers={
+            "X-MegaBrain-Key": "test-key",
+            "Idempotency-Key": str(uuid4()),
+        },
+        json=payload,
+    )
+
+    assert unauthorized.status_code == 401
+    assert wrong_content_type.status_code == 422
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error_code"] == "ATTEMPT_CONFLICT"
+    assert called is False
+
+
+def test_reconciliation_returns_correlated_pending_response(monkeypatch) -> None:
+    attempt_id = uuid4()
+    payload = reconciliation_payload(attempt_id)
+    pending = main.ReconciliationPendingResponse.model_validate(
+        {
+            "contract_version": "1.0",
+            "attempt_id": attempt_id,
+            "reel_id": 42,
+            "shortcode": "ABC_123-x",
+            "pipeline_version": "sprint-3-v1",
+            "source": {
+                "object_key": payload["object_key"],
+                "sha256": "a" * 64,
+                "size_bytes": 1234,
+            },
+            "batch_submission": {
+                "state": "processing",
+                "provider": "google",
+                "model": "chirp_3",
+                "provider_request_id": payload["provider_request_id"],
+            },
+        }
+    )
+    monkeypatch.setattr(main, "reconcile_source", lambda *_args, **_kwargs: pending)
+    monkeypatch.setattr(main, "_r2_client", lambda: object())
+    monkeypatch.setattr(main, "_stt_adapter", lambda: object())
+    monkeypatch.setenv("R2_BUCKET", "test-bucket")
+
+    response = client.post(
+        "/v1/enrichments/reconcile",
+        headers={"X-MegaBrain-Key": "test-key", "Idempotency-Key": str(attempt_id)},
+        json=payload,
+    )
+
+    assert response.status_code == 202
+    assert response.json()["attempt_id"] == str(attempt_id)
+    assert response.json()["batch_submission"]["provider_request_id"] == payload[
+        "provider_request_id"
+    ]
+    assert "transcription" not in response.json()
+    assert "processing" not in response.json()
+
+
+def test_reconciliation_returns_explicit_provider_terminal_failure(monkeypatch) -> None:
+    attempt_id = uuid4()
+    payload = reconciliation_payload(attempt_id)
+    failure = main.ReconciliationErrorResponse(
+        error_code="STT_BATCH_PROVIDER_FAILED",
+        stage=main.ErrorStage.TRANSCRIPTION,
+        message="Batch transcription provider failed",
+        retryable=False,
+        attempt_id=attempt_id,
+        reel_id=42,
+        pipeline_version="sprint-3-v1",
+        provider_request_id=str(payload["provider_request_id"]),
+        provider_terminal=True,
+    )
+    monkeypatch.setattr(main, "reconcile_source", lambda *_args, **_kwargs: failure)
+    monkeypatch.setattr(main, "_r2_client", lambda: object())
+    monkeypatch.setattr(main, "_stt_adapter", lambda: object())
+    monkeypatch.setenv("R2_BUCKET", "test-bucket")
+
+    response = client.post(
+        "/v1/enrichments/reconcile",
+        headers={"X-MegaBrain-Key": "test-key", "Idempotency-Key": str(attempt_id)},
+        json=payload,
+    )
+
+    assert response.status_code == 502
+    assert response.json() == failure.model_dump(mode="json")
+
+
+def test_reconciliation_control_error_is_never_provider_terminal(monkeypatch) -> None:
+    attempt_id = uuid4()
+    payload = reconciliation_payload(attempt_id)
+
+    def fail(*_args, **_kwargs):
+        raise ReconciliationError(
+            "STT_RECONCILIATION_TIMEOUT",
+            "Batch transcription reconciliation timed out",
+            retryable=True,
+        )
+
+    monkeypatch.setattr(main, "reconcile_source", fail)
+    monkeypatch.setattr(main, "_r2_client", lambda: object())
+    monkeypatch.setattr(main, "_stt_adapter", lambda: object())
+    monkeypatch.setenv("R2_BUCKET", "test-bucket")
+
+    response = client.post(
+        "/v1/enrichments/reconcile",
+        headers={"X-MegaBrain-Key": "test-key", "Idempotency-Key": str(attempt_id)},
+        json=payload,
+    )
+
+    assert response.status_code == 504
+    assert response.json() == {
+        "error_code": "STT_RECONCILIATION_TIMEOUT",
+        "stage": "transcription",
+        "message": "Batch transcription reconciliation timed out",
+        "retryable": True,
+        "attempt_id": str(attempt_id),
+        "reel_id": 42,
+        "pipeline_version": "sprint-3-v1",
+        "provider_request_id": payload["provider_request_id"],
+        "provider_terminal": False,
     }

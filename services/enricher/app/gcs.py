@@ -39,6 +39,43 @@ class GoogleTemporaryAudioStore:
             self._client = storage.Client()
         return self._client
 
+    def object_name(self, *, attempt_id: object) -> str:
+        return f"f6/transcription/{attempt_id}/audio.wav"
+
+    def uri_for(self, *, attempt_id: object) -> str:
+        if not self.configured:
+            raise TemporaryAudioStoreError(
+                "STT_BATCH_CONFIGURATION_REQUIRED",
+                "Batch transcription requires temporary storage configuration",
+            )
+        return f"gs://{self._bucket_name}/{self.object_name(attempt_id=attempt_id)}"
+
+    def cleanup(self, *, attempt_id: object) -> None:
+        """Best-effort generation-guarded deletion of terminal temporary audio."""
+        if not self.configured:
+            return
+        try:
+            blob = self._get_client().bucket(self._bucket_name).blob(
+                self.object_name(attempt_id=attempt_id)
+            )
+            blob.reload()
+            generation = getattr(blob, "generation", None)
+            if generation is None:
+                raise RuntimeError
+            blob.delete(if_generation_match=generation)
+        except Exception as error:  # noqa: BLE001 - terminal result remains valid.
+            from google.api_core import exceptions as google_errors
+
+            if isinstance(
+                error,
+                (google_errors.NotFound, google_errors.PreconditionFailed),
+            ):
+                return
+            raise TemporaryAudioStoreError(
+                "STT_BATCH_CLEANUP_FAILED",
+                "Temporary transcription audio cleanup failed",
+            ) from None
+
     def upload(self, *, attempt_id: object, path: Path) -> TemporaryAudioObject:
         if not self.configured:
             raise TemporaryAudioStoreError(
