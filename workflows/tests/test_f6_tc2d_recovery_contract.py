@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from pathlib import Path
 
@@ -176,13 +177,31 @@ def test_terminal_cleanup_is_strictly_after_accepted_exact_db_transitions() -> N
     nodes, connections = workflow()
     complete = query(nodes, RECONCILE_COMPLETE)
     failure = query(nodes, RECONCILE_FAIL)
+    success_condition = nodes[COMPLETE_PERSISTED]["parameters"]["conditions"]["conditions"][0][
+        "leftValue"
+    ]
+    failure_condition = nodes[FAILURE_PERSISTED]["parameters"]["conditions"]["conditions"][0][
+        "leftValue"
+    ]
     success_cleanup = nodes[SUCCESS_CLEANUP]
     failure_cleanup = nodes[FAILURE_CLEANUP]
 
     assert "attempt_id = $1::UUID" in complete
     assert "provider_request_id = $8::TEXT" in complete
+    assert re.search(
+        r"RETURNING\s+reel\.id\s*,\s*reel\.transcription_status\s*;",
+        complete,
+        re.IGNORECASE,
+    )
+    assert "$json.id" in success_condition
+    assert "$json.transcription_status" in success_condition
+    assert "$json.transcription_status === 'completed'" in success_condition
     assert "attempt_id = $1::UUID" in failure
     assert "provider_request_id = $2" in failure
+    assert re.search(r"RETURNING\s+failed_attempt\.attempt_id\s*;", failure, re.IGNORECASE)
+    assert "$json.attempt_id" in failure_condition
+    assert "typeof $json.attempt_id === 'string'" in failure_condition
+    assert "$json.attempt_id !== ''" in failure_condition
     assert successors(connections, RECONCILE_COMPLETE) == {COMPLETE_PERSISTED}
     assert successors(connections, RECONCILE_FAIL) == {FAILURE_PERSISTED}
     assert successors(connections, COMPLETE_PERSISTED, 0) == {SUCCESS_CLEANUP_DATA}

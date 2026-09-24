@@ -15,6 +15,7 @@ GRANTS = ROOT / "infra" / "postgres" / "security" / "f4" / "002_f4_runtime_grant
 MGB020_SHA256 = "1534ec7412447f0285223de54c8ff19e9b542d17e7e2e92b603a2771adc236ac"
 F4_MGB030_SHA256 = "f6b5974643926a42f1033560abb0293fb239fd7330c65a9d4a54d177c58e4695"
 F6_TC2D_MGB030_SHA256 = "f0f731e86ebb6d7d8c1f06e4f891d9c6c4b95e40d0441935162eae9f5228d510"
+F6_TC2E_MGB030_SHA256 = "f9518287f13225298cc46dafafd7e7451a6d70ad1c0244d3994c3a94a5be7d49"
 
 
 def text(path: Path) -> str:
@@ -22,11 +23,12 @@ def text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_cutover_document_preserves_historical_artifacts_and_current_tc2d_mgb030_is_pinned() -> None:
+def test_cutover_document_preserves_historical_artifacts_and_current_tc2e_mgb030_is_pinned() -> None:
     document = text(CUTOVER)
 
     assert hashlib.sha256(MGB020.read_bytes()).hexdigest() == MGB020_SHA256
-    assert hashlib.sha256(MGB030.read_bytes()).hexdigest() == F6_TC2D_MGB030_SHA256
+    assert hashlib.sha256(MGB030.read_bytes()).hexdigest() == F6_TC2E_MGB030_SHA256
+    assert F6_TC2D_MGB030_SHA256 != F6_TC2E_MGB030_SHA256
     assert F4_MGB030_SHA256 in document
     for required in (
         "workflows/MGB-020-download-reel.json",
