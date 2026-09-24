@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, Header, Request
+from fastapi import Body, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -217,7 +217,6 @@ def reconcile_source(
             ),
         )
     if result.state == "terminal_provider_failure":
-        stt_adapter.cleanup_batch_audio(attempt_id=payload.attempt_id)
         return ReconciliationErrorResponse(
             error_code="STT_BATCH_PROVIDER_FAILED",
             stage=ErrorStage.TRANSCRIPTION,
@@ -282,7 +281,6 @@ def reconcile_source(
         ),
         warnings=[],
     )
-    stt_adapter.cleanup_batch_audio(attempt_id=payload.attempt_id)
     return response
 
 
@@ -343,7 +341,11 @@ def _error(
 
 @app.middleware("http")
 async def authenticate_enrichment(request: Request, call_next: Any) -> JSONResponse:
-    if request.url.path in {"/v1/enrichments", "/v1/enrichments/reconcile"}:
+    if request.url.path in {
+        "/v1/enrichments",
+        "/v1/enrichments/reconcile",
+        "/v1/enrichments/cleanup",
+    }:
         received_key = request.headers.get("X-MegaBrain-Key")
         if (
             not API_KEY
@@ -618,3 +620,34 @@ async def reconcile_enrichment(
         status_code=202 if isinstance(result, ReconciliationPendingResponse) else 200,
         content=result.model_dump(mode="json"),
     )
+
+
+@app.post(
+    "/v1/enrichments/cleanup",
+    status_code=204,
+    response_model=None,
+    responses={
+        204: {"description": "Temporary batch audio cleanup was requested"},
+        401: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
+)
+async def cleanup_enrichment(
+    attempt_id: UUID = Body(embed=True),
+    _x_megabrain_key: str | None = Header(default=None, alias="X-MegaBrain-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> Response | JSONResponse:
+    if _attempt_id(idempotency_key) != attempt_id:
+        return _error(
+            409,
+            error_code="ATTEMPT_CONFLICT",
+            stage=ErrorStage.INPUT,
+            message="Idempotency-Key must match attempt_id",
+            retryable=False,
+            attempt_id=attempt_id,
+        )
+
+    _stt_adapter().cleanup_batch_audio(attempt_id=attempt_id)
+    return Response(status_code=204)
