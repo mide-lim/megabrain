@@ -8,9 +8,12 @@ perform a cutover.
 
 Production status:
 
-- NOT APPLIED
-- NOT DEPLOYED
-- NOT CUT OVER
+```text
+production = NOT APPLIED
+deployment = NOT PERFORMED
+cutover = NOT PERFORMED
+TC5 = NOT COMPLETE
+```
 
 Future production work remains separately human-gated by:
 
@@ -104,6 +107,33 @@ runtime security authority delta required: YES
 The F6 SQL files are controlled security/cutover artifacts. They are not
 automatic application-startup migrations.
 
+## F4 → F6 verifier succession
+
+Before the F6 Web queue-authority overlay:
+
+`infra/postgres/security/f4/003_f4_runtime_grants_verify.sql`
+
+describes the valid historical F4 authority boundary.
+
+After the F6 overlay is applied:
+
+`infra/postgres/security/f6/002_f6_web_transcription_queue_verify.sql`
+
+is the authoritative verifier for the evolved Web transcription queue boundary.
+
+The historical F4 checks:
+
+```text
+WEB_CAN_WRITE_TRANSCRIPTION = FALSE
+WEB_CAN_WRITE_TRANSCRIPTION_ATTEMPT = FALSE
+```
+
+are intentionally no longer valid as post-F6 assertions because F6 explicitly
+grants the Web role the narrow user-request queue transition.
+
+The F4 artifact must remain unchanged as historical release evidence. It must
+not be used alone to decide post-F6 rollout success.
+
 ## Verifier and rollback
 
 `002_f6_web_transcription_queue_verify.sql` is catalog-only and mutation-free.
@@ -111,7 +141,13 @@ It uses effective privilege checks so unexpected direct, PUBLIC, or
 membership-derived authority fails rather than being accepted. It proves the
 positive F6 columns, preserved F4 curation update, the exact effective Reel
 SELECT/UPDATE allowlists, and the negative download, table-wide, DELETE,
-attempt, enrichment-result, sequence, PUBLIC, and membership boundaries.
+attempt, enrichment-result write, enrichment-result sequence, PUBLIC, and
+membership boundaries.
+
+The PUBLIC boundary covers schema `app`, the table and column ACLs for
+`app.reels`, `app.reel_enrichment_attempts`, and `app.reel_enrichments`, and
+`app.reel_enrichments_id_seq`. It uses `aclexplode(...)` with `grantee = 0`;
+PUBLIC is not a `pg_roles` row.
 
 `003_f6_web_transcription_queue_rollback.sql` requires the affirmative psql
 acknowledgement variable `f6_web_transcription_queue_rollback_ack=true`. It

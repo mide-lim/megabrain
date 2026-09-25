@@ -52,6 +52,17 @@ F6_UPDATE_ALLOWLIST = (
     "transcription_attempt_id",
     "updated_at",
 )
+MUTATION_KEYWORDS = (
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "GRANT",
+    "REVOKE",
+    "TRUNCATE",
+)
 
 
 def artifact(path: Path) -> str:
@@ -59,11 +70,89 @@ def artifact(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def executable_sql(sql: str) -> str:
+    """Remove SQL comments and quoted data while retaining executable tokens."""
+    result: list[str] = []
+    index = 0
+    block_comment_depth = 0
+    dollar_quote: str | None = None
+
+    while index < len(sql):
+        if dollar_quote is not None:
+            if sql.startswith(dollar_quote, index):
+                result.append(" " * len(dollar_quote))
+                index += len(dollar_quote)
+                dollar_quote = None
+            else:
+                result.append("\n" if sql[index] == "\n" else " ")
+                index += 1
+            continue
+
+        if block_comment_depth:
+            if sql.startswith("/*", index):
+                result.append("  ")
+                index += 2
+                block_comment_depth += 1
+            elif sql.startswith("*/", index):
+                result.append("  ")
+                index += 2
+                block_comment_depth -= 1
+            else:
+                result.append("\n" if sql[index] == "\n" else " ")
+                index += 1
+            continue
+
+        if sql.startswith("--", index):
+            line_end = sql.find("\n", index)
+            if line_end == -1:
+                result.append(" " * (len(sql) - index))
+                break
+            result.append(" " * (line_end - index))
+            result.append("\n")
+            index = line_end + 1
+            continue
+
+        if sql.startswith("/*", index):
+            result.append("  ")
+            index += 2
+            block_comment_depth = 1
+            continue
+
+        if sql[index] in ("'", '"'):
+            quote = sql[index]
+            result.append(" ")
+            index += 1
+            while index < len(sql):
+                if sql[index] == quote:
+                    result.append(" ")
+                    index += 1
+                    if index < len(sql) and sql[index] == quote:
+                        result.append(" ")
+                        index += 1
+                        continue
+                    break
+                result.append("\n" if sql[index] == "\n" else " ")
+                index += 1
+            continue
+
+        dollar_match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", sql[index:])
+        if dollar_match is not None:
+            dollar_quote = dollar_match.group(0)
+            result.append(" " * len(dollar_quote))
+            index += len(dollar_quote)
+            continue
+
+        result.append(sql[index])
+        index += 1
+
+    return "".join(result)
+
+
 def executable_lines(sql: str) -> str:
     return "\n".join(
         line
-        for line in sql.splitlines()
-        if not line.lstrip().startswith(("--", "\\"))
+        for line in executable_sql(sql).splitlines()
+        if not line.lstrip().startswith("\\")
     )
 
 
@@ -75,11 +164,32 @@ def compact_columns(columns: str) -> tuple[str, ...]:
     return tuple(column.strip().lower() for column in columns.split(","))
 
 
-def reels_column_privileges(sql: str, statement: str, privilege: str, role_keyword: str) -> list[tuple[tuple[str, ...], str]]:
+def reels_column_privileges(
+    sql: str,
+    statement: str,
+    privilege: str,
+    role_keyword: str,
+) -> list[tuple[tuple[str, ...], str]]:
     return [
         (compact_columns(columns), role.lower())
         for columns, role in re.findall(
-            rf"{statement}\s+{privilege}\s*\(([^)]+)\)\s+ON\s+TABLE\s+app\.reels\s+{role_keyword}\s+([a-z_]+)\s*;",
+            rf"\b{statement}\s+{privilege}\s*\(([^)]+)\)\s+ON\s+(?:TABLE\s+)?app\.reels\s+{role_keyword}\s+([a-z_][a-z0-9_]*)\s*;",
+            sql,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    ]
+
+
+def reels_table_privileges(
+    sql: str,
+    statement: str,
+    privilege: str,
+    role_keyword: str,
+) -> list[str]:
+    return [
+        role.lower()
+        for role in re.findall(
+            rf"\b{statement}\s+{privilege}\s+ON\s+(?:TABLE\s+)?app\.reels\s+{role_keyword}\s+([a-z_][a-z0-9_]*)\s*;",
             sql,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -94,6 +204,15 @@ def revokes_on_reels(sql: str, privilege: str) -> list[tuple[tuple[str, ...], st
     return reels_column_privileges(sql, "REVOKE", privilege, "FROM")
 
 
+def executable_mutation_keywords(sql: str) -> tuple[str, ...]:
+    executable = executable_lines(sql)
+    return tuple(
+        keyword
+        for keyword in MUTATION_KEYWORDS
+        if re.search(rf"\b{keyword}\b", executable, flags=re.IGNORECASE)
+    )
+
+
 def canonical_file(path: str) -> str:
     completed = subprocess.run(
         ["git", "show", f"{CANONICAL_BASE}:{path}"],
@@ -103,6 +222,37 @@ def canonical_file(path: str) -> str:
         text=True,
     )
     return completed.stdout
+
+
+def test_static_sql_helpers_detect_optional_table_syntax_and_cte_mutations() -> None:
+    assert reels_table_privileges(
+        "GRANT UPDATE ON app.reels TO megabrain_web;",
+        "GRANT",
+        "UPDATE",
+        "TO",
+    ) == ["megabrain_web"]
+    assert grants_on_reels(
+        "GRANT UPDATE (download_status) ON app.reels TO megabrain_web;",
+        "UPDATE",
+    ) == [(("download_status",), "megabrain_web")]
+    assert grants_on_reels(
+        "GRANT UPDATE (error_message) ON TABLE app.reels TO megabrain_web;",
+        "UPDATE",
+    ) == [(("error_message",), "megabrain_web")]
+    assert revokes_on_reels(
+        "REVOKE UPDATE (curation_status) ON app.reels FROM megabrain_web;",
+        "UPDATE",
+    ) == [(("curation_status",), "megabrain_web")]
+    assert executable_mutation_keywords(
+        """
+        WITH x AS (
+            UPDATE app.reels SET updated_at = NOW()
+            RETURNING id
+        )
+        SELECT * FROM x;
+        """
+    ) == ("UPDATE",)
+    assert executable_mutation_keywords("-- UPDATE\nSELECT 'UPDATE';") == ()
 
 
 def test_f6_artifacts_exist_and_grant_only_the_required_web_queue_delta() -> None:
@@ -120,13 +270,19 @@ def test_f6_artifacts_exist_and_grant_only_the_required_web_queue_delta() -> Non
             "megabrain_web",
         ),
     ]
+    assert reels_table_privileges(grant, "GRANT", "SELECT", "TO") == []
+    assert reels_table_privileges(grant, "GRANT", "UPDATE", "TO") == []
 
     executable = normalized(executable_lines(grant))
-    for prerequisite in ("MEGABRAIN_WEB", "APP.REELS", "TRANSCRIPTION_STATUS", "TRANSCRIPTION_ATTEMPT_ID", "UPDATED_AT"):
+    for prerequisite in (
+        "MEGABRAIN_WEB",
+        "APP.REELS",
+        "TRANSCRIPTION_STATUS",
+        "TRANSCRIPTION_ATTEMPT_ID",
+        "UPDATED_AT",
+    ):
         assert prerequisite in executable
     for forbidden in (
-        "GRANT SELECT ON TABLE APP.REELS",
-        "GRANT UPDATE ON TABLE APP.REELS",
         "GRANT INSERT",
         "GRANT DELETE",
         "REEL_ENRICHMENT_ATTEMPTS",
@@ -144,8 +300,9 @@ def test_f6_verifier_is_catalog_read_only_and_fails_closed_on_exact_boundaries()
     sql = artifact(VERIFIER)
     executable = executable_lines(sql)
     uppercase = normalized(executable)
+    source_uppercase = normalized(sql)
 
-    assert re.search(r"^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|GRANT|REVOKE|TRUNCATE)\b", executable, re.MULTILINE) is None
+    assert executable_mutation_keywords(sql) == ()
     for function in (
         "HAS_SCHEMA_PRIVILEGE",
         "HAS_TABLE_PRIVILEGE",
@@ -163,6 +320,7 @@ def test_f6_verifier_is_catalog_read_only_and_fails_closed_on_exact_boundaries()
         "WEB_CANNOT_DELETE_REELS",
         "WEB_CANNOT_ACCESS_ENRICHMENT_ATTEMPTS",
         "WEB_CANNOT_WRITE_ENRICHMENT_RESULTS",
+        "WEB_CANNOT_USE_ENRICHMENT_RESULT_SEQUENCE",
         "WEB_F6_EFFECTIVE_SELECT_ALLOWLIST",
         "WEB_F6_EFFECTIVE_UPDATE_ALLOWLIST",
         "WEB_F6_NO_UNEXPECTED_ROLE_MEMBERSHIPS",
@@ -175,6 +333,52 @@ def test_f6_verifier_is_catalog_read_only_and_fails_closed_on_exact_boundaries()
         r"\\if\s+:f6_web_transcription_queue_verifier_all_pass\s*\\else\s*\\quit\s+3\s*\\endif",
         sql,
     ) is not None
+
+    enrichment_attempt_access = re.search(
+        r"enrichment_attempt_access\s+AS\s*\((.*?)\),\s*enrichment_result_write",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    enrichment_result_write = re.search(
+        r"enrichment_result_write\s+AS\s*\((.*?)\),\s*enrichment_result_sequence_access",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert enrichment_attempt_access is not None
+    assert enrichment_result_write is not None
+    attempt_boundary = normalized(enrichment_attempt_access.group(1))
+    result_boundary = normalized(enrichment_result_write.group(1))
+    for privilege in ("SELECT", "INSERT", "UPDATE", "REFERENCES"):
+        assert f"'{privilege}'" in attempt_boundary
+    for privilege in (
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    ):
+        assert f"'{privilege}'" in attempt_boundary
+    for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+        assert f"'{privilege}'" in result_boundary
+    assert "HAS_COLUMN_PRIVILEGE" in attempt_boundary
+    assert "HAS_TABLE_PRIVILEGE" in attempt_boundary
+    assert "HAS_COLUMN_PRIVILEGE" in result_boundary
+    assert "HAS_TABLE_PRIVILEGE" in result_boundary
+    assert "ARRAY['USAGE', 'SELECT', 'UPDATE']" in normalized(sql)
+    for protected_surface in (
+        "PG_NAMESPACE",
+        "APP.REELS",
+        "APP.REEL_ENRICHMENT_ATTEMPTS",
+        "APP.REEL_ENRICHMENTS",
+        "APP.REEL_ENRICHMENTS_ID_SEQ",
+        "ACLDEFAULT('N'",
+        "ACLDEFAULT('R'",
+        "ACLDEFAULT('S'",
+        "GRANTEE = 0",
+    ):
+        assert protected_surface in source_uppercase
 
 
 def test_f6_verifier_encodes_exact_effective_web_reels_allowlists() -> None:
@@ -221,6 +425,8 @@ def test_f6_rollback_is_acknowledgement_gated_and_revokes_only_the_f6_delta() ->
             "megabrain_web",
         ),
     ]
+    assert reels_table_privileges(sql, "REVOKE", "SELECT", "FROM") == []
+    assert reels_table_privileges(sql, "REVOKE", "UPDATE", "FROM") == []
     for preserved in (
         "CURATION_STATUS",
         "AUTH_USERS",
@@ -286,8 +492,15 @@ def test_f6_documentation_preserves_the_authority_split_and_source_only_status()
         "schema migration required: NO",
         "runtime security authority delta required: YES",
         "NOT APPLIED",
-        "NOT DEPLOYED",
-        "NOT CUT OVER",
+        "production = NOT APPLIED",
+        "deployment = NOT PERFORMED",
+        "cutover = NOT PERFORMED",
+        "TC5 = NOT COMPLETE",
+        "authoritative verifier",
+        "historical F4 checks",
+        "WEB_CAN_WRITE_TRANSCRIPTION = FALSE",
+        "WEB_CAN_WRITE_TRANSCRIPTION_ATTEMPT = FALSE",
+        "F4 artifact must remain unchanged",
         "TC4-WEB-QUEUE-AUTHORITY",
         "no unexpected PUBLIC authority",
         "no unexpected role memberships",
