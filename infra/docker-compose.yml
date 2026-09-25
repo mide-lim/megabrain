@@ -119,6 +119,7 @@ services:
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
       R2_BUCKET: ${R2_BUCKET}
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
+      GOOGLE_STT_TEMP_BUCKET: ${GOOGLE_STT_TEMP_BUCKET}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google/megabrain-stt.json
     volumes:
       - type: bind
