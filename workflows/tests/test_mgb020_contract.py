@@ -180,14 +180,21 @@ class Mgb020ContractTests(unittest.TestCase):
         self.assertIn("$('DB — Reivindicar processamento').item.json.id", downloaded["options"]["queryReplacement"])
         self.assertNotIn("$json.item_id,", downloaded["options"]["queryReplacement"])
 
-    def test_mgb030_follows_only_successful_downloaded_persistence(self) -> None:
+    def test_successful_download_stops_without_transcription_dispatch(self) -> None:
+        serialized = json.dumps(self.workflow)
+
         self.assertEqual(
-            self.predecessors("SUB — Enriquecer Reel"),
-            {"DB — Marcar downloaded"},
-        )
-        self.assertIn(
-            "SUB — Enriquecer Reel",
             self.successors("DB — Marcar downloaded"),
+            {"IF — Tem chat Telegram sucesso?"},
+        )
+        self.assertNotIn("SUB — Enriquecer Reel", self.nodes)
+        self.assertNotIn("__WORKFLOW_ID_MGB_030__", serialized)
+        self.assertNotIn("MGB-030 — Enriquecer Reel", serialized)
+        self.assertFalse(
+            any(
+                node["type"] == "n8n-nodes-base.executeWorkflow"
+                for node in self.nodes.values()
+            )
         )
 
     def test_telegram_notifications_are_conditional_nonfatal_and_not_required(self) -> None:
@@ -204,9 +211,10 @@ class Mgb020ContractTests(unittest.TestCase):
             self.successors("IF — Tem chat Telegram inicial?", 1),
         )
         self.assertIn(
-            "SUB — Enriquecer Reel",
+            "IF — Tem chat Telegram sucesso?",
             self.successors("DB — Marcar downloaded"),
         )
+        self.assertNotIn("SUB — Enriquecer Reel", self.nodes)
 
     def test_failure_normalization_and_guarded_failure_persistence(self) -> None:
         normalizer = self.node("DATA — Normalizar falha Downloader")["parameters"]["jsCode"]
