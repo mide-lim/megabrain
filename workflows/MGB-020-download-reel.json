@@ -301,34 +301,6 @@
     },
     {
       "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "__WORKFLOW_ID_MGB_030__",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/__WORKFLOW_ID_MGB_030__",
-          "cachedResultName": "MGB-030 — Enriquecer Reel"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": true
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        2240,
-        -112
-      ],
-      "id": "__NODE_ID_MGB_020_09__",
-      "name": "SUB — Enriquecer Reel"
-    },
-    {
-      "parameters": {
         "mode": "runOnceForEachItem",
         "jsCode": "const claim = $('DB — Reivindicar processamento').item.json;\nconst safeMessages = {\n  DOWNLOAD_FAILED: 'Downloader could not acquire Reel media',\n  DOWNLOADER_INTERNAL_ERROR: 'Downloader internal processing failed',\n  DOWNLOADER_INVALID_RESPONSE: 'Downloader returned an invalid success response',\n  DOWNLOADER_REQUEST_FAILED: 'Downloader request failed without a valid error envelope',\n};\nconst parse = (value) => {\n  let parsed = value;\n  for (let depth = 0; depth < 3 && typeof parsed === 'string'; depth += 1) {\n    try {\n      parsed = JSON.parse(parsed);\n    } catch {\n      break;\n    }\n  }\n  return parsed;\n};\nconst candidates = [\n  $json,\n  $json.body,\n  $json.error?.body,\n  $json.error?.message,\n  $json.error?.response?.body,\n  $json.error?.response?.data,\n].map(parse);\nconst envelope = candidates.find((value) => value && typeof value === 'object'\n  && value.success === false\n  && Number.isSafeInteger(Number(value.item_id))\n  && Number(value.item_id) === Number(claim.id)\n  && value.shortcode === claim.shortcode\n  && typeof value.error?.code === 'string');\nlet code = $json.failure_code === 'DOWNLOADER_INVALID_RESPONSE'\n  ? 'DOWNLOADER_INVALID_RESPONSE'\n  : 'DOWNLOADER_REQUEST_FAILED';\n\nif (envelope && Object.hasOwn(safeMessages, envelope.error.code)) {\n  code = envelope.error.code;\n}\n\nreturn {\n  reel_id: claim.id,\n  shortcode: claim.shortcode,\n  failure_code: code,\n  error_message: safeMessages[code].slice(0, 512),\n};"
       },
@@ -550,11 +522,6 @@
         [
           {
             "node": "IF — Tem chat Telegram sucesso?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "SUB — Enriquecer Reel",
             "type": "main",
             "index": 0
           }

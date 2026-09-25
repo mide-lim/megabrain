@@ -26,9 +26,9 @@ def text(path: Path) -> str:
 def test_cutover_document_preserves_historical_artifacts_and_current_tc2e_mgb030_is_pinned() -> None:
     document = text(CUTOVER)
 
-    assert hashlib.sha256(MGB020.read_bytes()).hexdigest() == MGB020_SHA256
     assert hashlib.sha256(MGB030.read_bytes()).hexdigest() == F6_TC2E_MGB030_SHA256
     assert F6_TC2D_MGB030_SHA256 != F6_TC2E_MGB030_SHA256
+    assert MGB020_SHA256 in document
     assert F4_MGB030_SHA256 in document
     for required in (
         "workflows/MGB-020-download-reel.json",

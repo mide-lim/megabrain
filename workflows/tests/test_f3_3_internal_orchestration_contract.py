@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import re
 import unittest
 from collections import deque
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BASELINE = "1d81048adef6c0a952ace232eb3944fad77ccd1a"
 MGB010_PATH = ROOT / "workflows" / "MGB-010-entrada-reel.json"
 MGB015_PATH = ROOT / "workflows" / "MGB-015-internal-dispatch-reel.json"
 MGB020_PATH = ROOT / "workflows" / "MGB-020-download-reel.json"
@@ -237,36 +236,64 @@ class F33InternalOrchestrationContractTests(unittest.TestCase):
         for forbidden_term in ("downloader", "enricher", "cloudflare_r2", "retry_count"):
             self.assertNotIn(forbidden_term, serialized.lower())
 
-    def test_mgb020_keeps_the_f42_download_status_rename_while_mgb030_owns_f43(self) -> None:
-        def baseline_workflow(path: Path) -> dict:
-            result = subprocess.run(
-                ["git", "show", f"{BASELINE}:{path.relative_to(ROOT)}"],
-                cwd=ROOT,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            return json.loads(result.stdout)
-
-        expected_mgb020 = baseline_workflow(MGB020_PATH)
-        for node in expected_mgb020["nodes"]:
-            query = node.get("parameters", {}).get("query")
-            if isinstance(query, str) and "app.reels" in query:
-                node["parameters"]["query"] = query.replace("status", "download_status").replace(
-                    "download_failed", "failed"
-                )
-            text = node.get("parameters", {}).get("text")
-            if isinstance(text, str) and "$json.status" in text:
-                node["parameters"]["text"] = text.replace("$json.status", "$json.download_status")
-
-        self.assertEqual(json.loads(MGB020_PATH.read_text(encoding="utf-8")), expected_mgb020)
+    def test_mgb020_preserves_download_lifecycle_while_mgb030_owns_transcription(self) -> None:
+        mgb020 = json.loads(MGB020_PATH.read_text(encoding="utf-8"))
         mgb030 = json.loads(MGB030_PATH.read_text(encoding="utf-8"))
-        serialized = json.dumps(mgb030)
-        self.assertIn("download_status = 'downloaded'", serialized)
-        self.assertIn("transcription_status = 'queued'", serialized)
-        self.assertIn("transcription_status = 'processing'", serialized)
-        self.assertIn("transcription_status = 'completed'", serialized)
-        self.assertIn("transcription_status = 'failed'", serialized)
+        mgb020_nodes = self.nodes(mgb020)
+        mgb020_sql = "\n".join(
+            node.get("parameters", {}).get("query", "")
+            for node in mgb020_nodes.values()
+        )
+        downloaded = mgb020_nodes["DB — Marcar downloaded"]["parameters"]["query"]
+        failed = mgb020_nodes["DB — Registrar falha"]["parameters"]["query"]
+
+        for required in (
+            "download_status IN ('received', 'failed')",
+            "download_status = 'downloading'",
+            "download_status = 'downloaded'",
+            "download_status = 'failed'",
+        ):
+            self.assertIn(required, mgb020_sql)
+        self.assertIn("AND download_status = 'downloading'", downloaded)
+        self.assertIn("AND download_status = 'downloading'", failed)
+        for legacy_reel_status in (
+            r"\br\.status\b",
+            r"\bstatus\s*=\s*'downloaded'",
+            r"\bstatus\s*=\s*'downloading'",
+            r"\bstatus\s*=\s*'failed'",
+        ):
+            self.assertIsNone(re.search(legacy_reel_status, mgb020_sql))
+
+        serialized_mgb020 = json.dumps(mgb020)
+        for removed_dispatch in (
+            "__WORKFLOW_ID_MGB_030__",
+            "SUB — Enriquecer Reel",
+            "MGB-030 — Enriquecer Reel",
+        ):
+            self.assertNotIn(removed_dispatch, serialized_mgb020)
+        self.assertEqual(
+            self.successors(mgb020, "DB — Marcar downloaded"),
+            {"IF — Tem chat Telegram sucesso?"},
+        )
+        for transcription_write in (
+            "transcription_status",
+            "transcription_attempt_id",
+            "app.reel_enrichment_attempts",
+            "app.reel_enrichments",
+        ):
+            self.assertNotIn(transcription_write, serialized_mgb020)
+
+        mgb030_nodes = self.nodes(mgb030)
+        serialized_mgb030 = json.dumps(mgb030)
+        for required in (
+            "download_status = 'downloaded'",
+            "transcription_status = 'queued'",
+            "transcription_status = 'processing'",
+            "transcription_status = 'completed'",
+            "transcription_status = 'failed'",
+        ):
+            self.assertIn(required, serialized_mgb030)
+        self.assertIn("SCHEDULE — Consumir fila de transcrição", mgb030_nodes)
 
 
 if __name__ == "__main__":
