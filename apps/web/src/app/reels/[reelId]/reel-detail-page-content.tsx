@@ -4,6 +4,7 @@ import { ReelLifecycle } from "../../../components/reel-lifecycle";
 import { lifecycleKey } from "../../../lib/reel-lifecycle";
 import type { ReelCategory, ReelDetail } from "./reel-detail-api";
 import { ReelCategoryControls } from "./reel-category-controls";
+import { ReelTranscriptionControls } from "./reel-transcription-controls";
 
 function readableDate(value: string | null): string | null {
   if (!value) return null;
@@ -78,7 +79,6 @@ export function ReelDetailPageContent({ reel, categoryControls }: { reel: ReelDe
   const duration = readableDuration(reel.duration_seconds);
   const receivedAt = readableDate(reel.received_at);
   const downloadedAt = readableDate(reel.downloaded_at);
-  const transcriptCompletedAt = readableDate(reel.transcript.completed_at);
   const fileSize = readableFileSize(reel.file_size_bytes);
 
   return (
@@ -126,15 +126,12 @@ export function ReelDetailPageContent({ reel, categoryControls }: { reel: ReelDe
         {reel.caption?.trim() ? <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-7 text-foreground">{reel.caption}</p> : <p className="mt-2 text-sm leading-6 text-muted">Legenda original não disponível.</p>}
       </section>
 
-      <section className="mt-6 max-w-4xl rounded-2xl border border-border bg-surface p-5 shadow-[0_12px_30px_rgba(32,37,34,0.06)] sm:p-6">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Transcrição</h2>
-        {reel.transcript.available && reel.transcript.text ? (
-          <>
-            <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-7 text-foreground">{reel.transcript.text}</p>
-            {reel.transcript.language || transcriptCompletedAt ? <p className="mt-4 text-sm leading-6 text-muted">{reel.transcript.language ? `Idioma: ${reel.transcript.language}` : null}{reel.transcript.language && transcriptCompletedAt ? " · " : null}{transcriptCompletedAt ? `Concluída em ${transcriptCompletedAt}` : null}</p> : null}
-          </>
-        ) : <p className="mt-4 text-sm leading-6 text-muted">Transcrição ainda não disponível.</p>}
-      </section>
+      <ReelTranscriptionControls key={lifecycleKey(reel)} lifecycle={{
+        id: reel.id,
+        download_status: reel.download_status,
+        curation_status: reel.curation_status,
+        transcription_status: reel.transcription_status,
+      }} transcript={reel.transcript} />
     </div>
   );
 }

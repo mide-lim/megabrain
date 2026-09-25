@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AppRouterContext, type AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
 import {
   fetchReelDetail,
@@ -41,8 +42,18 @@ const reel: ReelDetail = {
   video: { available: true, src: "/api/reels/42/video" },
 };
 
+const router: AppRouterInstance = {
+  back: () => undefined,
+  bfcacheId: "reel-detail-test",
+  forward: () => undefined,
+  prefetch: () => undefined,
+  push: () => undefined,
+  refresh: () => undefined,
+  replace: () => undefined,
+};
+
 function render(detail: ReelDetail = reel): string {
-  return renderToStaticMarkup(createElement(ReelDetailPageContent, { reel: detail, categoryControls: null }));
+  return renderToStaticMarkup(createElement(AppRouterContext.Provider, { value: router }, createElement(ReelDetailPageContent, { reel: detail, categoryControls: null })));
 }
 
 test("reel page authenticates before its detail fetch and adds no protected loading boundary", async () => {
