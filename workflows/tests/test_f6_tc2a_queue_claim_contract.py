@@ -12,6 +12,7 @@ WORKFLOW_PATH = ROOT / "workflows" / "MGB-030-enrichment-reel.json"
 LEGACY_TRIGGER = "SUB — Receber Reel downloaded"
 PERIODIC_TRIGGER = "SCHEDULE — Consumir fila de transcrição"
 PERIODIC_PARAMETERS = "DATA — Preparar consumidor periódico"
+PERIODIC_STATE = "DB — Determinar fluxo periódico"
 QUEUE = "DB — Enfileirar transcrição"
 ATTEMPT_ID = "DATA — Criar attempt_id"
 CLAIM = "DB — Criar tentativa processing"
@@ -132,3 +133,20 @@ def test_no_claim_stops_without_enricher_work_and_claimed_work_can_continue() ->
     assert successors(connections, CLAIM) == {ENRICHER}
     assert not successors(connections, CLAIM, 1)
     assert nodes[ENRICHER]["parameters"]["headerParameters"]["parameters"][1]["value"] == "={{ $json.attempt_id }}"
+
+
+def test_periodic_state_preserves_claim_contract_fields() -> None:
+    nodes, _ = workflow()
+    periodic_code = nodes[PERIODIC_PARAMETERS]["parameters"]["jsCode"]
+    state = nodes[PERIODIC_STATE]["parameters"]
+    state_sql = state["query"]
+
+    assert "pipeline_version:" in periodic_code
+    assert "contract_version:" in periodic_code
+    assert "language_hint:" in periodic_code
+    assert "COALESCE(processing.pipeline_version, $1::TEXT) AS pipeline_version" in state_sql
+    assert "COALESCE(processing.contract_version, $2::TEXT) AS contract_version" in state_sql
+    assert "COALESCE(processing.language_hint, $3::TEXT) AS language_hint" in state_sql
+    assert state["options"]["queryReplacement"] == (
+        "={{ [$json.pipeline_version, $json.contract_version, $json.language_hint] }}"
+    )
