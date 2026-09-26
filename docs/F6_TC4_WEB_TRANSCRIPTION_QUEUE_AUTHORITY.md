@@ -9,10 +9,13 @@ perform a cutover.
 Production status:
 
 ```text
-production = NOT APPLIED
-deployment = NOT PERFORMED
-cutover = NOT PERFORMED
-TC5 = NOT COMPLETE
+production = APPLIED
+deployment = PERFORMED
+cutover = COMPLETE
+TC5 = COMPLETE
+operational_closeout = COMPLETE
+accepted_at = 2026-09-26
+MGB030 = ACTIVE
 ```
 
 Future production work remains separately human-gated by:

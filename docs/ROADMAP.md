@@ -44,7 +44,7 @@ Auth.
 
 ## Sprint 5 — Productização da experiência
 
-Status: em andamento.
+Status: F5.1 concluído; F5 Categories deferred, not cancelled.
 
 ### F5.1 — Add Reel UX
 
@@ -69,27 +69,40 @@ saudável em produção. A aceitação autenticada da interface e um E2E real de
 ingestão Web foram concluídos com sucesso.
 
 O Reel de aceitação #26 (`DdcX68ZRQun`) percorreu MGB-015, MGB-020 e MGB-030,
-teve mídia persistida no R2 e terminou em `downloaded | inbox | failed`. A falha
-terminal foi `STT_SYNC_RECOGNIZE_UNSUPPORTED`, uma limitação conhecida do
-Speech-to-Text síncrono e não uma falha do fluxo Add Reel.
+teve mídia persistida no R2 e a tentativa histórica original terminou em
+`downloaded | inbox | failed` com `STT_SYNC_RECOGNIZE_UNSUPPORTED`. Essa
+tentativa continua sendo histórico válido e não uma falha do fluxo Add Reel.
+Posteriormente, F6 o processou por um novo claim normal, com
+`retry_of_attempt_id = NULL`, e o Reel terminou `completed`; a tentativa
+histórica foi preservada.
 
 A evidência de produção F5.1 foi selada separadamente da evidência F4 com
 SHA-256 `e7dc4b42ddab75f6da1e992afdef0000d3109e1092645aec8964c307d6347d9d`.
 
-### Próxima etapa após F5.1
+### F6 — Transcript on Demand
 
-Não existe F5.2 aprovado.
+Status: COMPLETE / PRODUCTION ACCEPTED / OPERATIONAL.
 
-Com o fechamento de produção do F5.1 concluído, a próxima etapa volta para
-discovery baseada em uso real antes de novo compromisso de implementação.
+F6 foi antecipado antes de F5 Categories por prioridade de produto, sem
+renumerar o roadmap. Em produção, Add Reel termina em
+`downloaded | not_requested`; o proprietário autenticado solicita
+explicitamente `Transcrever`, Web/FastAPI enfileira somente
+`not_requested|failed -> queued`, e MGB-030 periódico processa
+`queued -> processing -> completed|failed`.
 
-Dimensões candidatas para investigação:
+O TC5 real E2E passou para o Reel #28 (`DbW1ECDMAyj`): BatchRecognize real,
+transcript `pt-BR` visível na Web e cleanup de GCS confirmado. A fila final
+ficou vazia, não restou Reel em `processing`, e MGB-030 permaneceu ACTIVE com
+três execuções periódicas bem-sucedidas no smoke final. A versão ativa aceita
+de MGB-030 é `7cd5819c-83c8-41ea-ab07-1c86099de886`.
 
-- organização e UX da biblioteca;
-- expansão de ingestão;
-- melhorias de processamento;
-- operações e observabilidade;
-- suporte a vídeos longos.
+### F5 Categories — deferred, not cancelled
+
+F5 Categories foi adiado, não cancelado. O roadmap não foi renumerado: F6 foi
+executado antes somente por prioridade de produto. Após este fechamento
+documental, o próximo passo de produto volta para discovery/reassessment de F5
+Categories baseada em uso real. Nenhum próximo incremento, incluindo F7 ou
+outra feature, fica automaticamente aprovado.
 
 ## Fora do escopo até nova decisão
 

@@ -24,14 +24,32 @@ Sprint 4 e não protege o fluxo Web atual.
 
 ## Fluxo de produto disponível
 
-1. Um usuário envia manualmente um link público de Reel pelo Telegram.
-2. O n8n valida e orquestra a ingestão; metadados e estado são registrados no
-   PostgreSQL.
-3. O downloader obtém o vídeo e o guarda permanentemente no Cloudflare R2
-   privado; referências e metadados permanecem no PostgreSQL.
-4. O enricher lê a mídia do R2, usa Google Speech-to-Text V2 / Chirp 3 em
-   `pt-BR` e persiste a transcrição no PostgreSQL.
-5. A MegaBrain Web privada permite recuperar e curar o conteúdo.
+```text
+Add Reel
+  -> download
+  -> R2
+  -> downloaded/not_requested
+  -> STOP
+
+Transcrever (solicitação explícita do proprietário autenticado)
+  -> queued
+  -> MGB-030 periódico
+  -> processing
+  -> Google Speech-to-Text
+  -> completed|failed
+  -> transcript Web
+```
+
+Um usuário envia manualmente um link público de Reel pelo Telegram ou o registra
+na Web autenticada. O n8n valida e orquestra a ingestão; o downloader guarda a
+mídia no R2 privado e PostgreSQL mantém as referências e o estado. O download
+não solicita transcrição automaticamente: novos Reels terminam em
+`downloaded | not_requested`.
+
+Somente depois de o proprietário autenticado escolher `Transcrever`,
+Web/FastAPI pode enfileirar `not_requested|failed -> queued`. MGB-030, ativo em
+produção como consumidor periódico, é a autoridade de processamento para
+`queued -> processing -> completed|failed`.
 
 ## Capacidades validadas da Web
 
@@ -43,6 +61,9 @@ Sprint 4 e não protege o fluxo Web atual.
 - categorias manuais muitos-para-muitos: criar, associar e remover via API JSON;
 - CSRF obrigatório para mutações cookie-autenticadas e logout;
 - busca PostgreSQL em creator, caption, transcript aceito e categoria;
+- Transcript on Demand: o proprietário autenticado solicita `Transcrever`, a
+  Web somente enfileira a intenção e o transcript `pt-BR` concluído fica visível
+  na Web;
 - HTTPS e roteamento via Caddy;
 - FastAPI como autoridade de autenticação, autorização, domínio, dados, R2 e
   API, sem apresentação Jinja;
@@ -80,9 +101,13 @@ workflows, rulesets ou permissões do GitHub App, acesso à produção ou deploy
 
 ### Enricher
 
-- O caminho síncrono atual suporta mídia de aproximadamente até 60 segundos.
-- Há pendências de falsos positivos de ausência de fala, timestamps/VAD,
-  backfill e tratamento de tentativas obsoletas.
+- Google Speech-to-Text V2 / Chirp 3 processa em `pt-BR`.
+- O caminho síncrono é usado somente dentro do contrato seguro; mídia fora desse
+  contrato usa BatchRecognize.
+- BatchRecognize usa GCS temporário, persiste a provider operation e é
+  reconciliado de forma durável pelo consumidor periódico.
+- O cleanup temporário ocorre somente após persistência terminal
+  `completed|failed`.
 
 ### Web
 
@@ -92,6 +117,9 @@ workflows, rulesets ou permissões do GitHub App, acesso à produção ou deploy
 
 ### Operações
 
+- MGB-030 permanece ativo em produção como consumidor periódico de
+  transcrição. O smoke final com a fila vazia não criou attempts ou enrichments
+  indevidos.
 - Formalizar backup/restore, monitoramento/alertas, runbook de atualização e
   automação mais ampla de QA/regressão.
 
