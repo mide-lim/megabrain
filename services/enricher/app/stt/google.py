@@ -123,7 +123,7 @@ class GoogleSpeechToTextAdapter(SpeechToTextAdapter):
             if len(response.results) != 1:
                 raise ValueError
             file_result = response.results.get(expected_input_uri)
-            if file_result is None or file_result.uri != expected_input_uri:
+            if file_result is None:
                 raise ValueError
             inline = file_result.inline_result
             if inline is None:
