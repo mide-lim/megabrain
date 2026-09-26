@@ -2,35 +2,40 @@
 
 ## Tarefa atual
 
-**F5.1 — Add Reel UX: production accepted / closeout recorded.**
+**F6 — Transcript on Demand: COMPLETE / PRODUCTION ACCEPTED / OPERATIONAL.**
 
-F4 production cutover remains closed and sealed. Its frontend image is preserved
-as the F5.1 rollback anchor.
+O fechamento operacional em produção foi aceito em 2026-09-26. F6 foi
+priorizado antes de F5 Categories por decisão de produto; F5 Categories foi
+adiado, não cancelado.
 
-F5.1 source implementation, remediation and CI completed through PR #44, merged
-into `dev` at canonical source revision
-`de3f59b03826ea23a51b7d07e035904dee653cbe`.
+Capture != transcription. Salvar um Reel não solicita transcrição
+automaticamente: depois do download, novos Reels permanecem em
+`downloaded | not_requested`. O proprietário autenticado solicita
+explicitamente `Transcrever`.
 
-The immutable F5.1 frontend was explicitly authorized, deployed and accepted in
-production on 2026-09-19. Production runs image
-`sha256:9a8af64f45d6eff9b60a052f08e5043434abb49440eaf47f84b351b99c284c04`.
+FastAPI/Web somente aplica a transição de intenção limitada
+`not_requested|failed -> queued`. MGB-030 continua como a autoridade exclusiva
+de processamento para `queued -> processing -> completed|failed` e permanece
+ativo em produção como consumidor periódico. A versão ativa aceita de MGB-030
+é `7cd5819c-83c8-41ea-ab07-1c86099de886`.
 
-Human UI acceptance passed for Inbox, Library, Categories, Settings, Reel Detail
-and the Add Reel dialog. The controlled Web ingestion created Reel #26
-(`DdcX68ZRQun`) and executed MGB-015 #123, MGB-020 #124 and MGB-030 #125
-successfully. The Reel reached `downloaded | inbox | failed`; the enrichment
-attempt recorded the known `STT_SYNC_RECOGNIZE_UNSUPPORTED` transcription
-limitation rather than an Add Reel failure.
+O TC5 real E2E passou. O Reel #28 (`DbW1ECDMAyj`) percorreu Add Reel,
+`downloaded | not_requested`, clique humano em `Transcrever`, `queued`, claim
+periódico normal de MGB-030, `processing`, Google BatchRecognize e `completed`;
+o transcript `pt-BR` ficou visível na Web e o cleanup temporário no GCS foi
+confirmado.
 
-Production acceptance evidence is sealed independently from F4 with SHA-256
-`e7dc4b42ddab75f6da1e992afdef0000d3109e1092645aec8964c307d6347d9d`.
+F5.1 — Add Reel UX permanece como histórico aceito em produção. O Reel #26
+(`DdcX68ZRQun`) preserva sua tentativa histórica original com
+`STT_SYNC_RECOGNIZE_UNSUPPORTED`; posteriormente foi resolvido por um novo claim
+normal do F6, com `retry_of_attempt_id = NULL`, e terminou `completed` sem
+alterar a tentativa histórica.
 
-FastAPI remains the authority for authentication, session, CSRF, API,
-registration, deduplication, lifecycle and dispatch. F5.1 changes only the
-Next.js owner-facing Reel creation UX.
-
-No F5.2 is approved. The next product step returns to discovery based on real
-usage. Future production mutations remain separately human-gated.
+A fila final ficou vazia, sem Reel em `processing` pendente. O smoke final
+observou três execuções periódicas MGB-030 bem-sucedidas, e o workflow permaneceu
+ACTIVE. O próximo passo de produto é discovery/reassessment de F5 Categories;
+nenhuma F7 ou outra feature fica aprovada implicitamente. Futuras mutações de
+produção continuam separadamente human-gated.
 
 ## Estado
 
