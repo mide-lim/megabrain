@@ -11,6 +11,7 @@ from app import main
 from app.stt.base import (
     BatchReconciliationResult,
     BatchSubmissionResult,
+    ReconciliationError,
     SpeechToTextAdapter,
     SpeechToTextError,
     SynchronousRecognitionUnsupportedError,
@@ -589,7 +590,7 @@ def test_reconciliation_pending_reads_exact_operation_once_without_submission() 
     assert Client.transport.operations_client.calls == [(operation_name, None)]
 
 
-def test_reconciliation_terminal_success_unpacks_only_matching_inline_result() -> None:
+def test_reconciliation_terminal_success_uses_result_map_key_without_deprecated_uri() -> None:
     from google.cloud import speech_v2
     from google.longrunning import operations_pb2
 
@@ -598,7 +599,6 @@ def test_reconciliation_terminal_success_unpacks_only_matching_inline_result() -
     response = speech_v2.types.BatchRecognizeResponse(
         results={
             input_uri: speech_v2.types.BatchRecognizeFileResult(
-                uri=input_uri,
                 inline_result=speech_v2.types.InlineResult(
                     transcript=speech_v2.types.BatchRecognizeResults(
                         results=[
@@ -657,6 +657,58 @@ def test_reconciliation_terminal_success_unpacks_only_matching_inline_result() -
         transcript_text="primeira parte segunda parte",
         transcript_language="pt-BR",
     )
+
+
+def test_reconciliation_terminal_success_rejects_unexpected_result_map_key() -> None:
+    from google.cloud import speech_v2
+    from google.longrunning import operations_pb2
+
+    operation_name = "projects/123/locations/us/operations/v2-test-operation"
+    expected_input_uri = (
+        "gs://test-temp-bucket/f6/transcription/"
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/audio.wav"
+    )
+    other_input_uri = (
+        "gs://test-temp-bucket/f6/transcription/"
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/audio.wav"
+    )
+    response = speech_v2.types.BatchRecognizeResponse(
+        results={
+            other_input_uri: speech_v2.types.BatchRecognizeFileResult(
+                inline_result=speech_v2.types.InlineResult(
+                    transcript=speech_v2.types.BatchRecognizeResults()
+                ),
+            )
+        }
+    )
+    operation = operations_pb2.Operation(name=operation_name, done=True)
+    operation.response.Pack(speech_v2.types.BatchRecognizeResponse.pb(response))
+
+    class OperationsClient:
+        def get_operation(self, *, name: str, retry: object) -> object:
+            assert name == operation_name
+            assert retry is None
+            return operation
+
+    class Client:
+        transport = type("Transport", (), {"operations_client": OperationsClient()})()
+
+        def batch_recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not submit batch work")
+
+        def recognize(self, **_kwargs: object) -> None:
+            raise AssertionError("reconciliation must not call synchronous recognize")
+
+    with pytest.raises(ReconciliationError) as raised:
+        GoogleSpeechToTextAdapter(
+            client=Client(), project_id="test-project"
+        ).reconcile_batch(
+            provider_request_id=operation_name,
+            expected_input_uri=expected_input_uri,
+        )
+
+    assert raised.value.error_code == "STT_RECONCILIATION_INVALID_RESPONSE"
+    assert raised.value.retryable is False
 
 
 def test_reconciliation_terminal_operation_error_is_explicit_provider_failure() -> None:
