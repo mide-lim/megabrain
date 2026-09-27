@@ -1,0 +1,1 @@
+megabrain-hermes ALL=(root) NOSETENV: NOPASSWD: /usr/local/sbin/megabrain-hermes-i1-b-authority-verify ""
