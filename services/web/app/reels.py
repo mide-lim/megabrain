@@ -17,6 +17,17 @@ from app.reel_lifecycle import (
     validate_transcription_status,
 )
 
+CURRENT_TRANSCRIPTION_PIPELINE_VERSION = "sprint-3-v1"
+
+APPLICABLE_ENRICHMENT_QUERY = """
+    SELECT 1
+    FROM app.reel_enrichments AS enrichment
+    WHERE enrichment.reel_id = r.id
+      AND enrichment.source_object_key = r.object_key
+      AND enrichment.source_sha256 = r.sha256
+      AND enrichment.pipeline_version = %s
+"""
+
 REEL_DETAIL_QUERY = """
 SELECT
     r.id,
@@ -65,28 +76,32 @@ WHERE id = %s
 RETURNING id, download_status, curation_status, transcription_status
 """
 
-REQUEST_TRANSCRIPTION_QUERY = """
-UPDATE app.reels
+REQUEST_TRANSCRIPTION_QUERY = f"""
+UPDATE app.reels AS r
 SET
     transcription_status = 'queued',
     transcription_attempt_id = NULL,
     updated_at = NOW()
-WHERE id = %s
-  AND download_status = 'downloaded'
-  AND transcription_status IN ('not_requested', 'failed')
-  AND transcription_attempt_id IS NULL
+WHERE r.id = %s
+  AND r.download_status = 'downloaded'
+  AND r.transcription_status IN ('not_requested', 'failed')
+  AND r.transcription_attempt_id IS NULL
+  AND NOT EXISTS (
+{APPLICABLE_ENRICHMENT_QUERY})
 RETURNING id, download_status, curation_status, transcription_status
 """
 
-REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY = """
+REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY = f"""
 SELECT
-    id,
-    download_status,
-    curation_status,
-    transcription_status,
-    transcription_attempt_id
-FROM app.reels
-WHERE id = %s
+    r.id,
+    r.download_status,
+    r.curation_status,
+    r.transcription_status,
+    r.transcription_attempt_id,
+    EXISTS (
+{APPLICABLE_ENRICHMENT_QUERY}) AS has_applicable_enrichment
+FROM app.reels AS r
+WHERE r.id = %s
 """
 
 TranscriptionRequestOutcome = Literal[
@@ -94,6 +109,7 @@ TranscriptionRequestOutcome = Literal[
     "already_queued",
     "already_processing",
     "already_completed",
+    "reconciliation_required",
     "not_ready",
     "not_found",
 ]
@@ -137,6 +153,10 @@ def _classify_transcription_lifecycle(row: dict[str, Any]) -> TranscriptionReque
     elif transcription_attempt_id is not None:
         raise LifecycleStatusError("Non-processing transcription has an attempt")
 
+    has_applicable_enrichment = row["has_applicable_enrichment"]
+    if not isinstance(has_applicable_enrichment, bool):
+        raise LifecycleStatusError("Applicable enrichment state is invalid")
+
     lifecycle = {
         "id": row["id"],
         "download_status": download_status,
@@ -146,6 +166,12 @@ def _classify_transcription_lifecycle(row: dict[str, Any]) -> TranscriptionReque
 
     if download_status != DOWNLOAD_STATUS_DOWNLOADED:
         return TranscriptionRequestResult("not_ready", lifecycle)
+    if (
+        transcription_status in {"not_requested", "failed"}
+        and transcription_attempt_id is None
+        and has_applicable_enrichment
+    ):
+        return TranscriptionRequestResult("reconciliation_required", lifecycle)
     if transcription_status == TRANSCRIPTION_STATUS_QUEUED:
         return TranscriptionRequestResult("already_queued", lifecycle)
     if transcription_status == TRANSCRIPTION_STATUS_PROCESSING:
@@ -162,12 +188,18 @@ def request_transcription(reel_id: int) -> TranscriptionRequestResult:
         database.connect() as connection,
         connection.cursor(row_factory=dict_row) as cursor,
     ):
-        cursor.execute(REQUEST_TRANSCRIPTION_QUERY, (reel_id,))
+        cursor.execute(
+            REQUEST_TRANSCRIPTION_QUERY,
+            (reel_id, CURRENT_TRANSCRIPTION_PIPELINE_VERSION),
+        )
         transitioned = cursor.fetchone()
         if transitioned is not None:
             return TranscriptionRequestResult("accepted_new_request", transitioned)
 
-        cursor.execute(REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY, (reel_id,))
+        cursor.execute(
+            REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY,
+            (reel_id, CURRENT_TRANSCRIPTION_PIPELINE_VERSION),
+        )
         current = cursor.fetchone()
 
     if current is None:

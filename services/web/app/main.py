@@ -615,7 +615,7 @@ def set_reel_curation_api(
             "200": {"description": "Current transcription lifecycle"},
             "202": {"description": "Transcription request queued"},
             "404": {"description": "Reel not found"},
-            "409": {"description": "Reel is not ready for transcription"},
+            "409": {"description": "Reel is not ready for transcription or requires lifecycle reconciliation"},
             "422": {"description": "Invalid transcription request"},
             "503": {"description": "Transcription request temporarily unavailable"},
         },
@@ -648,6 +648,12 @@ async def request_reel_transcription_api(
             409,
             "reel_not_ready",
             "Reel is not ready for transcription",
+        )
+    if result.outcome == "reconciliation_required":
+        return _web_reel_error_response(
+            409,
+            "transcription_lifecycle_reconciliation_required",
+            "Reel transcription lifecycle requires reconciliation",
         )
     if result.outcome == "accepted_new_request":
         response_status = 202

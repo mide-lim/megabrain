@@ -202,6 +202,26 @@ def test_not_downloaded_reel_returns_conflict_without_lifecycle_mutation(
     assert current["transcription_status"] == "not_requested"
 
 
+def test_reconciliation_required_returns_frozen_conflict_without_lifecycle_projection(monkeypatch) -> None:
+    client = owner_client(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "request_transcription",
+        lambda _: SimpleNamespace(outcome="reconciliation_required", lifecycle=None),
+    )
+
+    response = client.post("/api/reels/42/transcription", content=b"{}", headers=request_headers())
+
+    assert response.status_code == 409
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "error": {
+            "code": "transcription_lifecycle_reconciliation_required",
+            "message": "Reel transcription lifecycle requires reconciliation",
+        }
+    }
+
+
 def test_missing_reel_returns_bounded_not_found(monkeypatch) -> None:
     client = owner_client(monkeypatch)
     monkeypatch.setattr(main, "request_transcription", lambda _: SimpleNamespace(outcome="not_found", lifecycle=None))
@@ -245,7 +265,7 @@ def test_unknown_domain_outcome_fails_closed(monkeypatch) -> None:
 def test_request_repository_uses_one_atomic_transition_then_observes_current_state(
     initial_status: str,
 ) -> None:
-    calls: list[tuple[str, tuple[int]]] = []
+    calls: list[tuple[str, tuple[object, ...]]] = []
     durable_mutations: list[str] = []
     state = {"transcription_status": initial_status}
 
@@ -258,7 +278,7 @@ def test_request_repository_uses_one_atomic_transition_then_observes_current_sta
         def __exit__(self, *args):
             return None
 
-        def execute(self, query: str, parameters: tuple[int]) -> None:
+        def execute(self, query: str, parameters: tuple[object, ...]) -> None:
             calls.append((query, parameters))
             if query == reels.REQUEST_TRANSCRIPTION_QUERY:
                 if state["transcription_status"] in {"not_requested", "failed"}:
@@ -271,6 +291,7 @@ def test_request_repository_uses_one_atomic_transition_then_observes_current_sta
                 self.current = {
                     **lifecycle(transcription_status=state["transcription_status"]),
                     "transcription_attempt_id": None,
+                    "has_applicable_enrichment": False,
                 }
 
         def fetchone(self):
@@ -298,9 +319,69 @@ def test_request_repository_uses_one_atomic_transition_then_observes_current_sta
     assert second.outcome == "already_queued"
     assert durable_mutations == ["queued"]
     assert calls == [
-        (reels.REQUEST_TRANSCRIPTION_QUERY, (42,)),
-        (reels.REQUEST_TRANSCRIPTION_QUERY, (42,)),
-        (reels.REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY, (42,)),
+        (reels.REQUEST_TRANSCRIPTION_QUERY, (42, reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION)),
+        (reels.REQUEST_TRANSCRIPTION_QUERY, (42, reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION)),
+        (
+            reels.REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY,
+            (42, reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION),
+        ),
+    ]
+
+
+@pytest.mark.parametrize("initial_status", ["not_requested", "failed"])
+def test_request_repository_reports_reconciliation_required_without_queueing_an_applicable_result(
+    initial_status: str,
+) -> None:
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeCursor:
+        current: dict[str, object] | None = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, query: str, parameters: tuple[object, ...]) -> None:
+            calls.append((query, parameters))
+            if query == reels.REQUEST_TRANSCRIPTION_QUERY:
+                self.current = None
+            else:
+                self.current = {
+                    **lifecycle(transcription_status=initial_status),
+                    "transcription_attempt_id": None,
+                    "has_applicable_enrichment": True,
+                }
+
+        def fetchone(self):
+            return self.current
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def cursor(self, *, row_factory):
+            return FakeCursor()
+
+    original_connect = reels.database.connect
+    reels.database.connect = lambda: FakeConnection()
+    try:
+        observed = reels.request_transcription(42)
+    finally:
+        reels.database.connect = original_connect
+
+    assert observed.outcome == "reconciliation_required"
+    assert observed.lifecycle == lifecycle(transcription_status=initial_status)
+    assert calls == [
+        (reels.REQUEST_TRANSCRIPTION_QUERY, (42, reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION)),
+        (
+            reels.REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY,
+            (42, reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION),
+        ),
     ]
 
 
@@ -314,7 +395,6 @@ def test_request_repository_mutation_preserves_independent_lifecycles_and_attemp
     assert "download_status" not in mutation
     assert "curation_status" not in mutation
     assert "reel_enrichment_attempts" not in reels.REQUEST_TRANSCRIPTION_QUERY
-    assert "reel_enrichments" not in reels.REQUEST_TRANSCRIPTION_QUERY
     assert "INSERT" not in reels.REQUEST_TRANSCRIPTION_QUERY
     assert "DELETE" not in reels.REQUEST_TRANSCRIPTION_QUERY
 
@@ -325,6 +405,18 @@ def test_request_repository_requires_downloaded_eligible_state_and_has_no_dispat
     assert "download_status = 'downloaded'" in query
     assert "transcription_status IN ('not_requested', 'failed')" in query
     assert "transcription_attempt_id IS NULL" in query
+    assert reels.CURRENT_TRANSCRIPTION_PIPELINE_VERSION == "sprint-3-v1"
+    assert "NOT EXISTS" in query
+    assert "reel_enrichments" in query
+    for comparison in (
+        "enrichment.reel_id = r.id",
+        "enrichment.source_object_key = r.object_key",
+        "enrichment.source_sha256 = r.sha256",
+        "enrichment.pipeline_version = %s",
+    ):
+        assert comparison in query
+        assert comparison in reels.REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY
+    assert "has_applicable_enrichment" in reels.REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY
     assert "dispatch" not in query.lower()
     assert "n8n" not in query.lower()
     assert "gcs" not in query.lower()

@@ -450,12 +450,12 @@ def test_canonical_web_request_and_fallback_queries_require_the_f6_overlay_colum
     web_source = artifact(WEB_REELS)
 
     request_match = re.search(
-        r"REQUEST_TRANSCRIPTION_QUERY\s*=\s*\"\"\"(.*?)\"\"\"",
+        r"REQUEST_TRANSCRIPTION_QUERY\s*=\s*f?\"\"\"(.*?)\"\"\"",
         web_source,
         flags=re.DOTALL,
     )
     fallback_match = re.search(
-        r"REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY\s*=\s*\"\"\"(.*?)\"\"\"",
+        r"REQUEST_TRANSCRIPTION_LIFECYCLE_QUERY\s*=\s*f?\"\"\"(.*?)\"\"\"",
         web_source,
         flags=re.DOTALL,
     )
@@ -474,9 +474,26 @@ def test_canonical_web_request_and_fallback_queries_require_the_f6_overlay_colum
     assert "transcription_attempt_id" in fallback_query
     assert "SELECT" in fallback_query
     assert "reel_enrichment_attempts" not in request_query
-    assert "reel_enrichments" not in request_query
     assert "INSERT" not in request_query
     assert "DELETE" not in request_query
+    assert "CURRENT_TRANSCRIPTION_PIPELINE_VERSION = \"sprint-3-v1\"" in web_source
+    applicability_match = re.search(
+        r"APPLICABLE_ENRICHMENT_QUERY\s*=\s*\"\"\"(.*?)\"\"\"",
+        web_source,
+        flags=re.DOTALL,
+    )
+    assert applicability_match is not None
+    applicability_query = applicability_match.group(1)
+    for comparison in (
+        "enrichment.reel_id = r.id",
+        "enrichment.source_object_key = r.object_key",
+        "enrichment.source_sha256 = r.sha256",
+        "enrichment.pipeline_version = %s",
+    ):
+        assert comparison in applicability_query
+    assert "NOT EXISTS" in request_query
+    assert "EXISTS" in fallback_query
+    assert "has_applicable_enrichment" in fallback_query
 
 
 def test_f6_documentation_preserves_the_authority_split_and_source_only_status() -> None:
@@ -491,11 +508,10 @@ def test_f6_documentation_preserves_the_authority_split_and_source_only_status()
         "transcription_attempt_id",
         "schema migration required: NO",
         "runtime security authority delta required: YES",
-        "NOT APPLIED",
-        "production = NOT APPLIED",
-        "deployment = NOT PERFORMED",
-        "cutover = NOT PERFORMED",
-        "TC5 = NOT COMPLETE",
+        "production = APPLIED",
+        "deployment = PERFORMED",
+        "cutover = COMPLETE",
+        "TC5 = COMPLETE",
         "authoritative verifier",
         "historical F4 checks",
         "WEB_CAN_WRITE_TRANSCRIPTION = FALSE",
