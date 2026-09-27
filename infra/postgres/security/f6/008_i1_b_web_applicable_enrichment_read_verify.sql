@@ -94,7 +94,7 @@ WITH checks(name, expected, actual) AS (
     WHERE attribute.attrelid = 'app.reel_enrichments'::regclass
       AND attribute.attnum > 0
       AND NOT attribute.attisdropped
-      AND attribute.attname <> ALL (
+      AND attribute.attname::text <> ALL (
           (SELECT columns FROM allowed_columns WHERE privilege = 'SELECT')
       )
       AND has_column_privilege(
@@ -149,7 +149,7 @@ WITH checks(name, expected, actual) AS (
     WHERE attribute.attrelid = 'app.reels'::regclass
       AND attribute.attnum > 0
       AND NOT attribute.attisdropped
-      AND attribute.attname <> ALL (
+      AND attribute.attname::text <> ALL (
           (SELECT columns FROM reel_allowed_columns)
       )
       AND has_column_privilege(

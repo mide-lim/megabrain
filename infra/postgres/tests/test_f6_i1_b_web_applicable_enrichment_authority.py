@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -9,6 +10,12 @@ SECURITY_DIR = REPO_ROOT / "infra/postgres/security/f6"
 GRANT = SECURITY_DIR / "007_i1_b_web_applicable_enrichment_read_grant.sql"
 VERIFIER = SECURITY_DIR / "008_i1_b_web_applicable_enrichment_read_verify.sql"
 ROLLBACK = SECURITY_DIR / "009_i1_b_web_applicable_enrichment_read_rollback.sql"
+MIGRATION = REPO_ROOT / "infra/postgres/migrations/006_f6_i1_b_legacy_transcription_reconciliation.sql"
+BASE_ARTIFACT_SHA256 = {
+    GRANT: "d777cb03e00a645b2b9b981937c0cee53db7fcf6707a2d53f3b1e8b0b6b8f3de",
+    ROLLBACK: "5e249a73ff1bd31d56c61d6e0bc11767955aadf3c5ae4234ba6db1f5bc944708",
+    MIGRATION: "2ca09c8a54cbb9cbfc5149b5783f879ba2ebedbdacf6359edf5924ea2291c0bc",
+}
 NEW_COLUMNS = ("source_object_key", "source_sha256", "pipeline_version")
 REEL_IDENTITY_COLUMN = ("sha256",)
 PRESENTATION_COLUMNS = (
@@ -25,6 +32,11 @@ PRESENTATION_COLUMNS = (
 def artifact(path: Path) -> str:
     assert path.is_file(), f"missing I1-B Web authority artifact: {path}"
     return path.read_text(encoding="utf-8")
+
+
+def artifact_sha256(path: Path) -> str:
+    assert path.is_file(), f"missing I1-B immutable artifact: {path}"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def executable_sql(sql: str) -> str:
@@ -137,8 +149,31 @@ def test_i1_b_verifier_proves_exact_enrichment_select_allowlist_and_forbidden_bo
         "HAS_SCHEMA_PRIVILEGE",
     ):
         assert function in executable
+    for cte_name in ("excess_columns", "reel_excess_columns"):
+        assert re.search(
+            rf"\b{cte_name}\s+AS\s*\(.*?\battribute\.attname::text\s*<>\s*ALL\s*\(",
+            executable,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    assert len(
+        re.findall(
+            r"\battribute\.attname::text\s*<>\s*ALL\s*\(",
+            executable,
+            flags=re.IGNORECASE,
+        )
+    ) == 2
+    assert not re.search(
+        r"\battribute\.attname\s*<>\s*ALL\s*\(",
+        executable,
+        flags=re.IGNORECASE,
+    )
     assert "\\IF :I1_B_WEB_APPLICABLE_ENRICHMENT_READ_VERIFIER_ALL_PASS" in executable
     assert "\\QUIT 3" in executable
+
+
+def test_i1_b_grant_rollback_and_migration_remain_byte_identical_to_base() -> None:
+    for path, expected_sha256 in BASE_ARTIFACT_SHA256.items():
+        assert artifact_sha256(path) == expected_sha256
 
 
 def test_i1_b_rollback_is_acknowledgement_gated_and_removes_exactly_the_new_select_delta() -> None:
