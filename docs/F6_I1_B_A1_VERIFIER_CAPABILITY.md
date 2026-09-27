@@ -146,9 +146,42 @@ A separate human authorization is required before executing
 6. preserve the existing gateway and its sudo rules;
 7. verify no Docker-group change, generic SQL path, generic Docker path, or
    host psql authority exists for `megabrain-hermes`;
-8. remove only the dedicated new capability paths on bounded rollback.
+8. use the same exact runtime-file identity checks for installation-failure
+   cleanup that public rollback uses.
 
-Installing this capability does not authorize production verifier execution.
+The only support directories the installer may create, if absent, are:
+
+```text
+/usr/local/lib/megabrain-hermes-ro
+/usr/local/lib/megabrain-hermes-ro/i1-b
+/var/log/megabrain-hermes-ro
+```
+
+They are dedicated root:root mode-0700 real directories. Existing valid
+support directories are preserved and never repermissioned. Existing invalid
+support directories fail closed. The installer never creates, repermissions,
+or removes `/`, `/usr`, `/usr/local`, `/usr/local/sbin`, `/usr/local/lib`,
+`/etc`, `/etc/sudoers.d`, `/var`, or `/var/log`.
+
+## Pristine-install rollback and failure cleanup
+
+Rollback is limited to a pristine, unexecuted installation. It may delete only
+the four dedicated runtime files: the launcher, verifier, sudoers fragment, and
+dedicated audit log. Before any deletion, the installer requires the target to
+be a non-symlink regular root:root file with its exact expected mode and exact
+expected content identity. Launcher, verifier, and sudoers identity use
+canonical Git blob framing; the audit log must be exactly empty. A non-empty
+audit log is operational evidence and is never deleted.
+
+Installation-failure cleanup applies the same checks and considers only files
+published by that installer invocation. If a published target changed after
+publication, cleanup refuses to unlink it. Support directories created by that
+same failed invocation may be removed only when they remain root:root,
+mode 0700, real, and empty; removal proceeds deepest first. Public rollback
+has no later creation provenance and leaves support directories in place.
+
+Installing this capability does not execute verifier 008 and does not authorize
+production verifier execution.
 
 ## Future execution gate
 

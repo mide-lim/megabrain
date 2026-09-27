@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from dataclasses import replace
 from pathlib import Path
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 
@@ -266,6 +268,211 @@ class InstallerContractTests(unittest.TestCase):
                 installer.RUNTIME_AUDIT_LOG_PATH,
             },
         )
+
+
+class InstallerRollbackHardeningTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.installer = load_installer()
+
+    def _root_file_metadata(
+        self,
+        path: Path,
+        *,
+        mode: int,
+        file_type: int = stat.S_IFREG,
+        uid: int = 0,
+        gid: int = 0,
+    ) -> SimpleNamespace:
+        actual = os.lstat(path)
+        return SimpleNamespace(
+            st_mode=file_type | mode,
+            st_uid=uid,
+            st_gid=gid,
+            st_size=actual.st_size,
+            st_dev=actual.st_dev,
+            st_ino=actual.st_ino,
+        )
+
+    def _safe_delete(self, spec, *, metadata=None) -> None:
+        metadata = metadata or self._root_file_metadata(spec.path, mode=spec.mode)
+        self.installer._safe_delete_runtime_file(
+            spec,
+            lstat=lambda _path: metadata,
+            opener=os.open,
+            fstat=lambda _fd: metadata,
+            reader=os.read,
+            closer=os.close,
+            unlink=os.unlink,
+        )
+
+    def _temporary_spec(self, template, contents: bytes):
+        directory = tempfile.TemporaryDirectory()
+        path = Path(directory.name) / template.path.name
+        path.write_bytes(contents)
+        return directory, replace(template, path=path)
+
+    def test_exact_launcher_identity_is_accepted_for_deletion(self) -> None:
+        directory, spec = self._temporary_spec(
+            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
+        )
+        try:
+            self._safe_delete(spec)
+            self.assertFalse(spec.path.exists())
+        finally:
+            directory.cleanup()
+
+    def test_wrong_runtime_blobs_and_non_empty_audit_are_rejected_before_deletion(self) -> None:
+        cases = (
+            (self.installer.RUNTIME_LAUNCHER_SPEC, b"wrong launcher"),
+            (self.installer.RUNTIME_VERIFIER_SPEC, b"wrong verifier"),
+            (self.installer.RUNTIME_SUDOERS_SPEC, b"wrong sudoers"),
+            (self.installer.RUNTIME_AUDIT_LOG_SPEC, b"audit evidence"),
+        )
+        for template, contents in cases:
+            with self.subTest(path=template.path):
+                directory, spec = self._temporary_spec(template, contents)
+                try:
+                    with self.assertRaises(self.installer.InstallError):
+                        self._safe_delete(spec)
+                    self.assertTrue(spec.path.exists())
+                finally:
+                    directory.cleanup()
+
+    def test_wrong_mode_owner_group_symlink_directory_and_non_regular_are_rejected(self) -> None:
+        directory, spec = self._temporary_spec(
+            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
+        )
+        try:
+            invalid_metadata = (
+                self._root_file_metadata(spec.path, mode=0o600),
+                self._root_file_metadata(spec.path, mode=spec.mode, uid=1001),
+                self._root_file_metadata(spec.path, mode=spec.mode, gid=1001),
+                self._root_file_metadata(spec.path, mode=spec.mode, file_type=stat.S_IFLNK),
+                self._root_file_metadata(spec.path, mode=spec.mode, file_type=stat.S_IFDIR),
+                self._root_file_metadata(spec.path, mode=spec.mode, file_type=stat.S_IFIFO),
+            )
+            for metadata in invalid_metadata:
+                with self.subTest(mode=metadata.st_mode, uid=metadata.st_uid, gid=metadata.st_gid):
+                    with self.assertRaises(self.installer.InstallError):
+                        self._safe_delete(spec, metadata=metadata)
+                    self.assertTrue(spec.path.exists())
+        finally:
+            directory.cleanup()
+
+    def test_install_cleanup_uses_identity_and_only_current_invocation_paths(self) -> None:
+        directory, published = self._temporary_spec(
+            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
+        )
+        unrelated_directory, unrelated = self._temporary_spec(
+            self.installer.RUNTIME_VERIFIER_SPEC, CANONICAL_VERIFIER_PATH.read_bytes()
+        )
+        try:
+            self.installer._cleanup_published_runtime_files(
+                [published],
+                delete=lambda spec: self._safe_delete(spec),
+            )
+            self.assertFalse(published.path.exists())
+            self.assertTrue(unrelated.path.exists())
+        finally:
+            directory.cleanup()
+            unrelated_directory.cleanup()
+
+    def test_install_cleanup_refuses_target_modified_after_publication(self) -> None:
+        directory, published = self._temporary_spec(
+            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
+        )
+        try:
+            published.path.write_bytes(b"modified after publication")
+            with self.assertRaises(self.installer.InstallError):
+                self.installer._cleanup_published_runtime_files(
+                    [published],
+                    delete=lambda spec: self._safe_delete(spec),
+                )
+            self.assertTrue(published.path.exists())
+        finally:
+            directory.cleanup()
+
+    def _directory_metadata(self, *, mode: int = 0o700, uid: int = 0, gid: int = 0):
+        return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=uid, st_gid=gid)
+
+    def test_system_parents_are_preexisting_only_and_never_repermissioned(self) -> None:
+        installer = self.installer
+        records = {path: self._directory_metadata() for path in installer.SYSTEM_PARENT_DIRECTORIES}
+        missing = Path("/usr/local/lib")
+        records.pop(missing)
+        created: list[Path] = []
+        mkdir_calls: list[Path] = []
+        with self.assertRaises(installer.InstallError):
+            installer._ensure_runtime_parent(
+                installer.RUNTIME_VERIFIER_PATH,
+                created,
+                lstat=lambda path: records[path] if path in records else (_ for _ in ()).throw(FileNotFoundError(path)),
+                mkdir=lambda path, mode: mkdir_calls.append(path),
+            )
+        self.assertEqual(mkdir_calls, [])
+        self.assertEqual(created, [])
+
+    def test_only_allowlisted_support_directories_are_created_and_valid_existing_are_preserved(self) -> None:
+        installer = self.installer
+        records = {path: self._directory_metadata() for path in installer.SYSTEM_PARENT_DIRECTORIES}
+        created: list[Path] = []
+        mkdir_calls: list[tuple[Path, int]] = []
+
+        def lstat(path: Path):
+            if path not in records:
+                raise FileNotFoundError(path)
+            return records[path]
+
+        def mkdir(path: Path, mode: int) -> None:
+            mkdir_calls.append((path, mode))
+            records[path] = self._directory_metadata(mode=mode)
+
+        installer._ensure_runtime_parent(installer.RUNTIME_VERIFIER_PATH, created, lstat=lstat, mkdir=mkdir)
+        self.assertEqual(created, list(installer.VERIFIER_SUPPORT_DIRECTORIES))
+        self.assertEqual(mkdir_calls, [(path, 0o700) for path in installer.VERIFIER_SUPPORT_DIRECTORIES])
+        installer._ensure_runtime_parent(installer.RUNTIME_VERIFIER_PATH, created, lstat=lstat, mkdir=mkdir)
+        self.assertEqual(mkdir_calls, [(path, 0o700) for path in installer.VERIFIER_SUPPORT_DIRECTORIES])
+
+    def test_invalid_existing_support_directory_fails_closed(self) -> None:
+        installer = self.installer
+        records = {path: self._directory_metadata() for path in installer.SYSTEM_PARENT_DIRECTORIES}
+        records[installer.VERIFIER_SUPPORT_DIRECTORIES[0]] = self._directory_metadata(mode=0o770)
+        with self.assertRaises(installer.InstallError):
+            installer._ensure_runtime_parent(
+                installer.RUNTIME_VERIFIER_PATH,
+                [],
+                lstat=lambda path: records[path],
+                mkdir=lambda _path, _mode: self.fail("invalid directory must not be recreated"),
+            )
+
+    def test_created_support_directory_cleanup_is_bounded_and_preserves_preexisting(self) -> None:
+        installer = self.installer
+        created = list(installer.VERIFIER_SUPPORT_DIRECTORIES)
+        records = {path: self._directory_metadata() for path in created}
+        removed: list[Path] = []
+        installer._cleanup_created_support_directories(
+            created,
+            lstat=lambda path: records[path],
+            listdir=lambda _path: [],
+            rmdir=lambda path: removed.append(path),
+        )
+        self.assertEqual(removed, list(reversed(created)))
+        self.assertTrue(set(removed).issubset(installer.DEDICATED_SUPPORT_DIRECTORIES))
+        self.assertTrue(set(installer.rollback_paths()).isdisjoint(installer.DEDICATED_SUPPORT_DIRECTORIES))
+
+    def test_created_support_directory_cleanup_refuses_invalid_or_nonempty_directories(self) -> None:
+        installer = self.installer
+        target = installer.AUDIT_SUPPORT_DIRECTORIES[0]
+        removed: list[Path] = []
+        for metadata, entries in ((self._directory_metadata(mode=0o755), []), (self._directory_metadata(), ["evidence"])):
+            with self.subTest(mode=metadata.st_mode, entries=entries):
+                installer._cleanup_created_support_directories(
+                    [target],
+                    lstat=lambda _path, value=metadata: value,
+                    listdir=lambda _path, value=entries: value,
+                    rmdir=lambda path: removed.append(path),
+                )
+        self.assertEqual(removed, [])
 
 
 if __name__ == "__main__":
