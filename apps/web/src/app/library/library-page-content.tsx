@@ -15,7 +15,7 @@ function displayDuration(value: number | null): string | null {
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value) + " s";
 }
 
-function ReelCard({ item }: { item: ReelLibraryItem }) {
+export function ReelCard({ item }: { item: ReelLibraryItem }) {
   const title = item.title?.trim() || "Reel sem título";
   const receivedAt = displayDate(item.received_at);
   const duration = displayDuration(item.duration_seconds);

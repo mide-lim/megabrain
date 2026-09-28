@@ -35,12 +35,19 @@ from app.reel_ingestion import (
     register_reel,
 )
 from app.categories import (
+    CategoryNameConflict,
     associate_category,
     category_exists,
     create_and_associate_category,
+    create_category,
+    delete_category,
+    fetch_categories,
     fetch_categories_for_reel,
+    fetch_category,
+    fetch_category_reels,
     reel_exists,
     remove_category,
+    rename_category,
 )
 from app.presentation import reel_detail_context
 from app.r2 import presigned_video_url
@@ -244,6 +251,12 @@ class AssignCategoryRequest(BaseModel):
 
 
 class CreateCategoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str
+
+
+class RenameCategoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     name: str
@@ -512,6 +525,150 @@ def reels_api(
             "has_next": has_next,
         },
     }
+
+
+@app.get("/api/categories")
+def categories_api(
+    response: Response,
+    _owner=Depends(require_owner_session),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        category_rows = fetch_categories()
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Categories temporarily unavailable",
+        ) from None
+
+    return {
+        "items": [
+            {
+                "id": category["id"],
+                "name": category["name"],
+                "reel_count": int(category["reel_count"]),
+            }
+            for category in category_rows
+        ]
+    }
+
+
+@app.get("/api/categories/{category_id}")
+def category_detail_api(
+    category_id: int,
+    response: Response,
+    page: int = Query(default=1, ge=1),
+    _owner=Depends(require_owner_session),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        category = fetch_category(category_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Category temporarily unavailable",
+        ) from None
+
+    if category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    try:
+        reels, has_next = fetch_category_reels(category_id, page, PAGE_SIZE)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Category temporarily unavailable",
+        ) from None
+
+    return {
+        "category": {
+            "id": category["id"],
+            "name": category["name"],
+            "reel_count": int(category["reel_count"]),
+        },
+        "items": [reel_library_projection(reel) for reel in reels],
+        "pagination": {
+            "page": page,
+            "page_size": PAGE_SIZE,
+            "has_previous": page > 1,
+            "has_next": has_next,
+        },
+    }
+
+
+@app.post("/api/categories", status_code=status.HTTP_201_CREATED)
+def create_category_api(
+    payload: CreateCategoryRequest,
+    response: Response,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    normalized_name = payload.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=422, detail="Category name must not be empty")
+
+    try:
+        category = create_category(normalized_name)
+    except CategoryNameConflict:
+        raise HTTPException(status_code=409, detail="Category name already exists") from None
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Category update temporarily unavailable",
+        ) from None
+
+    return {"category": category}
+
+
+@app.patch("/api/categories/{category_id}")
+def rename_category_api(
+    category_id: int,
+    payload: RenameCategoryRequest,
+    response: Response,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    normalized_name = payload.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=422, detail="Category name must not be empty")
+
+    try:
+        category = rename_category(category_id, normalized_name)
+    except CategoryNameConflict:
+        raise HTTPException(status_code=409, detail="Category name already exists") from None
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Category update temporarily unavailable",
+        ) from None
+
+    if category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"category": category}
+
+
+@app.delete("/api/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category_api(
+    category_id: int,
+    _owner=Depends(require_owner_session),
+    _csrf: None = Depends(require_api_csrf),
+) -> Response:
+    try:
+        category = delete_category(category_id)
+    except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
+        raise HTTPException(
+            status_code=503,
+            detail="Category update temporarily unavailable",
+        ) from None
+
+    if category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/reels/{reel_id}/categories", status_code=status.HTTP_204_NO_CONTENT)
