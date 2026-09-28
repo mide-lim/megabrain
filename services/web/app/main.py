@@ -231,11 +231,14 @@ def fetch_library_page(
     curation_status: str | None = None,
 ) -> tuple[list[dict], bool, str]:
     search_term = normalize_library_search(q)
-    reels, has_next = fetch_reels(
-        page,
-        search_term or None,
-        curation_status=curation_status,
-    )
+    if curation_status is None:
+        reels, has_next = fetch_reels(page, search_term or None)
+    else:
+        reels, has_next = fetch_reels(
+            page,
+            search_term or None,
+            curation_status=curation_status,
+        )
     return reels, has_next, search_term
 
 
