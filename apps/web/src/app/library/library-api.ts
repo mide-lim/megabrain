@@ -35,9 +35,10 @@ export type LibraryResponse = {
   };
 };
 
-type LibraryRequest = {
+export type LibraryRequest = {
   page: number;
   q: string;
+  curationStatus?: CurationStatus;
 };
 
 function apiBaseUrl(): string {
@@ -107,7 +108,7 @@ export function buildLibraryUrl({ page, q }: LibraryRequest): string {
 }
 
 export async function fetchLibraryPage(
-  { page, q }: LibraryRequest,
+  { page, q, curationStatus }: LibraryRequest,
   request: typeof fetch = fetch,
   incomingHeaders?: Headers,
 ): Promise<LibraryResponse | null> {
@@ -115,6 +116,9 @@ export async function fetchLibraryPage(
   url.searchParams.set("page", String(page));
   if (q) {
     url.searchParams.set("q", q);
+  }
+  if (curationStatus) {
+    url.searchParams.set("curation_status", curationStatus);
   }
 
   try {
