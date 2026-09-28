@@ -294,6 +294,38 @@ def _safe_delete_runtime_file(
     unlink(spec.path)
 
 
+def _validate_runtime_files(
+    specs: Iterable[RuntimeFileSpec],
+    *,
+    validate: Callable[[RuntimeFileSpec], os.stat_result] | None = None,
+) -> tuple[tuple[RuntimeFileSpec, os.stat_result], ...]:
+    """Validate every requested runtime target before any rollback deletion."""
+    validator = _validate_runtime_file if validate is None else validate
+    return tuple((spec, validator(spec)) for spec in specs)
+
+
+def _delete_validated_runtime_files(
+    validated: Iterable[tuple[RuntimeFileSpec, os.stat_result]],
+    *,
+    validate: Callable[[RuntimeFileSpec], os.stat_result] | None = None,
+    lstat: Callable[[Path], os.stat_result] | None = None,
+    unlink: Callable[[Path], None] | None = None,
+) -> None:
+    """Revalidate each preflighted target immediately before its unlink."""
+    validator = _validate_runtime_file if validate is None else validate
+    lstat_target = os.lstat if lstat is None else lstat
+    unlink_target = os.unlink if unlink is None else unlink
+    for spec, preflighted in validated:
+        current = validator(spec)
+        if not _same_file(preflighted, current):
+            raise InstallError("runtime target changed after rollback preflight")
+        immediately_before_unlink = lstat_target(spec.path)
+        _validate_runtime_metadata(immediately_before_unlink, spec)
+        if not _same_file(current, immediately_before_unlink):
+            raise InstallError("runtime target changed before deletion")
+        unlink_target(spec.path)
+
+
 def _publish(stage: Path, spec: RuntimeFileSpec, created_directories: list[Path]) -> None:
     if not destination_is_safe(spec.path):
         raise InstallError("refusing replacement of an existing or symlink destination")
@@ -305,13 +337,20 @@ def _publish(stage: Path, spec: RuntimeFileSpec, created_directories: list[Path]
 def _cleanup_published_runtime_files(
     published: Iterable[RuntimeFileSpec],
     *,
-    delete: Callable[[RuntimeFileSpec], None] = _safe_delete_runtime_file,
+    validate: Callable[[RuntimeFileSpec], os.stat_result] | None = None,
+    lstat: Callable[[Path], os.stat_result] | None = None,
+    unlink: Callable[[Path], None] | None = None,
 ) -> None:
-    for spec in reversed(tuple(published)):
-        try:
-            delete(spec)
-        except (FileNotFoundError, InstallError, OSError) as exc:
-            raise InstallError("bounded install cleanup refused") from exc
+    try:
+        validated = _validate_runtime_files(tuple(published), validate=validate)
+        _delete_validated_runtime_files(
+            reversed(validated),
+            validate=validate,
+            lstat=lstat,
+            unlink=unlink,
+        )
+    except (FileNotFoundError, InstallError, OSError) as exc:
+        raise InstallError("bounded install cleanup refused") from exc
 
 
 def _cleanup_created_support_directories(
@@ -380,11 +419,11 @@ def install() -> None:
 def rollback() -> None:
     """Remove only pristine dedicated capability files; leave support directories in place."""
     validate_install_preflight(os.geteuid(), CANONICAL_DEV_SHA, CANONICAL_DEV_TREE, VERIFIER_BLOB)
-    for spec in runtime_file_specs():
-        try:
-            _safe_delete_runtime_file(spec)
-        except FileNotFoundError:
-            continue
+    try:
+        validated = _validate_runtime_files(runtime_file_specs())
+        _delete_validated_runtime_files(validated)
+    except (FileNotFoundError, InstallError, OSError) as exc:
+        raise InstallError("public rollback refused") from exc
 
 
 def main(argv: Iterable[str] | None = None) -> int:

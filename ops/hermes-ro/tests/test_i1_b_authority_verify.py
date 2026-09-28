@@ -9,6 +9,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -311,6 +312,225 @@ class InstallerRollbackHardeningTests(unittest.TestCase):
         path.write_bytes(contents)
         return directory, replace(template, path=path)
 
+    def _exercise_public_rollback(
+        self,
+        *,
+        invalid_path: Path | None = None,
+        invalid_case: str | None = None,
+        missing_path: Path | None = None,
+    ):
+        specs = tuple(
+            replace(template, path=Path("/rollback-fixture") / template.path.as_posix().lstrip("/"))
+            for template in self.installer.runtime_file_specs()
+        )
+        members = {spec.path for spec in specs}
+        if missing_path is not None:
+            members.remove(missing_path)
+        metadata = {
+            spec.path: SimpleNamespace(
+                st_mode=stat.S_IFREG | spec.mode,
+                st_uid=0,
+                st_gid=0,
+                st_size=0,
+                st_dev=1,
+                st_ino=index,
+            )
+            for index, spec in enumerate(specs, start=1)
+        }
+        events: list[tuple[str, Path]] = []
+
+        def validate(spec, **_kwargs):
+            events.append(("validate", spec.path))
+            if spec.path not in members:
+                raise FileNotFoundError(spec.path)
+            if spec.path == invalid_path:
+                if invalid_case is not None:
+                    invalid_metadata = SimpleNamespace(**vars(metadata[spec.path]))
+                    if invalid_case == "mode":
+                        invalid_metadata.st_mode = stat.S_IFREG | (spec.mode ^ 0o100)
+                    elif invalid_case == "owner":
+                        invalid_metadata.st_uid = 1001
+                    elif invalid_case == "type":
+                        invalid_metadata.st_mode = stat.S_IFLNK | spec.mode
+                    else:
+                        self.fail(f"unknown invalid fixture case: {invalid_case}")
+                    self.installer._validate_runtime_metadata(invalid_metadata, spec)
+                raise self.installer.InstallError("fixture runtime target is invalid")
+            return metadata[spec.path]
+
+        def lstat(path: Path):
+            if path not in members:
+                raise FileNotFoundError(path)
+            return metadata[path]
+
+        def unlink(path: Path) -> None:
+            events.append(("unlink", path))
+            members.remove(path)
+
+        with (
+            mock.patch.object(self.installer, "runtime_file_specs", return_value=specs),
+            mock.patch.object(self.installer, "validate_install_preflight"),
+            mock.patch.object(self.installer, "_validate_runtime_file", side_effect=validate),
+            mock.patch.object(self.installer.os, "geteuid", return_value=0),
+            mock.patch.object(self.installer.os, "lstat", side_effect=lstat),
+            mock.patch.object(self.installer.os, "unlink", side_effect=unlink),
+        ):
+            try:
+                self.installer.rollback()
+                failure = None
+            except Exception as exc:  # the contract deliberately exposes refusal
+                failure = exc
+        return specs, members, events, failure
+
+    def _exercise_install_cleanup(self, *, invalid_path: Path | None = None):
+        specs = tuple(
+            replace(template, path=Path("/cleanup-fixture") / template.path.name)
+            for template in self.installer.runtime_file_specs()[:2]
+        )
+        unrelated = replace(
+            self.installer.RUNTIME_AUDIT_LOG_SPEC,
+            path=Path("/cleanup-fixture/unrelated-audit.log"),
+        )
+        members = {*(spec.path for spec in specs), unrelated.path}
+        metadata = {
+            path: SimpleNamespace(
+                st_mode=stat.S_IFREG | (next(spec.mode for spec in specs if spec.path == path) if path != unrelated.path else unrelated.mode),
+                st_uid=0,
+                st_gid=0,
+                st_size=0,
+                st_dev=1,
+                st_ino=index,
+            )
+            for index, path in enumerate(members, start=1)
+        }
+        events: list[tuple[str, Path]] = []
+
+        def validate(spec):
+            events.append(("validate", spec.path))
+            if spec.path == invalid_path:
+                raise self.installer.InstallError("published runtime target was modified")
+            return metadata[spec.path]
+
+        def lstat(path: Path):
+            if path not in members:
+                raise FileNotFoundError(path)
+            return metadata[path]
+
+        def unlink(path: Path) -> None:
+            events.append(("unlink", path))
+            members.remove(path)
+
+        try:
+            self.installer._cleanup_published_runtime_files(
+                specs,
+                validate=validate,
+                lstat=lstat,
+                unlink=unlink,
+            )
+            failure = None
+        except Exception as exc:
+            failure = exc
+        return specs, unrelated, members, events, failure
+
+    def test_public_rollback_deletes_all_four_only_after_complete_pristine_preflight(self) -> None:
+        specs, members, events, failure = self._exercise_public_rollback()
+        self.assertIsNone(failure)
+        self.assertEqual(members, set())
+        self.assertEqual([path for operation, path in events if operation == "unlink"], [spec.path for spec in specs])
+        self.assertEqual(events[:4], [("validate", spec.path) for spec in specs])
+        self.assertGreater(events.index(("unlink", specs[0].path)), 3)
+
+    def test_preflighted_deletion_stops_when_identity_changes_before_unlink(self) -> None:
+        specs = tuple(
+            replace(template, path=Path("/identity-fixture") / str(index) / template.path.name)
+            for index, template in enumerate(self.installer.runtime_file_specs(), start=1)
+        )
+        metadata = {
+            spec.path: SimpleNamespace(
+                st_mode=stat.S_IFREG | spec.mode,
+                st_uid=0,
+                st_gid=0,
+                st_size=0,
+                st_dev=1,
+                st_ino=index,
+            )
+            for index, spec in enumerate(specs, start=1)
+        }
+        changed = SimpleNamespace(**vars(metadata[specs[1].path]))
+        changed.st_ino = 99
+        unlinked: list[Path] = []
+
+        def validate(spec):
+            return changed if spec.path == specs[1].path else metadata[spec.path]
+
+        with self.assertRaises(self.installer.InstallError):
+            self.installer._delete_validated_runtime_files(
+                tuple((spec, metadata[spec.path]) for spec in specs),
+                validate=validate,
+                lstat=lambda path: metadata[path],
+                unlink=unlinked.append,
+            )
+        self.assertEqual(unlinked, [specs[0].path])
+        self.assertNotIn(specs[2].path, unlinked)
+        self.assertNotIn(specs[3].path, unlinked)
+
+    def test_public_rollback_nonempty_audit_blocks_every_deletion(self) -> None:
+        audit_path = Path("/rollback-fixture") / self.installer.RUNTIME_AUDIT_LOG_PATH.as_posix().lstrip("/")
+        specs, members, events, failure = self._exercise_public_rollback(invalid_path=audit_path)
+        self.assertIsInstance(failure, self.installer.InstallError)
+        self.assertEqual(members, {spec.path for spec in specs})
+        self.assertEqual([event for event in events if event[0] == "unlink"], [])
+
+    def test_public_rollback_wrong_content_for_each_blob_member_blocks_every_deletion(self) -> None:
+        for template in (
+            self.installer.RUNTIME_LAUNCHER_SPEC,
+            self.installer.RUNTIME_VERIFIER_SPEC,
+            self.installer.RUNTIME_SUDOERS_SPEC,
+        ):
+            with self.subTest(path=template.path):
+                invalid_path = Path("/rollback-fixture") / template.path.as_posix().lstrip("/")
+                specs, members, events, failure = self._exercise_public_rollback(invalid_path=invalid_path)
+                self.assertIsInstance(failure, self.installer.InstallError)
+                self.assertEqual(members, {spec.path for spec in specs})
+                self.assertEqual([event for event in events if event[0] == "unlink"], [])
+
+    def test_public_rollback_invalid_mode_owner_or_type_of_any_member_blocks_every_deletion(self) -> None:
+        for invalid_case in ("mode", "owner", "type"):
+            for template in self.installer.runtime_file_specs():
+                with self.subTest(case=invalid_case, path=template.path):
+                    invalid_path = Path("/rollback-fixture") / template.path.as_posix().lstrip("/")
+                    specs, members, events, failure = self._exercise_public_rollback(
+                        invalid_path=invalid_path,
+                        invalid_case=invalid_case,
+                    )
+                    self.assertIsInstance(failure, self.installer.InstallError)
+                    self.assertEqual(members, {spec.path for spec in specs})
+                    self.assertEqual([event for event in events if event[0] == "unlink"], [])
+
+    def test_public_rollback_missing_any_member_blocks_every_deletion(self) -> None:
+        for template in self.installer.runtime_file_specs():
+            with self.subTest(path=template.path):
+                missing_path = Path("/rollback-fixture") / template.path.as_posix().lstrip("/")
+                specs, members, events, failure = self._exercise_public_rollback(missing_path=missing_path)
+                self.assertIsInstance(failure, self.installer.InstallError)
+                self.assertEqual(members, {spec.path for spec in specs if spec.path != missing_path})
+                self.assertEqual([event for event in events if event[0] == "unlink"], [])
+
+    def test_install_cleanup_prevalidates_current_invocation_set_then_deletes_in_reverse_order(self) -> None:
+        specs, unrelated, members, events, failure = self._exercise_install_cleanup()
+        self.assertIsNone(failure)
+        self.assertEqual(members, {unrelated.path})
+        self.assertEqual([path for operation, path in events if operation == "unlink"], list(reversed([spec.path for spec in specs])))
+        self.assertEqual(events[:2], [("validate", spec.path) for spec in specs])
+        self.assertGreater(events.index(("unlink", specs[-1].path)), 1)
+
+    def test_install_cleanup_modified_member_deletes_none_and_preserves_unrelated_fixture(self) -> None:
+        invalid_path = Path("/cleanup-fixture") / self.installer.RUNTIME_VERIFIER_PATH.name
+        specs, unrelated, members, events, failure = self._exercise_install_cleanup(invalid_path=invalid_path)
+        self.assertIsInstance(failure, self.installer.InstallError)
+        self.assertEqual(members, {*(spec.path for spec in specs), unrelated.path})
+        self.assertEqual([event for event in events if event[0] == "unlink"], [])
+
     def test_exact_launcher_identity_is_accepted_for_deletion(self) -> None:
         directory, spec = self._temporary_spec(
             self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
@@ -359,38 +579,6 @@ class InstallerRollbackHardeningTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
-    def test_install_cleanup_uses_identity_and_only_current_invocation_paths(self) -> None:
-        directory, published = self._temporary_spec(
-            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
-        )
-        unrelated_directory, unrelated = self._temporary_spec(
-            self.installer.RUNTIME_VERIFIER_SPEC, CANONICAL_VERIFIER_PATH.read_bytes()
-        )
-        try:
-            self.installer._cleanup_published_runtime_files(
-                [published],
-                delete=lambda spec: self._safe_delete(spec),
-            )
-            self.assertFalse(published.path.exists())
-            self.assertTrue(unrelated.path.exists())
-        finally:
-            directory.cleanup()
-            unrelated_directory.cleanup()
-
-    def test_install_cleanup_refuses_target_modified_after_publication(self) -> None:
-        directory, published = self._temporary_spec(
-            self.installer.RUNTIME_LAUNCHER_SPEC, LAUNCHER_PATH.read_bytes()
-        )
-        try:
-            published.path.write_bytes(b"modified after publication")
-            with self.assertRaises(self.installer.InstallError):
-                self.installer._cleanup_published_runtime_files(
-                    [published],
-                    delete=lambda spec: self._safe_delete(spec),
-                )
-            self.assertTrue(published.path.exists())
-        finally:
-            directory.cleanup()
 
     def _directory_metadata(self, *, mode: int = 0o700, uid: int = 0, gid: int = 0):
         return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=uid, st_gid=gid)

@@ -167,18 +167,25 @@ or removes `/`, `/usr`, `/usr/local`, `/usr/local/sbin`, `/usr/local/lib`,
 
 Rollback is limited to a pristine, unexecuted installation. It may delete only
 the four dedicated runtime files: the launcher, verifier, sudoers fragment, and
-dedicated audit log. Before any deletion, the installer requires the target to
-be a non-symlink regular root:root file with its exact expected mode and exact
-expected content identity. Launcher, verifier, and sudoers identity use
-canonical Git blob framing; the audit log must be exactly empty. A non-empty
-audit log is operational evidence and is never deleted.
+dedicated audit log. Public rollback is all-or-nothing with respect to
+validation: before the first deletion, it validates that all four artifacts are
+present, non-symlink regular root:root files with their exact expected modes
+and content identities. Launcher, verifier, and sudoers identity use canonical
+Git blob framing; the audit log must be exactly empty. A missing or invalid
+member refuses the entire rollback and leaves every runtime artifact untouched.
+A non-empty audit log is operational evidence that blocks the entire public
+rollback, not merely deletion of the audit file. Each target is revalidated for
+identity immediately before its unlink; a detected change stops later deletions.
 
 Installation-failure cleanup applies the same checks and considers only files
-published by that installer invocation. If a published target changed after
-publication, cleanup refuses to unlink it. Support directories created by that
-same failed invocation may be removed only when they remain root:root,
-mode 0700, real, and empty; removal proceeds deepest first. Public rollback
-has no later creation provenance and leaves support directories in place.
+published by that installer invocation. It prevalidates the complete
+current-invocation published set before deleting any member, then deletes that
+validated bounded set in reverse publication order. If a published target
+changed after publication, cleanup refuses to unlink every published target.
+Support directories created by that same failed invocation may be removed only
+when they remain root:root, mode 0700, real, and empty; removal proceeds
+deepest first. Public rollback has no later creation provenance and leaves
+support directories in place.
 
 Installing this capability does not execute verifier 008 and does not authorize
 production verifier execution.
