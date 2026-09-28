@@ -168,6 +168,10 @@ LEFT JOIN LATERAL (
 ) AS categories ON TRUE
 WHERE (
     %s::text IS NULL
+    OR r.curation_status = %s
+)
+AND (
+    %s::text IS NULL
     OR r.creator ILIKE %s
     OR r.caption ILIKE %s
     OR (
@@ -189,7 +193,11 @@ LIMIT %s OFFSET %s
 """
 
 
-def fetch_reels(page: int, search_term: str | None = None) -> tuple[list[dict], bool]:
+def fetch_reels(
+    page: int,
+    search_term: str | None = None,
+    curation_status: Literal["inbox", "organized"] | None = None,
+) -> tuple[list[dict], bool]:
     offset = (page - 1) * PAGE_SIZE
     pattern = f"%{search_term}%" if search_term is not None else None
 
@@ -200,6 +208,8 @@ def fetch_reels(page: int, search_term: str | None = None) -> tuple[list[dict], 
         cursor.execute(
             LIBRARY_QUERY,
             (
+                curation_status,
+                curation_status,
                 search_term,
                 pattern,
                 pattern,
@@ -221,9 +231,13 @@ def normalize_library_search(q: str | None) -> str:
 def fetch_library_page(
     page: int,
     q: str | None,
+    curation_status: Literal["inbox", "organized"] | None = None,
 ) -> tuple[list[dict], bool, str]:
     search_term = normalize_library_search(q)
-    reels, has_next = fetch_reels(page, search_term or None)
+    if curation_status is None:
+        reels, has_next = fetch_reels(page, search_term or None)
+    else:
+        reels, has_next = fetch_reels(page, search_term or None, curation_status)
     return reels, has_next, search_term
 
 
@@ -505,12 +519,17 @@ def reels_api(
     response: Response,
     page: int = Query(default=1, ge=1),
     q: str | None = Query(default=None),
+    curation_status: Literal["inbox", "organized"] | None = Query(default=None),
     _owner=Depends(require_owner_session),
 ) -> dict:
     response.headers["Cache-Control"] = "no-store"
 
     try:
-        reels, has_next, search_term = fetch_library_page(page, q)
+        reels, has_next, search_term = fetch_library_page(
+            page,
+            q,
+            curation_status=curation_status,
+        )
     except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
         response.status_code = 503
         return {"detail": "Library temporarily unavailable"}

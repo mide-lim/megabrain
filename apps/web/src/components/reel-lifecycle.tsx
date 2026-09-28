@@ -71,9 +71,15 @@ type ReelLifecycleProps = {
   compact?: boolean;
   lifecycle: ReelLifecycleProjection;
   reelId: number;
+  refreshOnCuration?: boolean;
 };
 
-export function ReelLifecycle({ compact = false, lifecycle: initialLifecycle, reelId }: ReelLifecycleProps) {
+export function ReelLifecycle({
+  compact = false,
+  lifecycle: initialLifecycle,
+  reelId,
+  refreshOnCuration = false,
+}: ReelLifecycleProps) {
   const [lifecycle, setLifecycle] = useState(initialLifecycle);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +101,9 @@ export function ReelLifecycle({ compact = false, lifecycle: initialLifecycle, re
     }
     setLifecycle(confirmed);
     setSuccess("Organização atualizada.");
+    if (refreshOnCuration) {
+      window.location.reload();
+    }
   }
 
   return (
