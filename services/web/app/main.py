@@ -523,11 +523,14 @@ def reels_api(
     response.headers["Cache-Control"] = "no-store"
 
     try:
-        reels, has_next, search_term = fetch_library_page(
-            page,
-            q,
-            curation_status=curation_status,
-        )
+        if curation_status is None:
+            reels, has_next, search_term = fetch_library_page(page, q)
+        else:
+            reels, has_next, search_term = fetch_library_page(
+                page,
+                q,
+                curation_status=curation_status,
+            )
     except Exception:  # noqa: BLE001 - HTTP boundary must hide database details.
         response.status_code = 503
         return {"detail": "Library temporarily unavailable"}
