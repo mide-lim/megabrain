@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { ReelCard } from "../../library/library-page-content";
@@ -15,7 +16,7 @@ export function CategoryDetailPageContent({
       <section className="rounded-2xl border border-border bg-surface px-6 py-10 sm:px-8">
         <h1 className="text-3xl font-semibold tracking-tight text-foreground">Categoria não encontrada</h1>
         <p className="mt-3 text-sm leading-6 text-muted">Esta categoria não existe ou foi removida.</p>
-        <a className="mt-6 inline-flex min-h-11 items-center text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Voltar para Categorias</a>
+        <Link className="mt-6 inline-flex min-h-11 items-center text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Voltar para Categorias</Link>
       </section>
     );
   }
@@ -25,7 +26,7 @@ export function CategoryDetailPageContent({
       <section aria-live="polite" className="rounded-2xl border border-border bg-surface px-6 py-10 sm:px-8" role="status">
         <h1 className="text-3xl font-semibold tracking-tight text-foreground">Categoria temporariamente indisponível</h1>
         <p className="mt-3 text-sm leading-6 text-muted">Não foi possível carregar esta categoria agora. Tente novamente em alguns instantes.</p>
-        <a className="mt-6 inline-flex min-h-11 items-center text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Voltar para Categorias</a>
+        <Link className="mt-6 inline-flex min-h-11 items-center text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Voltar para Categorias</Link>
       </section>
     );
   }
@@ -37,7 +38,7 @@ export function CategoryDetailPageContent({
   return (
     <div id="category-detail-content">
       <section className="max-w-3xl">
-        <a className="text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Categorias</a>
+        <Link className="text-sm font-semibold text-primary underline decoration-primary/25 underline-offset-4 hover:decoration-primary" href="/categories">Categorias</Link>
         <h1 className="mt-4 break-words text-4xl font-semibold tracking-tight text-foreground text-balance sm:text-5xl">{category.name}</h1>
         <p className="mt-4 text-base leading-7 text-muted">{category.reel_count} {category.reel_count === 1 ? "item" : "itens"}</p>
       </section>
