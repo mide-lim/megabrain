@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { performCurationMutation } from "../lib/reel-curation-api";
@@ -81,7 +80,6 @@ export function ReelLifecycle({
   reelId,
   refreshOnCuration = false,
 }: ReelLifecycleProps) {
-  const router = useRouter();
   const [lifecycle, setLifecycle] = useState(initialLifecycle);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +102,7 @@ export function ReelLifecycle({
     setLifecycle(confirmed);
     setSuccess("Organização atualizada.");
     if (refreshOnCuration) {
-      router.refresh();
+      window.location.reload();
     }
   }
 

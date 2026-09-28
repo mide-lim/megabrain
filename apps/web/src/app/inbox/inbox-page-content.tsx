@@ -20,8 +20,19 @@ export function InboxPageContent({ inbox }: { inbox: LibraryResponse | null }) {
         </section>
       ) : inbox.items.length === 0 ? (
         <section className="mt-10 rounded-2xl border border-border bg-surface px-6 py-10 sm:px-8">
-          <h2 className="text-xl font-semibold tracking-tight text-foreground">Inbox vazia</h2>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-muted">Você não tem Reels aguardando organização.</p>
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+            {inbox.pagination.has_previous ? "Nenhum Reel nesta página" : "Inbox vazia"}
+          </h2>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-muted">
+            {inbox.pagination.has_previous
+              ? "Os Reels desta página já foram organizados."
+              : "Você não tem Reels aguardando organização."}
+          </p>
+          {inbox.pagination.has_previous ? (
+            <a className="mt-5 inline-flex min-h-11 items-center rounded-xl border border-border px-4 py-3 text-sm font-semibold text-primary hover:bg-accent" href={buildInboxUrl(inbox.pagination.page - 1)}>
+              Voltar para a página anterior
+            </a>
+          ) : null}
         </section>
       ) : (
         <section aria-label="Reels aguardando organização" className="mt-10">

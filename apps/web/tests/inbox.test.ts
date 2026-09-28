@@ -63,7 +63,16 @@ test("inbox has distinct empty and unavailable states", () => {
   });
   assert.match(empty, /Inbox vazia/);
   assert.match(empty, /Você não tem Reels aguardando organização/);
+  const emptyLaterPage = render({
+    items: [],
+    query: { q: "" },
+    pagination: { page: 2, page_size: 12, has_previous: true, has_next: false },
+  });
+
   assert.match(render(null), /Inbox temporariamente indisponível/);
+  assert.match(emptyLaterPage, /Nenhum Reel nesta página/);
+  assert.match(emptyLaterPage, /Voltar para a página anterior/);
+  assert.match(emptyLaterPage, /href="\/inbox"/);
 });
 
 test("inbox API request uses exact curation filter", async () => {
@@ -88,7 +97,7 @@ test("inbox refresh is requested only after server-confirmed curation", async ()
   const cardSource = await readFile(new URL("../src/app/library/library-page-content.tsx", import.meta.url), "utf8");
   const inboxSource = await readFile(new URL("../src/app/inbox/inbox-page-content.tsx", import.meta.url), "utf8");
 
-  assert.ok(lifecycleSource.indexOf("const confirmed = await performCurationMutation") < lifecycleSource.indexOf("router.refresh()"));
+  assert.ok(lifecycleSource.indexOf("const confirmed = await performCurationMutation") < lifecycleSource.indexOf("window.location.reload()"));
   assert.match(lifecycleSource, /if \(refreshOnCuration\)/);
   assert.match(cardSource, /refreshOnCuration=\{refreshOnCuration\}/);
   assert.match(inboxSource, /refreshOnCuration/);
