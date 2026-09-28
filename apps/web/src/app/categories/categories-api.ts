@@ -71,6 +71,7 @@ function isCategory(value: unknown): value is CategorySummary {
     isRecord(value) &&
     Number.isSafeInteger(value.id) &&
     typeof value.name === "string" &&
+    typeof value.reel_count === "number" &&
     Number.isSafeInteger(value.reel_count) &&
     value.reel_count >= 0
   );
