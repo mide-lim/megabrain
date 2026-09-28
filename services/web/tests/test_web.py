@@ -136,6 +136,8 @@ def test_fetch_reels_uses_parameterized_pagination(monkeypatch) -> None:
         (
             main.LIBRARY_QUERY,
             (
+                None,
+                None,
                 "Tech",
                 "%Tech%",
                 "%Tech%",
