@@ -136,6 +136,8 @@ def test_fetch_reels_uses_parameterized_pagination(monkeypatch) -> None:
         (
             main.LIBRARY_QUERY,
             (
+                None,
+                None,
                 "Tech",
                 "%Tech%",
                 "%Tech%",
@@ -354,3 +356,59 @@ def test_openapi_excludes_retired_presentation_routes_and_preserves_active_contr
 
     assert retired_paths.isdisjoint(paths)
     assert active_paths <= set(paths)
+
+
+def test_fetch_reels_filters_exact_curation_status(monkeypatch) -> None:
+    rows = [{"id": reel_id} for reel_id in range(2)]
+    calls = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, query, parameters):
+            calls.append((query, parameters))
+
+        def fetchall(self):
+            return rows
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def cursor(self, *, row_factory):
+            return FakeCursor()
+
+    monkeypatch.setattr(database, "connect", lambda: FakeConnection())
+
+    reel_rows, has_next = main.fetch_reels(
+        page=1,
+        search_term=None,
+        curation_status="inbox",
+    )
+
+    assert reel_rows == rows
+    assert has_next is False
+    assert calls == [
+        (
+            main.LIBRARY_QUERY,
+            (
+                "inbox",
+                "inbox",
+                None,
+                None,
+                None,
+                None,
+                None,
+                PAGE_SIZE + 1,
+                0,
+            ),
+        )
+    ]
+    assert "r.curation_status = %s" in main.LIBRARY_QUERY

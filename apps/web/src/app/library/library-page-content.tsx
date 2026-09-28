@@ -15,7 +15,13 @@ function displayDuration(value: number | null): string | null {
   return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value) + " s";
 }
 
-export function ReelCard({ item }: { item: ReelLibraryItem }) {
+export function ReelCard({
+  item,
+  reloadAfterCurationChange = false,
+}: {
+  item: ReelLibraryItem;
+  reloadAfterCurationChange?: boolean;
+}) {
   const title = item.title?.trim() || "Reel sem título";
   const receivedAt = displayDate(item.received_at);
   const duration = displayDuration(item.duration_seconds);
@@ -39,7 +45,7 @@ export function ReelCard({ item }: { item: ReelLibraryItem }) {
         download_status: item.download_status,
         curation_status: item.curation_status,
         transcription_status: item.transcription_status,
-      }} reelId={item.id} />
+      }} reelId={item.id} reloadAfterCurationChange={reloadAfterCurationChange} />
       <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t border-border pt-4 text-sm text-muted">
         {receivedAt ? <span>Recebido em {receivedAt}</span> : null}
         {duration ? <span>{duration}</span> : null}
