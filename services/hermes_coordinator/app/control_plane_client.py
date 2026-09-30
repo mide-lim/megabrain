@@ -45,12 +45,17 @@ class ControlPlaneClient:
         *,
         connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        _caller: dict[str, str] | None = None,
     ) -> None:
         if not isinstance(socket_path, (str, Path)) or not str(socket_path):
             raise ValueError("a Control Plane socket path is required")
+        caller = _CALLER if _caller is None else _caller
+        if caller not in (_CALLER, {"role": "OBSERVABILITY_ADAPTER", "identity_id": "observer"}):
+            raise ValueError("unsupported fixed Control Plane caller")
         self.socket_path = Path(socket_path)
         self.connect_timeout_seconds = self._timeout(connect_timeout_seconds)
         self.request_timeout_seconds = self._timeout(request_timeout_seconds)
+        self._caller = caller
 
     def get_execution_budget(self, task_id: str, correlation_id: str, capability: dict[str, Any]) -> dict[str, Any]:
         result = self._request("GetExecutionBudget", task_id, correlation_id, capability, {"task_id": task_id})
@@ -105,20 +110,20 @@ class ControlPlaneClient:
     def _request(
         self,
         operation: str,
-        task_id: str,
+        task_id: str | None,
         correlation_id: str,
         capability: dict[str, Any],
         body: dict[str, Any],
         *,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        if not isinstance(task_id, str) or not task_id or not isinstance(correlation_id, str) or not correlation_id:
-            raise ValueError("task and correlation identifiers are required")
+        if not isinstance(correlation_id, str) or not correlation_id or (task_id is not None and (not isinstance(task_id, str) or not task_id)):
+            raise ValueError("a correlation identifier and optional task identifier are required")
         request: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
             "operation": operation,
             "correlation_id": correlation_id,
-            "caller": _CALLER,
+            "caller": self._caller,
             "authorization": capability,
             "body": body,
         }
