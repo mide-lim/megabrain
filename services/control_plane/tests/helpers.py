@@ -1,6 +1,8 @@
 """Hermetic AP0 request fixtures shared by acceptance tests."""
 from __future__ import annotations
 
+import hashlib
+
 from app.policy import POLICY_VERSION
 
 CORR = "corr_018f3d4a-7b8c-7c9d-8e1f-0123456789ab"
@@ -34,9 +36,49 @@ def requested_operation(*, operation="worker.run", target_scope="task-worktree")
     return {"operation": operation, "target_scope": target_scope}
 
 
+WORKER_BOOT_ID = "018f3d4a-7b8c-7c9d-8e1f-0123456789ab"
+WORKER_LAUNCH_NONCE = "A" * 43
+
+
+class HermeticWorkerIdentityVerifier:
+    """Explicit test fake; it is injected and never used by production startup."""
+
+    def verify(self, resource_id, expectation, observation):
+        return (
+            expectation["executable_class"] == "hermetic-worker-v1"
+            and observation["executable"] == "/hermetic/bin/worker"
+            and observation["cwd"] == expectation["worktree_ref"]
+            and observation["parent_pid"] == 1
+        )
+
+
+def worker_expectation(nonce=WORKER_LAUNCH_NONCE):
+    return {
+        "kind": "WORKER_PROCESS_V1",
+        "expected_boot_id": WORKER_BOOT_ID,
+        "expected_uid": 1000,
+        "executable_class": "hermetic-worker-v1",
+        "worktree_ref": "/hermetic/worktrees/task",
+        "nonce_sha256": hashlib.sha256(nonce.encode("ascii")).hexdigest(),
+    }
+
+
+def worker_observation():
+    return {
+        "pid": 101,
+        "start_time": "7384921",
+        "boot_id": WORKER_BOOT_ID,
+        "uid": 1000,
+        "parent_pid": 1,
+        "process_group": 101,
+        "cwd": "/hermetic/worktrees/task",
+        "executable": "/hermetic/bin/worker",
+        "cgroup": None,
+    }
+
+
 def worker_request():
-    identity_value = {"pid": 101, "start_time": "100", "boot_id": "boot-a"}
-    return {"resource_type": "WORKER", "requested_operation": requested_operation(), "expected_identity": identity_value, "budget_reservation": {}, "metadata": {"command_profile": "test"}, "heartbeat_required": True}
+    return {"resource_type": "WORKER", "requested_operation": requested_operation(), "expected_identity": worker_expectation(), "budget_reservation": {}, "metadata": {"command_profile": "test"}, "heartbeat_required": True}
 
 
 def checkpoint(active_resource_ids=None):

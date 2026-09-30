@@ -3,20 +3,21 @@ import threading
 
 from app.errors import ControlPlaneError
 from app.service import ControlPlaneService
-from helpers import CORR, CORR2, HERMES, HUMAN, MANAGER, grant, worker_request, ready_task
+from helpers import CORR, CORR2, HERMES, HUMAN, MANAGER, HermeticWorkerIdentityVerifier, WORKER_LAUNCH_NONCE, grant, ready_task, worker_observation, worker_request
 
 
 def test_allocation_binds_strong_identity_tracks_event_sequence_and_releases_failed_reservation(tmp_path):
-    service = ControlPlaneService(tmp_path / "db.sqlite")
+    service = ControlPlaneService(tmp_path / "db.sqlite", worker_identity_verifier=HermeticWorkerIdentityVerifier())
     task_id = ready_task(service, MANAGER)
     request = worker_request()
     allocated = service.allocate_resource(MANAGER, "allocation", CORR, task_id, request)
     resource_id = allocated["resource_id"]
     row = service.con.execute("SELECT last_event_sequence FROM resource_leases WHERE resource_id=?", (resource_id,)).fetchone()
     assert row[0] > 0
+    bad_observation = worker_observation(); bad_observation["boot_id"] = "018f3d4a-7b8c-7c9d-8e1f-0123456789ac"
     with pytest.raises(ControlPlaneError, match="IDENTITY_MISMATCH"):
-        service.bind_resource(MANAGER, "bad-bind", CORR2, resource_id, 0, {"pid": 101, "start_time": "different", "boot_id": "boot-a"})
-    assert service.bind_resource(MANAGER, "bind", CORR2, resource_id, 0, request["expected_identity"])["state"] == "ACTIVE"
+        service.bind_resource(MANAGER, "bad-bind", CORR2, resource_id, 0, bad_observation, WORKER_LAUNCH_NONCE)
+    assert service.bind_resource(MANAGER, "bind", CORR2, resource_id, 0, worker_observation(), WORKER_LAUNCH_NONCE)["state"] == "ACTIVE"
     with pytest.raises(ControlPlaneError, match="BUDGET_EXCEEDED|RESOURCE_LIMIT_REACHED"):
         service.allocate_resource(MANAGER, "second", CORR, task_id, request)
     assert service.terminalize_resource(MANAGER, "terminal", CORR2, resource_id, 1, {"code": "RESOURCE_CREATION_FAILED"})["state"] == "TERMINAL"
