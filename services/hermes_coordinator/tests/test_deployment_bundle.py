@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 from pathlib import Path
 
@@ -71,3 +72,20 @@ def test_production_startup_binds_idle_work_source(monkeypatch, tmp_path: Path) 
 
     assert service_main.main(["--config", str(config_path)]) == 0
     assert isinstance(captured["work_source"], IdleWorkSource)
+
+
+def test_runtime_layout_includes_control_plane_migrations() -> None:
+    manifest = json.loads((DEPLOY / "manifest" / "runtime-layout.json").read_text(encoding="utf-8"))
+
+    assert manifest["version"] == 1
+    trees = {entry["source"]: entry["destination"] for entry in manifest["trees"]}
+    assert trees["services/control_plane/app"] == "/opt/megabrain/lib/control_plane/app"
+    assert trees["services/control_plane/migrations"] == "/opt/megabrain/lib/control_plane/migrations"
+    assert trees["services/hermes_coordinator/app"] == "/opt/megabrain/lib/hermes_coordinator/app"
+
+    migrations = sorted((ROOT / "services/control_plane/migrations").glob("[0-9][0-9][0-9][0-9]_*.sql"))
+    assert [path.name for path in migrations] == [
+        "0001_initial_schema.sql",
+        "0002_execution_budget_and_provider_state.sql",
+    ]
+    assert all(path.is_file() and path.stat().st_size > 0 for path in migrations)
