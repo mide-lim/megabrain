@@ -83,5 +83,5 @@ n8n.midelim.tech {
 }
 
 paperclip.midelim.tech {
-	reverse_proxy 172.18.0.1:13100
+	reverse_proxy paperclip:13100
 }
