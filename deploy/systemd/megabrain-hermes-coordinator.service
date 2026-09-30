@@ -14,6 +14,7 @@ WorkingDirectory=/var/lib/megabrain-hermes-coordinator
 Environment=HOME=/var/lib/megabrain-hermes-coordinator
 Environment=HERMES_HOME=/var/lib/megabrain-hermes-coordinator/hermes-home
 Environment=PYTHONUNBUFFERED=1
+LoadCredentialEncrypted=control-plane-coordinator-bootstrap
 
 ExecStart=/opt/megabrain/bin/megabrain-hermes-coordinator --config /etc/megabrain/hermes-coordinator.yaml
 

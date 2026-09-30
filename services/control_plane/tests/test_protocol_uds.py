@@ -1,5 +1,8 @@
+import os
 import socket
 import sqlite3
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 
@@ -34,10 +37,17 @@ def _uds_round_trip(path, request):
 
 
 def _server(tmp_path, name):
-    path = tmp_path / f"{name}.sock"
+    socket_dir = Path(tempfile.mkdtemp(prefix="mb-cp-", dir="/tmp"))
+    path = socket_dir / f"{name}.sock"
     database = tmp_path / "registry.db"; issuer = HermeticCapabilityIssuer(); stop = threading.Event(); ready = threading.Event()
     thread = threading.Thread(target=serve, args=(path, database), kwargs={"issuer": issuer, "stop_event": stop, "ready_event": ready}, daemon=True); thread.start(); assert ready.wait(2)
     return path, database, issuer, stop, thread
+
+
+def _stop_server(path, stop, thread):
+    stop.set()
+    thread.join(2)
+    shutil.rmtree(path.parent, ignore_errors=True)
 
 
 def test_uds_dispatches_authenticated_create_task_and_denies_wrong_role(tmp_path):
@@ -50,7 +60,7 @@ def test_uds_dispatches_authenticated_create_task_and_denies_wrong_role(tmp_path
         denied = _uds_round_trip(path, _request("AllocateResource", hermes, capability, {"task_id": created["result"]["task_id"], "resource_type": "WORKER"}, key="wrong-role"))
         assert denied["error"]["code"] == "UNAUTHORIZED"
     finally:
-        stop.set(); thread.join(2)
+        _stop_server(path, stop, thread)
 
 
 def test_uds_dispatch_scopes_read_to_the_capability_task(tmp_path):
@@ -64,11 +74,11 @@ def test_uds_dispatch_scopes_read_to_the_capability_task(tmp_path):
         denied = _uds_round_trip(path, _request("GetTask", hermes, read, {"task_id": "task_018f3d4a-7b8c-7c9d-8e1f-0123456789ac"}))
         assert denied["error"]["code"] == "UNAUTHORIZED"
     finally:
-        stop.set(); thread.join(2)
+        _stop_server(path, stop, thread)
 
 
 def test_v1_protocol_exposes_named_operations_and_never_persists_capability_proofs(tmp_path):
-    assert ALL_OPERATIONS == {"CreateTask", "GetTask", "TransitionTask", "PauseTask", "ResumeTask", "CreateCheckpoint", "AllocateResource", "BindResourceIdentity", "MarkResourceTerminal", "RecordHeartbeat", "CreateGate", "ResolveGate", "ConsumeGate", "AppendEvent", "GetTaskResources", "GetPendingGates", "ReconcileObservation", "GetExecutionBudget", "AdmitModelCall", "ReserveDelegation", "ReleaseDelegation", "ReserveReviewBudget", "RecordProviderObservation", "EvaluateProviderPreflight", "ReserveTransientRetry"}
+    assert ALL_OPERATIONS == {"CreateTask", "GetTask", "TransitionTask", "PauseTask", "ResumeTask", "CreateCheckpoint", "AllocateResource", "BindResourceIdentity", "MarkResourceTerminal", "RecordHeartbeat", "CreateGate", "ResolveGate", "ConsumeGate", "AppendEvent", "GetTaskResources", "GetPendingGates", "ReconcileObservation", "GetExecutionBudget", "AdmitModelCall", "ReserveDelegation", "ReleaseDelegation", "ReserveReviewBudget", "RecordProviderObservation", "EvaluateProviderPreflight", "ReserveTransientRetry", "ExchangeCoordinatorBootstrap"}
     path, database, issuer, stop, thread = _server(tmp_path, "proof")
     proof = None
     try:
@@ -78,7 +88,7 @@ def test_v1_protocol_exposes_named_operations_and_never_persists_capability_proo
         proof = capability["capability_proof"]
         assert "result" in _uds_round_trip(path, _request("CreateTask", hermes, capability, _task_body(), key="proof"))
     finally:
-        stop.set(); thread.join(2)
+        _stop_server(path, stop, thread)
     dump = "\n".join(row[0] for row in sqlite3.connect(database).iterdump())
     assert proof not in dump and "capability_proof" not in dump
 
