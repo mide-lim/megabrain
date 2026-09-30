@@ -1,14 +1,18 @@
+import inspect
+
 import pytest
 
 from app.adapters.docker import DockerObservation
 from app.adapters.git_worktree import GitWorktreeObservation
-from app.adapters.process import ProcessObservation
+from app.adapters.process import ProcessAdapter, ProcessObservation
 from app.adapters.security import SecurityObservation
 from app.adapters.reconciliation import ExpectedResource, ObservedResource, reconcile
 
 
 def test_adapter_contracts_are_typed_sanitized_and_denied_or_dirty_evidence_never_authorizes_mutation():
-    assert ProcessObservation(1, "s", "b", None, None, None, None, None, None, "MATCHED").pid == 1
+    observation = ProcessObservation(1, "s", "018f3d4a-7b8c-7c9d-8e1f-0123456789ab", 1000, 1, 1, "/cwd", "/exe", None, "MATCHED")
+    assert observation.uid == 1000
+    assert list(inspect.signature(ProcessAdapter.observe).parameters) == ["self", "resource_id"]
     assert DockerObservation(None, None, None, None, None, None, None, None, (), (), (), {}, "ACCESS_DENIED").status == "ACCESS_DENIED"
     assert SecurityObservation({}, {}, {}, "INCONCLUSIVE").status == "INCONCLUSIVE"
     git = GitWorktreeObservation("repo", "/task", "REGISTERED", "agent/x", "bad-head", "base", "DIRTY", "UNLOCKED", "IDENTITY_MISMATCH")

@@ -16,6 +16,13 @@ from .storage.event_chain import append_event
 from .storage.idempotency import begin, finalize, fingerprint
 from .storage.migrations import admission_ready, apply_migrations
 from .storage.sqlite import connect, immediate
+from .worker_identity import (
+    launch_nonce_matches,
+    matches_launch_expectation,
+    validate_launch_expectation,
+    validate_launch_nonce,
+    validate_observed_process_identity,
+)
 
 _RECORD_VERSION = "1.0.0"
 _MUTATIONS = {
@@ -56,9 +63,10 @@ def _same(left: object, right: object) -> bool:
 
 
 class ControlPlaneService:
-    def __init__(self, path):
+    def __init__(self, path, *, worker_identity_verifier=None):
         self.path = Path(path)
         self.con = connect(self.path)
+        self.worker_identity_verifier = worker_identity_verifier
         apply_migrations(self.con)
 
     def close(self):
@@ -458,7 +466,10 @@ class ControlPlaneService:
                 raise fail("TASK_TERMINAL")
             if task["state"] not in {"READY", "RUNNING", "VALIDATING"}:
                 raise fail("INVALID_STATE_TRANSITION")
-            validate_secret_free(body)
+            try:
+                validate_secret_free(body)
+            except ValueError as exc:
+                raise fail("INVALID_REQUEST", "secret-free resource allocation required") from exc
             resource_type = body.get("resource_type")
             if resource_type not in _BUDGET_FIELDS:
                 raise fail("INVALID_REQUEST", "unsupported resource type")
@@ -469,7 +480,12 @@ class ControlPlaneService:
             metadata = body.get("metadata", {})
             if not isinstance(expected, dict) or not isinstance(metadata, dict):
                 raise fail("INVALID_REQUEST", "expected identity and metadata required")
-            if resource_type in {"WORKER", "PROCESS"} and not {"pid", "start_time", "boot_id"} <= set(expected):
+            if resource_type == "WORKER":
+                try:
+                    expected = validate_launch_expectation(expected)
+                except ValueError as exc:
+                    raise fail("INVALID_REQUEST", "valid worker launch expectation required") from exc
+            elif resource_type == "PROCESS" and not {"pid", "start_time", "boot_id"} <= set(expected):
                 raise fail("INVALID_REQUEST", "strong process identity required")
             if resource_type == "PREVIEW" and not preview_allowed(metadata):
                 raise fail("UNAUTHORIZED", "preview policy denied")
@@ -499,23 +515,47 @@ class ControlPlaneService:
             return {"resource_id": resource_id, "revision": 0, "state": "ALLOCATED"}, resource_id
         return self._mutation(caller, key, "AllocateResource", {"task_id": task_id, **body}, None, capability_id, allocate)
 
-    def bind_resource(self, caller, key, correlation_id, resource_id, expected_revision, identity, capability_id="test"):
+    def bind_resource(self, caller, key, correlation_id, resource_id, expected_revision, identity, launch_nonce=None, capability_id="test"):
         def bind():
             row = self._resource_row(resource_id); revision = _expected_revision(expected_revision)
             if row["revision"] != revision or row["state"] != "ALLOCATED":
                 raise fail("IDENTITY_BIND_FAILED")
-            if not isinstance(identity, dict) or not _same(_json(row["expected_identity"]), identity):
-                raise fail("IDENTITY_MISMATCH")
+            if row["resource_type"] == "WORKER":
+                try:
+                    expectation = validate_launch_expectation(_json(row["expected_identity"]))
+                    observation = validate_observed_process_identity(identity)
+                    nonce = validate_launch_nonce(launch_nonce)
+                except ValueError as exc:
+                    raise fail("INVALID_REQUEST", "valid worker identity binding required") from exc
+                if not launch_nonce_matches(expectation, nonce):
+                    raise fail("IDENTITY_MISMATCH")
+                verifier = self.worker_identity_verifier
+                if verifier is None:
+                    raise fail("IDENTITY_BIND_FAILED", "worker identity verifier is not configured")
+                try:
+                    verified_evidence = verifier.verify(resource_id, expectation, observation)
+                except Exception as exc:
+                    raise fail("IDENTITY_BIND_FAILED", "worker identity verification failed") from exc
+                if not matches_launch_expectation(expectation, observation, nonce, verified_evidence):
+                    raise fail("IDENTITY_MISMATCH")
+                bound_identity = observation
+            else:
+                if not isinstance(identity, dict) or not _same(_json(row["expected_identity"]), identity):
+                    raise fail("IDENTITY_MISMATCH")
+                bound_identity = identity
             try:
                 self._event("IDENTITY_BOUND", caller, correlation_id, {"resource_id": resource_id}, row["task_id"], resource_id)
                 _, seq, _ = self._event("RESOURCE_ACTIVE", caller, correlation_id, {"resource_id": resource_id}, row["task_id"], resource_id)
-                self.con.execute("UPDATE resource_leases SET bound_identity=?,state='ACTIVE',revision=revision+1,last_event_sequence=? WHERE resource_id=?", (canonical_json(identity), seq, resource_id))
+                self.con.execute("UPDATE resource_leases SET bound_identity=?,state='ACTIVE',revision=revision+1,last_event_sequence=? WHERE resource_id=?", (canonical_json(bound_identity), seq, resource_id))
             except ControlPlaneError:
                 raise
             except Exception as exc:
                 raise fail("IDENTITY_BIND_FAILED") from exc
             return {"resource_id": resource_id, "revision": revision + 1, "state": "ACTIVE"}, resource_id
-        return self._mutation(caller, key, "BindResourceIdentity", {"resource_id": resource_id, "identity": identity}, expected_revision, capability_id, bind)
+        body = {"resource_id": resource_id, "identity": identity}
+        if launch_nonce is not None:
+            body["launch_nonce"] = launch_nonce
+        return self._mutation(caller, key, "BindResourceIdentity", body, expected_revision, capability_id, bind)
 
     def terminalize_resource(self, caller, key, correlation_id, resource_id, expected_revision, reason, capability_id="test"):
         def terminalize():

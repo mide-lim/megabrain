@@ -2,14 +2,14 @@ import pytest
 
 from app.errors import ControlPlaneError
 from app.service import ControlPlaneService
-from helpers import CORR, CORR2, MANAGER, worker_request, ready_task
+from helpers import CORR, CORR2, MANAGER, HermeticWorkerIdentityVerifier, WORKER_LAUNCH_NONCE, ready_task, worker_observation, worker_request
 
 
 def test_heartbeat_projection_sequence_and_missed_to_stale_are_non_destructive(tmp_path):
-    service = ControlPlaneService(tmp_path / "db.sqlite")
+    service = ControlPlaneService(tmp_path / "db.sqlite", worker_identity_verifier=HermeticWorkerIdentityVerifier())
     task_id = ready_task(service, MANAGER)
     resource = service.allocate_resource(MANAGER, "allocation", CORR, task_id, worker_request())
-    service.bind_resource(MANAGER, "bind", CORR2, resource["resource_id"], 0, worker_request()["expected_identity"])
+    service.bind_resource(MANAGER, "bind", CORR2, resource["resource_id"], 0, worker_observation(), WORKER_LAUNCH_NONCE)
     assert service.record_heartbeat(MANAGER, "heartbeat", CORR, task_id, resource["resource_id"], 1)["sequence"] == 1
     with pytest.raises(ControlPlaneError, match="INVALID_REQUEST"):
         service.record_heartbeat(MANAGER, "duplicate", CORR2, task_id, resource["resource_id"], 1)

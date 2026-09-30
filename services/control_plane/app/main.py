@@ -93,7 +93,7 @@ def dispatch_request(service: ControlPlaneService, request: dict, issuer, *, pee
     if operation == "ResumeTask": return service.resume_task(caller, key, correlation_id, task_id, revision, body.get("checkpoint_id"), capability_id)
     if operation == "CreateCheckpoint": return service.create_checkpoint(caller, key, correlation_id, task_id, revision, body.get("snapshot"), capability_id)
     if operation == "AllocateResource": return service.allocate_resource(caller, key, correlation_id, task_id, {k: v for k, v in body.items() if k != "task_id"}, capability_id)
-    if operation == "BindResourceIdentity": return service.bind_resource(caller, key, correlation_id, resource_id, revision, body.get("identity"), capability_id)
+    if operation == "BindResourceIdentity": return service.bind_resource(caller, key, correlation_id, resource_id, revision, body.get("identity"), launch_nonce=body.get("launch_nonce"), capability_id=capability_id)
     if operation == "MarkResourceTerminal": return service.terminalize_resource(caller, key, correlation_id, resource_id, revision, body.get("reason"), capability_id)
     if operation == "RecordHeartbeat": return service.record_heartbeat(caller, key, correlation_id, task_id, resource_id, body.get("sequence"), body.get("status", "EXPECTED"), body.get("evidence_ref"), capability_id)
     if operation == "CreateGate": return service.create_gate(caller, key, correlation_id, task_id, {k: v for k, v in body.items() if k != "task_id"}, capability_id)

@@ -7,7 +7,7 @@ def validate_secret_free(value: object, depth: int = 0) -> object:
     if isinstance(value, dict):
         if len(value) > 128: raise ValueError("payload has too many fields")
         for key, item in value.items():
-            if not isinstance(key, str) or any(marker in key.lower() for marker in _SECRET_MARKERS):
+            if not isinstance(key, str) or key.lower() == "launch_nonce" or any(marker in key.lower() for marker in _SECRET_MARKERS):
                 raise ValueError("secret-bearing field prohibited")
             validate_secret_free(item, depth + 1)
     elif isinstance(value, list):
