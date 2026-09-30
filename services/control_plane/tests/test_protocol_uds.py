@@ -1,5 +1,6 @@
 import os
 import socket
+import stat
 import sqlite3
 import shutil
 import tempfile
@@ -106,3 +107,45 @@ def test_uds_refuses_to_unlink_preexisting_socket_path(tmp_path):
     with pytest.raises(ControlPlaneError, match="REGISTRY_UNAVAILABLE"):
         serve(path, tmp_path / "registry.db", issuer=HermeticCapabilityIssuer())
     assert path.read_text() == "sentinel"
+
+
+def test_uds_production_socket_directory_is_group_traversable_without_relaxing_registry(tmp_path):
+    socket_dir = Path(tempfile.mkdtemp(prefix="mb-prod-sock-", dir="/tmp"))
+    path = socket_dir / "control-plane.sock"
+    database = tmp_path / "registry" / "registry.db"
+    issuer = HermeticCapabilityIssuer()
+    stop, ready = threading.Event(), threading.Event()
+    thread = threading.Thread(
+        target=serve,
+        args=(path, database),
+        kwargs={
+            "issuer": issuer,
+            "stop_event": stop,
+            "ready_event": ready,
+            "socket_mode": 0o660,
+            "socket_gid": os.getgid(),
+        },
+        daemon=True,
+    )
+    thread.start()
+    assert ready.wait(2)
+    try:
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o750
+        assert path.parent.stat().st_gid == os.getgid()
+        assert stat.S_IMODE(path.stat().st_mode) == 0o660
+        assert path.stat().st_gid == os.getgid()
+        assert stat.S_IMODE(database.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(database.stat().st_mode) == 0o600
+    finally:
+        stop.set()
+        thread.join(2)
+        shutil.rmtree(socket_dir, ignore_errors=True)
+
+def test_uds_rejects_symlink_socket_directory(tmp_path):
+    target = tmp_path / "socket-target"
+    target.mkdir(mode=0o700)
+    link = tmp_path / "socket-link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ControlPlaneError, match="REGISTRY_UNAVAILABLE"):
+        serve(link / "control-plane.sock", tmp_path / "registry" / "registry.db", issuer=HermeticCapabilityIssuer())
+    assert not (target / "control-plane.sock").exists()

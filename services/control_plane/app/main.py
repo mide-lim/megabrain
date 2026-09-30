@@ -6,6 +6,7 @@ import grp
 import os
 import pwd
 import socket
+import stat
 import struct
 from pathlib import Path
 
@@ -13,9 +14,32 @@ from .auth import HermeticCapabilityIssuer, ProductionCapabilityAuthority, autho
 from .errors import ControlPlaneError, fail
 from .protocol import recv_frame, send_frame, validate_envelope
 from .service import ControlPlaneService
-from .storage.sqlite import prepare_directory
 
 _PRODUCTION_CHANNELS = {"openai_codex"}
+
+
+def _prepare_socket_directory(directory: Path, socket_gid: int | None) -> None:
+    """Prepare only the AF_UNIX runtime directory; registry paths stay owner-only."""
+    try:
+        metadata = os.lstat(directory)
+    except FileNotFoundError:
+        try:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+            metadata = os.lstat(directory)
+        except OSError as exc:
+            raise fail("REGISTRY_UNAVAILABLE", "socket directory unavailable") from exc
+    except OSError as exc:
+        raise fail("REGISTRY_UNAVAILABLE", "socket directory unavailable") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+        raise fail("REGISTRY_UNAVAILABLE", "unsafe socket directory")
+    try:
+        if socket_gid is None:
+            os.chmod(directory, 0o700)
+        else:
+            os.chown(directory, -1, socket_gid)
+            os.chmod(directory, 0o750)
+    except OSError as exc:
+        raise fail("REGISTRY_UNAVAILABLE", "socket directory unavailable") from exc
 
 
 def get_peer_credentials(client: socket.socket) -> tuple[int, int, int]:
@@ -89,7 +113,7 @@ def dispatch_request(service: ControlPlaneService, request: dict, issuer, *, pee
 
 def serve(socket_path, database_path, *, issuer=None, stop_event=None, ready_event=None, socket_mode: int = 0o600, socket_gid: int | None = None):
     if issuer is None: raise fail("UNAUTHORIZED", "runtime capability issuer is not configured")
-    path = Path(socket_path); prepare_directory(path.parent)
+    path = Path(socket_path); _prepare_socket_directory(path.parent, socket_gid)
     if path.exists(): raise fail("REGISTRY_UNAVAILABLE", "socket path already exists")
     service = ControlPlaneService(database_path); sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(path)); os.chmod(path, socket_mode)
