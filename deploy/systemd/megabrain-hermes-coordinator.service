@@ -1,0 +1,51 @@
+[Unit]
+Description=MegaBrain Hermes Coordinator
+Wants=network-online.target megabrain-control-plane.service
+After=network-online.target megabrain-control-plane.service
+
+[Service]
+Type=exec
+User=megabrain-hermes
+Group=megabrain-hermes
+SupplementaryGroups=megabrain-control-plane-clients
+
+WorkingDirectory=/var/lib/megabrain-hermes-coordinator
+
+Environment=HOME=/var/lib/megabrain-hermes-coordinator
+Environment=HERMES_HOME=/var/lib/megabrain-hermes-coordinator/hermes-home
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/opt/megabrain/bin/megabrain-hermes-coordinator --config /etc/megabrain/hermes-coordinator.yaml
+
+Restart=on-failure
+RestartSec=10s
+
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+KillMode=control-group
+
+RuntimeDirectory=megabrain-hermes-coordinator
+RuntimeDirectoryMode=0700
+StateDirectory=megabrain-hermes-coordinator
+StateDirectoryMode=0700
+LogsDirectory=megabrain-hermes-coordinator
+LogsDirectoryMode=0700
+
+UMask=0077
+
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
