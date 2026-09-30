@@ -1,0 +1,8 @@
+version: 1
+control_plane_socket: /run/megabrain/control-plane.sock
+channel_id: openai_codex
+idle_interval_seconds: 2
+hermes_executable: /opt/megabrain/hermes/bin/hermes
+runtime_directory: /run/megabrain-hermes-coordinator
+state_directory: /var/lib/megabrain-hermes-coordinator
+hermes_home: /var/lib/megabrain-hermes-coordinator/hermes-home

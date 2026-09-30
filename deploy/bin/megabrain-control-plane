@@ -1,0 +1,12 @@
+#!/usr/bin/python3
+import sys
+
+APPLICATION_ROOT = "/opt/megabrain/lib/control_plane"
+if APPLICATION_ROOT not in sys.path:
+    sys.path.insert(0, APPLICATION_ROOT)
+
+from app.main import main
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
