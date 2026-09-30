@@ -52,12 +52,14 @@ class HermesOneShotRunner:
         environment: Mapping[str, str] | None = None,
         guard: ExecutionGuard | None = None,
         termination_grace_seconds: float = DEFAULT_TERMINATION_GRACE_SECONDS,
+        hermes_home: Path | None = None,
     ) -> None:
         self.runtime_dir = Path(runtime_dir)
         self.hermes_executable = hermes_executable
         self.environment = dict(environment or {})
         self.guard = guard or ExecutionGuard()
         self.termination_grace_seconds = termination_grace_seconds
+        self.hermes_home = None if hermes_home is None else Path(hermes_home)
 
     def build_argv(self, task_packet: str, usage_path: Path) -> list[str]:
         return [self.hermes_executable, "--oneshot", task_packet, "--usage-file", str(usage_path)]
@@ -83,8 +85,9 @@ class HermesOneShotRunner:
             if (value := os.environ.get(key))
         }
         environment.update(self.environment)
-        environment["HOME"] = str(runtime_dir)
-        environment["HERMES_HOME"] = str(runtime_dir)
+        hermes_home = self.hermes_home or runtime_dir
+        environment["HOME"] = str(hermes_home)
+        environment["HERMES_HOME"] = str(hermes_home)
         started = time.monotonic()
         process: subprocess.Popen[bytes] | None = None
         stdout: _BoundedCapture | None = None
