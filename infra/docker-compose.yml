@@ -157,15 +157,7 @@ services:
         condition: service_healthy
     working_dir: /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
     command:
-      - /usr/local/bin/node
-      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling/node_modules/pnpm/bin/pnpm.cjs
-      - --dir
-      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
-      - paperclipai
-      - run
-      - --config
-      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/config.json
-      - --no-repair
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/start-paperclip.sh
     env_file:
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/runtime.env
     environment:
