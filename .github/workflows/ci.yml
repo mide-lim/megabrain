@@ -140,3 +140,65 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  control-plane-tests:
+    name: Control Plane tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: services/control_plane
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/control_plane/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile
+        run: python -m compileall -q app tests
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  hermes-coordinator-tests:
+    name: Hermes Coordinator tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: services/hermes_coordinator
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/hermes_coordinator/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile
+        run: python -m compileall -q app tests
+
+      - name: Run tests
+        run: python -m pytest -q
