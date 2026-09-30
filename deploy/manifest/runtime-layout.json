@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "trees": [
+    {
+      "source": "services/control_plane/app",
+      "destination": "/opt/megabrain/lib/control_plane/app"
+    },
+    {
+      "source": "services/control_plane/migrations",
+      "destination": "/opt/megabrain/lib/control_plane/migrations"
+    },
+    {
+      "source": "services/hermes_coordinator/app",
+      "destination": "/opt/megabrain/lib/hermes_coordinator/app"
+    }
+  ]
+}
