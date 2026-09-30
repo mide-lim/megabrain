@@ -162,7 +162,10 @@ services:
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/runtime.env
     environment:
       HOME: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/home
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/paperclip_prod
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAPERCLIP_DB_HOST: postgres
+      PAPERCLIP_DB_NAME: paperclip_prod
     volumes:
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
