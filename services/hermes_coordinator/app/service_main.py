@@ -13,6 +13,7 @@ from .coordinator_turn import CoordinatorTurnRunner
 from .hermes_oneshot import HermesOneShotRunner
 from .provider_control_plane import ProviderObservationClient
 from .provider_observer import HermesUsageProbe, ProviderObserver
+from .production_capabilities import IdleWorkSource, ProductionCapabilityProvider
 from .service_config import ConfigError, ServiceConfig, parse_service_config
 
 CONFIG_ERROR_STATUS = "COORDINATOR_CONFIG_INVALID"
@@ -99,14 +100,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check-config", action="store_true")
     args = parser.parse_args(argv)
     try:
-        parse_service_config(args.config)
+        config = parse_service_config(args.config)
     except ConfigError:
         print(CONFIG_ERROR_STATUS, file=sys.stderr)
         return CONFIG_ERROR_EXIT_CODE
     if args.check_config:
         return 0
-    print(CAPABILITY_BOOTSTRAP_STATUS, file=sys.stderr)
-    return CAPABILITY_BOOTSTRAP_EXIT_CODE
+    try:
+        run_service(
+            config,
+            work_source=IdleWorkSource(),
+            capability_provider=ProductionCapabilityProvider(ControlPlaneClient(config.control_plane_socket)),
+        )
+    except RuntimeError:
+        print(CAPABILITY_BOOTSTRAP_STATUS, file=sys.stderr)
+        return CAPABILITY_BOOTSTRAP_EXIT_CODE
+    return 0
 
 
 if __name__ == "__main__":

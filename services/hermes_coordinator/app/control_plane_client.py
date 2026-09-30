@@ -57,6 +57,12 @@ class ControlPlaneClient:
         self.request_timeout_seconds = self._timeout(request_timeout_seconds)
         self._caller = caller
 
+    def exchange_coordinator_bootstrap(self, *, bootstrap_id: str, bootstrap_secret: str, task_id: str, channel_id: str, correlation_id: str) -> dict[str, Any]:
+        result = self._request("ExchangeCoordinatorBootstrap", task_id, correlation_id, {}, {"bootstrap_id": bootstrap_id, "bootstrap_secret": bootstrap_secret, "task_id": task_id, "channel_id": channel_id})
+        if not isinstance(result, dict) or set(result) != {"coordinator_capability", "observer_capability"} or not all(isinstance(result[key], dict) for key in result):
+            raise ControlPlaneProtocolError("unexpected bootstrap result")
+        return result
+
     def get_execution_budget(self, task_id: str, correlation_id: str, capability: dict[str, Any]) -> dict[str, Any]:
         result = self._request("GetExecutionBudget", task_id, correlation_id, capability, {"task_id": task_id})
         return self._task_result(result, task_id)

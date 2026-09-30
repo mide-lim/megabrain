@@ -14,7 +14,8 @@ PROTOCOL_VERSION = "1.0"
 READ_OPERATIONS = {"GetTask", "GetTaskResources", "GetPendingGates", "GetExecutionBudget", "EvaluateProviderPreflight"}
 MUTATING_OPERATIONS = {"CreateTask", "TransitionTask", "PauseTask", "ResumeTask", "CreateCheckpoint", "AllocateResource", "BindResourceIdentity", "MarkResourceTerminal", "RecordHeartbeat", "CreateGate", "ResolveGate", "ConsumeGate", "AppendEvent", "ReconcileObservation", "AdmitModelCall", "ReserveDelegation", "ReleaseDelegation", "ReserveReviewBudget", "RecordProviderObservation", "ReserveTransientRetry"}
 REVISIONED_OPERATIONS = {"TransitionTask", "PauseTask", "ResumeTask", "CreateCheckpoint", "BindResourceIdentity", "MarkResourceTerminal", "ResolveGate", "ConsumeGate"}
-ALL_OPERATIONS = READ_OPERATIONS | MUTATING_OPERATIONS
+BOOTSTRAP_OPERATION = "ExchangeCoordinatorBootstrap"
+ALL_OPERATIONS = READ_OPERATIONS | MUTATING_OPERATIONS | {BOOTSTRAP_OPERATION}
 
 
 def encode_frame(payload: dict, max_size=MAX_RESPONSE) -> bytes:

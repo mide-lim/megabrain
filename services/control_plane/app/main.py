@@ -2,39 +2,61 @@
 from __future__ import annotations
 
 import argparse
+import grp
 import os
+import pwd
 import socket
+import struct
 from pathlib import Path
 
-from .auth import HermeticCapabilityIssuer, authorize
+from .auth import HermeticCapabilityIssuer, ProductionCapabilityAuthority, authorize
 from .errors import ControlPlaneError, fail
 from .protocol import recv_frame, send_frame, validate_envelope
 from .service import ControlPlaneService
 from .storage.sqlite import prepare_directory
 
+_PRODUCTION_CHANNELS = {"openai_codex"}
+
+
+def get_peer_credentials(client: socket.socket) -> tuple[int, int, int]:
+    """Extract Linux kernel credentials from the accepted AF_UNIX socket."""
+    try:
+        raw = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        return struct.unpack("3i", raw)
+    except (AttributeError, OSError, struct.error) as exc:
+        raise fail("UNAUTHORIZED", "unauthorized") from exc
+
 
 def _scope_for_request(service, operation, body):
     task_id, resource_id = body.get("task_id"), body.get("resource_id")
-    if operation in {"BindResourceIdentity", "MarkResourceTerminal", "ReconcileObservation"}:
-        task_id, resource_id = service.resource_scope(resource_id)
-    elif operation in {"ResolveGate", "ConsumeGate"}:
-        task_id, resource_id = service.gate_scope(body.get("gate_id"))
-    elif operation == "RecordHeartbeat" and resource_id:
-        task_id, resource_id = service.resource_scope(resource_id)
+    if operation in {"BindResourceIdentity", "MarkResourceTerminal", "ReconcileObservation"}: task_id, resource_id = service.resource_scope(resource_id)
+    elif operation in {"ResolveGate", "ConsumeGate"}: task_id, resource_id = service.gate_scope(body.get("gate_id"))
+    elif operation == "RecordHeartbeat" and resource_id: task_id, resource_id = service.resource_scope(resource_id)
     return task_id, resource_id
 
 
-def dispatch_request(service: ControlPlaneService, request: dict, issuer: HermeticCapabilityIssuer) -> dict:
-    """Authorize and dispatch one bounded AP0 v1 request.
+def _exchange_bootstrap(service: ControlPlaneService, request: dict, authority: ProductionCapabilityAuthority, peer_uid: int) -> dict:
+    body = request["body"]
+    if not isinstance(body, dict) or set(body) != {"bootstrap_id", "bootstrap_secret", "task_id", "channel_id"}:
+        raise fail("UNAUTHORIZED", "unauthorized")
+    try:
+        result = authority.exchange(body["bootstrap_id"], body["bootstrap_secret"], body["task_id"], body["channel_id"], peer_uid)
+        if body["channel_id"] not in _PRODUCTION_CHANNELS or service.get_task(body["task_id"])["task_id"] != body["task_id"]:
+            raise fail("UNAUTHORIZED", "unauthorized")
+        return result
+    except (ControlPlaneError, KeyError, TypeError, ValueError):
+        raise fail("UNAUTHORIZED", "unauthorized")
 
-    The authorization proof is verified before dispatch and is never passed to
-    storage. Service mutation fingerprints receive only the capability ID.
-    """
+
+def dispatch_request(service: ControlPlaneService, request: dict, issuer, *, peer_uid: int | None = None) -> dict:
+    """Authorize and dispatch; proofs are never passed to storage."""
     operation, body = request["operation"], request["body"]
-    if not isinstance(body, dict):
-        raise fail("INVALID_REQUEST", "operation body must be an object")
+    if operation == "ExchangeCoordinatorBootstrap":
+        if not isinstance(issuer, ProductionCapabilityAuthority) or peer_uid is None: raise fail("UNAUTHORIZED", "unauthorized")
+        return _exchange_bootstrap(service, request, issuer, peer_uid)
+    if not isinstance(body, dict): raise fail("INVALID_REQUEST", "operation body must be an object")
     task_id, resource_id = _scope_for_request(service, operation, body)
-    authorize(request["caller"], request["authorization"], operation, task_id, resource_id, issuer)
+    authorize(request["caller"], request["authorization"], operation, task_id, resource_id, issuer, channel_id=body.get("channel_id"), peer_uid=peer_uid)
     caller, key, correlation_id = request["caller"], request.get("idempotency_key"), request["correlation_id"]
     capability_id, revision = request["authorization"]["capability_id"], request.get("expected_revision")
     if operation == "CreateTask": return service.create_task(caller, key, correlation_id, body, capability_id)
@@ -65,16 +87,14 @@ def dispatch_request(service: ControlPlaneService, request: dict, issuer: Hermet
     raise fail("INVALID_REQUEST", "unsupported operation")
 
 
-def serve(socket_path, database_path, *, issuer=None, stop_event=None, ready_event=None):
-    if issuer is None:
-        raise fail("UNAUTHORIZED", "runtime capability issuer is not configured")
-    path = Path(socket_path)
-    prepare_directory(path.parent)
-    if path.exists():
-        raise fail("REGISTRY_UNAVAILABLE", "socket path already exists")
-    service = ControlPlaneService(database_path)
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(str(path)); os.chmod(path, 0o600); sock.listen(16); sock.settimeout(0.1)
+def serve(socket_path, database_path, *, issuer=None, stop_event=None, ready_event=None, socket_mode: int = 0o600, socket_gid: int | None = None):
+    if issuer is None: raise fail("UNAUTHORIZED", "runtime capability issuer is not configured")
+    path = Path(socket_path); prepare_directory(path.parent)
+    if path.exists(): raise fail("REGISTRY_UNAVAILABLE", "socket path already exists")
+    service = ControlPlaneService(database_path); sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(path)); os.chmod(path, socket_mode)
+    if socket_gid is not None: os.chown(path, -1, socket_gid)
+    sock.listen(16); sock.settimeout(0.1)
     if ready_event: ready_event.set()
     try:
         while not (stop_event and stop_event.is_set()):
@@ -83,17 +103,28 @@ def serve(socket_path, database_path, *, issuer=None, stop_event=None, ready_eve
             with client:
                 correlation_id = "unknown"
                 try:
+                    _, peer_uid, _ = get_peer_credentials(client)
                     request = validate_envelope(recv_frame(client)); correlation_id = request["correlation_id"]
-                    send_frame(client, {"protocol_version": "1.0", "correlation_id": correlation_id, "result": dispatch_request(service, request, issuer)})
+                    send_frame(client, {"protocol_version": "1.0", "correlation_id": correlation_id, "result": dispatch_request(service, request, issuer, peer_uid=peer_uid)})
                 except ControlPlaneError as exc: send_frame(client, exc.envelope(correlation_id))
                 except (KeyError, TypeError, ValueError): send_frame(client, fail("INVALID_REQUEST", "invalid request").envelope(correlation_id))
     finally:
         sock.close(); service.close(); path.unlink(missing_ok=True)
 
 
+def _production_issuer() -> ProductionCapabilityAuthority:
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not directory: raise fail("UNAUTHORIZED", "credential unavailable")
+    try: uid = pwd.getpwnam("megabrain-hermes").pw_uid
+    except KeyError: raise fail("UNAUTHORIZED", "credential unavailable")
+    return ProductionCapabilityAuthority.from_credential_directory(directory, expected_peer_uid=uid)
+
+
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument("--socket", required=True); parser.add_argument("--database", required=True)
-    args = parser.parse_args(); serve(args.socket, args.database)
+    parser = argparse.ArgumentParser(); parser.add_argument("--socket", required=True); parser.add_argument("--database", required=True); args = parser.parse_args()
+    try: group_id = grp.getgrnam("megabrain-control-plane-clients").gr_gid
+    except KeyError: raise SystemExit("Control Plane group unavailable")
+    serve(args.socket, args.database, issuer=_production_issuer(), socket_mode=0o660, socket_gid=group_id)
 
 
 if __name__ == "__main__": main()
