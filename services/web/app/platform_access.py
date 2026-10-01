@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import quote, urlsplit, urlunsplit
 
+import httpx
 from fastapi import APIRouter, Depends
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from app.auth.dependencies import require_owner_session
 from app.auth.repository import SessionIdentity
@@ -25,6 +26,8 @@ PAPERCLIP_HANDOFF_AUDIENCE = "paperclip-cockpit"
 PAPERCLIP_HANDOFF_EXCHANGE_PATH = "/api/auth/megabrain-handoff/exchange"
 _PAPERCLIP_HANDOFF_DOMAIN = b"megabrain:paperclip-handoff:v1"
 _CACHE_CONTROL = "no-store, private"
+_PAPERCLIP_HEALTH_PATH = "/api/health"
+_PAPERCLIP_HEALTH_TIMEOUT_SECONDS = 2.0
 
 
 class PaperclipHandoffConfigurationError(RuntimeError):
@@ -180,6 +183,35 @@ def _launch_error() -> Response:
 
 
 platform_router = APIRouter()
+
+
+def paperclip_is_available(settings: PaperclipHandoffSettings) -> bool:
+    try:
+        response = httpx.get(
+            f"{settings.public_origin}{_PAPERCLIP_HEALTH_PATH}",
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+            timeout=_PAPERCLIP_HEALTH_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError:
+        return False
+
+    return response.status_code == 200
+
+
+@platform_router.get("/api/platform/paperclip/status")
+def paperclip_status(
+    _owner: SessionIdentity = Depends(require_owner_session),
+) -> Response:
+    try:
+        available = paperclip_is_available(load_handoff_settings())
+    except PaperclipHandoffConfigurationError:
+        available = False
+
+    return JSONResponse(
+        {"available": available},
+        headers={"Cache-Control": _CACHE_CONTROL},
+    )
 
 
 @platform_router.post("/api/platform/paperclip/launch")

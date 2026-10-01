@@ -134,6 +134,81 @@ def test_launch_requires_owner_session_before_issuing_ticket(monkeypatch) -> Non
     assert response.json() == {"detail": "Authentication required"}
 
 
+def test_status_requires_owner_session_before_probing_paperclip(monkeypatch) -> None:
+    monkeypatch.setattr(dependencies.repository, "resolve_session", lambda *_: None)
+    monkeypatch.setattr(
+        platform_access,
+        "load_handoff_settings",
+        lambda: pytest.fail("must not load handoff config without an owner session"),
+    )
+    client = TestClient(main.app, base_url="https://testserver")
+
+    response = client.get("/api/platform/paperclip/status")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication required"}
+
+
+def test_status_reports_real_health_probe_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dependencies.repository,
+        "resolve_session",
+        lambda *_: repository.SessionIdentity(7, "owner@example.com"),
+    )
+    monkeypatch.setattr(platform_access, "load_handoff_settings", _settings)
+    observed: dict[str, object] = {}
+
+    def healthy_probe(url: str, **kwargs: object):
+        observed["url"] = url
+        observed.update(kwargs)
+        return platform_access.httpx.Response(200)
+
+    monkeypatch.setattr(platform_access.httpx, "get", healthy_probe)
+    client = TestClient(main.app, base_url="https://testserver")
+    client.cookies.set(config.SESSION_COOKIE_NAME, "valid-owner-session")
+
+    response = client.get("/api/platform/paperclip/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"available": True}
+    assert response.headers["cache-control"] == "no-store, private"
+    assert observed == {
+        "url": "https://paperclip.midelim.tech/api/health",
+        "headers": {"Accept": "application/json"},
+        "follow_redirects": False,
+        "timeout": 2.0,
+    }
+
+
+def test_status_fails_closed_for_configuration_or_probe_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dependencies.repository,
+        "resolve_session",
+        lambda *_: repository.SessionIdentity(7, "owner@example.com"),
+    )
+    client = TestClient(main.app, base_url="https://testserver")
+    client.cookies.set(config.SESSION_COOKIE_NAME, "valid-owner-session")
+
+    monkeypatch.setattr(
+        platform_access,
+        "load_handoff_settings",
+        lambda: (_ for _ in ()).throw(
+            PaperclipHandoffConfigurationError("sensitive-config-detail")
+        ),
+    )
+    assert client.get("/api/platform/paperclip/status").json() == {"available": False}
+
+    monkeypatch.setattr(platform_access, "load_handoff_settings", _settings)
+    monkeypatch.setattr(
+        platform_access.httpx,
+        "get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            platform_access.httpx.ConnectError("offline")
+        ),
+    )
+    assert client.get("/api/platform/paperclip/status").json() == {"available": False}
+
+
 def test_launch_requires_csrf_for_valid_owner(monkeypatch) -> None:
     monkeypatch.setattr(
         dependencies.repository,
