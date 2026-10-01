@@ -18,6 +18,8 @@ test(
     const online = render(true);
     const unavailable = render(false);
 
+    assert.match(online, /Entrega controlada/);
+    assert.match(online, /revisão e aprovação antes de qualquer promoção/);
     assert.match(online, /Paperclip online/);
     assert.match(unavailable, /Indisponível/);
     assert.match(online, /Abrir Paperclip/);
