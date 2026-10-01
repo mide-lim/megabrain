@@ -45,6 +45,14 @@ n8n.midelim.tech {
 		reverse_proxy frontend:3000
 	}
 
+	handle /development {
+		reverse_proxy frontend:3000
+	}
+
+	handle /development/* {
+		reverse_proxy frontend:3000
+	}
+
 	handle /settings {
 		reverse_proxy frontend:3000
 	}
@@ -72,4 +80,8 @@ n8n.midelim.tech {
 	handle {
 		reverse_proxy web:8000
 	}
+}
+
+paperclip.midelim.tech {
+	reverse_proxy paperclip:13100
 }

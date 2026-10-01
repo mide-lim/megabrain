@@ -145,6 +145,94 @@ services:
       retries: 3
       start_period: 20s
 
+
+  paperclip:
+    build:
+      context: .
+      dockerfile: Dockerfile.paperclip
+    image: megabrain-paperclip-runtime:node26
+    container_name: megabrain-paperclip
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    group_add:
+      - "1002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
+    command:
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/start-paperclip.sh
+    env_file:
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/runtime.env
+    environment:
+      HOME: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/home
+      CODEX_HOME: /home/megabrain-hermes/.codex
+      SSL_CERT_FILE: /run/host-ca/ca-certificates.crt
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAPERCLIP_DB_HOST: postgres
+      PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_API_URL: http://127.0.0.1:13100
+      PAPERCLIP_MCP_GATEWAY_URL: http://paperclip-mcp-runtime:13101
+    volumes:
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod:/home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod
+      - /home/megabrain-hermes/.codex:/home/megabrain-hermes/.codex
+      - /etc/ssl/certs/ca-certificates.crt:/run/host-ca/ca-certificates.crt:ro
+      - /home/megabrain-hermes/workspace/v2-o1b-paperclip-native-baseline:/workspace/megabrain
+      - /home/megabrain-hermes/workspace/megabrain/.git:/home/megabrain-hermes/workspace/megabrain/.git
+      - /srv/megabrain/deploy-candidates:/deploy-candidates
+    expose:
+      - "13100"
+    networks:
+      - megabrain-network
+
+  paperclip-mcp-runtime:
+    image: megabrain-paperclip-runtime:node26
+    container_name: megabrain-paperclip-mcp-runtime
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    group_add:
+      - "1002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source/server
+    command:
+      - /opt/megabrain/start-paperclip-mcp-runtime-worker.sh
+    env_file:
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/mcp-worker.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAPERCLIP_DB_HOST: postgres
+      PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_MCP_WORKER_BIND: 0.0.0.0
+      PAPERCLIP_MCP_WORKER_PORT: "13101"
+      PAPERCLIP_TRUSTED_MCP_RUNTIME_HOST: paperclip-mcp-runtime
+    volumes:
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:ro
+      - ./start-paperclip-mcp-runtime-worker.sh:/opt/megabrain/start-paperclip-mcp-runtime-worker.sh:ro
+    expose:
+      - "13101"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:13101/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    networks:
+      - megabrain-network
+
   web:
     build:
       context: ../services/web
@@ -172,6 +260,8 @@ services:
       N8N_TO_WEB_INGESTION_KEY: ${N8N_TO_WEB_INGESTION_KEY}
       WEB_TO_N8N_DISPATCH_KEY: ${WEB_TO_N8N_DISPATCH_KEY}
       WEB_TO_N8N_DISPATCH_URL: ${WEB_TO_N8N_DISPATCH_URL}
+      PAPERCLIP_COCKPIT_PUBLIC_URL: ${PAPERCLIP_COCKPIT_PUBLIC_URL}
+      PAPERCLIP_HANDOFF_SECRET: ${PAPERCLIP_HANDOFF_SECRET}
     networks:
       - megabrain-network
     healthcheck:
