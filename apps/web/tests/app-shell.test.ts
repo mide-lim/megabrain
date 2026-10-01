@@ -13,21 +13,32 @@ function render(pathname: "/inbox" | "/library" | "/categories" | "/development"
   );
 }
 
-test("authenticated app shell provides navigation, safe owner presence, and a functional add Reel action", () => {
+test("authenticated app shell groups Reel navigation, preserves independent routes, and provides accessible add Reel actions", () => {
   const markup = render();
 
-  for (const label of ["Inbox", "Biblioteca", "Categorias", "Desenvolvimento", "Configurações"]) {
+  for (const label of ["Inbox", "Biblioteca", "Categorias", "Desenvolvimento", "Configuração"]) {
     assert.match(markup, new RegExp(`>${label}<`));
   }
+  assert.match(markup, /<section[^>]+aria-labelledby="reels-navigation-sidebar"[\s\S]*?<h2[^>]+id="reels-navigation-sidebar">Reels<\/h2>[\s\S]*?href="\/inbox"[\s\S]*?href="\/library"[\s\S]*?href="\/categories"[\s\S]*?>Adicionar Reel</);
+  assert.match(markup, /<section[^>]+aria-labelledby="reels-navigation-mobile"[\s\S]*?<h2[^>]+id="reels-navigation-mobile">Reels<\/h2>[\s\S]*?href="\/inbox"[\s\S]*?href="\/library"[\s\S]*?href="\/categories"[\s\S]*?>Adicionar Reel</);
   assert.match(markup, /very-long-owner-address@example\.megabrain\.test/);
-  assert.match(markup, /aria-current="page"/);
+  assert.match(markup, /<a[^>]+aria-current="page"[^>]+href="\/inbox"/);
+  assert.doesNotMatch(markup, /<a[^>]+aria-current="page"[^>]+href="\/(?:library|categories|development|settings)"/);
   assert.match(markup, />\+ Adicionar Reel</);
-  assert.match(markup, /<dialog[^>]+aria-labelledby="add-reel-title"/);
+  assert.match(markup, />Adicionar Reel</);
+  const dialogLabels = [...markup.matchAll(/<dialog[^>]+aria-labelledby="([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(dialogLabels.length >= 2);
+  assert.equal(new Set(dialogLabels).size, dialogLabels.length);
+  for (const dialogLabel of dialogLabels) {
+    assert.match(markup, new RegExp(`<h2[^>]+id="${dialogLabel}">Adicionar Reel<`));
+  }
   assert.match(markup, /Cole o link público de um Reel do Instagram/);
   assert.doesNotMatch(markup, /Em breve|add-reel-deferred/);
   assert.match(markup, />Sair</);
   assert.match(markup, /href="\/library"/);
+  assert.match(markup, /href="\/categories"/);
   assert.match(markup, /href="\/development"/);
+  assert.match(markup, /href="\/settings"/);
   assert.doesNotMatch(markup, /href="#"/);
 });
 

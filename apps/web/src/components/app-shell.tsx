@@ -12,12 +12,15 @@ type AppShellProps = {
   pathname: AppPath;
 };
 
-const navigation: ReadonlyArray<{ href: AppPath; label: string }> = [
+const reelNavigation: ReadonlyArray<{ href: AppPath; label: string }> = [
   { href: "/inbox", label: "Inbox" },
   { href: "/library", label: "Biblioteca" },
   { href: "/categories", label: "Categorias" },
+];
+
+const primaryNavigation: ReadonlyArray<{ href: AppPath; label: string }> = [
   { href: "/development", label: "Desenvolvimento" },
-  { href: "/settings", label: "Configurações" },
+  { href: "/settings", label: "Configuração" },
 ];
 
 function Brand() {
@@ -30,21 +33,36 @@ function Brand() {
 }
 
 function Navigation({ pathname, compact = false }: { pathname: AppPath; compact?: boolean }) {
+  const itemClassName = (active: boolean) =>
+    `inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${compact ? "shrink-0" : "w-full"} ${active ? "bg-accent text-primary" : "text-muted hover:bg-accent hover:text-foreground"}`;
+  const reelsLabelId = compact ? "reels-navigation-mobile" : "reels-navigation-sidebar";
+
   return (
-    <nav aria-label="Navegação principal" className={compact ? "flex gap-1 overflow-x-auto pb-1" : "space-y-1"}>
-      {navigation.map((item) => {
-        const active = pathname === item.href;
-        return (
-          <a
-            aria-current={active ? "page" : undefined}
-            className={`inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${compact ? "shrink-0" : "w-full"} ${active ? "bg-accent text-primary" : "text-muted hover:bg-accent hover:text-foreground"}`}
-            href={item.href}
-            key={item.href}
-          >
-            {item.label}
-          </a>
-        );
-      })}
+    <nav aria-label="Navegação principal" className={compact ? "flex gap-3 overflow-x-auto pb-1" : "space-y-5"}>
+      <section aria-labelledby={reelsLabelId} className={compact ? "flex shrink-0 items-center gap-1" : "space-y-1"}>
+        <h2 className={compact ? "sr-only" : "px-3 text-xs font-semibold uppercase tracking-wide text-muted"} id={reelsLabelId}>
+          Reels
+        </h2>
+        {reelNavigation.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <a aria-current={active ? "page" : undefined} className={itemClassName(active)} href={item.href} key={item.href}>
+              {item.label}
+            </a>
+          );
+        })}
+        <AddReel label="Adicionar Reel" triggerClassName={itemClassName(false)} />
+      </section>
+      <div className={compact ? "flex shrink-0 items-center gap-1" : "space-y-1"}>
+        {primaryNavigation.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <a aria-current={active ? "page" : undefined} className={itemClassName(active)} href={item.href} key={item.href}>
+              {item.label}
+            </a>
+          );
+        })}
+      </div>
     </nav>
   );
 }

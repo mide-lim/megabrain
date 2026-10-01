@@ -185,7 +185,7 @@ function button(document: Document, name: string): HTMLButtonElement {
 }
 
 function input(document: Document): HTMLInputElement {
-  const element = document.querySelector<HTMLInputElement>("#add-reel-url");
+  const element = document.querySelector<HTMLInputElement>('input[name="url"][type="url"]');
   assert.ok(element, "missing URL input");
   return element;
 }
@@ -426,10 +426,16 @@ test("Add Reel shows an accessible error, restores focus, and resets after close
     await submit(rendered.document);
 
     const urlInput = input(rendered.document);
-    const error = rendered.document.querySelector("#add-reel-url-error[role='alert']");
-    assert.ok(error, "missing stable error alert");
+    const error = rendered.document.querySelector<HTMLElement>("[role='alert']");
+    assert.ok(error, "missing error alert");
     assert.equal(urlInput.getAttribute("aria-invalid"), "true");
-    assert.equal(urlInput.getAttribute("aria-describedby"), "add-reel-help add-reel-url-error");
+    const describedBy = urlInput.getAttribute("aria-describedby")?.split(" ");
+    assert.ok(describedBy && describedBy.length === 2, "input must describe its help and error messages");
+    const [helpId, errorId] = describedBy;
+    assert.ok(helpId?.startsWith("add-reel-help-"), "missing instance-specific help ID");
+    assert.ok(errorId?.startsWith("add-reel-url-error-"), "missing instance-specific error ID");
+    assert.equal(rendered.document.getElementById(helpId)?.textContent, "Cole o link público de um Reel do Instagram.");
+    assert.equal(error.id, errorId);
     assert.equal(rendered.document.activeElement, urlInput);
 
     await click(button(rendered.document, "Cancelar"));
@@ -437,8 +443,8 @@ test("Add Reel shows an accessible error, restores focus, and resets after close
     await click(button(rendered.document, "+ Adicionar Reel"));
     assert.equal(input(rendered.document).value, "");
     assert.equal(input(rendered.document).getAttribute("aria-invalid"), null);
-    assert.equal(input(rendered.document).getAttribute("aria-describedby"), "add-reel-help");
-    assert.equal(rendered.document.querySelector("#add-reel-url-error"), null);
+    assert.equal(input(rendered.document).getAttribute("aria-describedby"), helpId);
+    assert.equal(rendered.document.getElementById(errorId), null);
   } finally {
     globalThis.fetch = previousFetch;
     await rendered.cleanup();
