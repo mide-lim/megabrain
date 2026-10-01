@@ -135,11 +135,60 @@ def wait_healthy(name, timeout=90):
         time.sleep(2)
     return False
 
-def rebuild():
-    run(["docker", "compose", "up", "-d", "--build", "web", "frontend"],
+def affected_services(raw):
+    """Return the smallest safe compose service set implied by a git-format patch."""
+    services = set()
+    saw_diff = False
+    unknown_path = False
+    for raw_line in raw.splitlines():
+        if not raw_line.startswith(b"diff --git a/"):
+            continue
+        saw_diff = True
+        try:
+            line = raw_line.decode("utf-8", errors="strict")
+            left = line.split(" ", 3)[2]
+            path = left[2:] if left.startswith("a/") else left
+        except (UnicodeDecodeError, IndexError):
+            unknown_path = True
+            continue
+
+        if path.startswith("apps/web/"):
+            services.add("frontend")
+        elif path.startswith("services/web/"):
+            services.add("web")
+        elif path.startswith("infra/"):
+            services.update(("web", "frontend"))
+        else:
+            # A new or unknown path may affect either image through Docker COPY
+            # or runtime wiring. Fail conservative rather than guessing.
+            unknown_path = True
+
+    if not saw_diff or unknown_path or not services:
+        return ("web", "frontend")
+    return tuple(name for name in ("web", "frontend") if name in services)
+
+
+def rebuild(services):
+    services = tuple(services)
+    if not services:
+        raise DeployError("no services selected for rebuild", 500)
+    run(["docker", "compose", "up", "-d", "--build", *services],
         cwd=INFRA, timeout=240)
-    if not wait_healthy("megabrain-web") or not wait_healthy("megabrain-frontend"):
-        raise DeployError("web/frontend did not become healthy", 500)
+
+    health_targets = {
+        "web": "megabrain-web",
+        "frontend": "megabrain-frontend",
+    }
+    unhealthy = [
+        health_targets[service]
+        for service in services
+        if not wait_healthy(health_targets[service])
+    ]
+    if unhealthy:
+        raise DeployError(
+            "rebuilt services did not become healthy: " + ", ".join(unhealthy),
+            500,
+        )
 
 def smoke():
     dev = public_status("https://megabrain.midelim.tech/development")
@@ -174,6 +223,7 @@ def deploy(issue, commit, patch_file):
     m = PATCH_HEAD_RE.match(raw)
     if not m or m.group(1).decode() != commit:
         raise DeployError("patch header does not match requested commit")
+    services = affected_services(raw)
 
     gate = accepted_gate(issue, commit)
     if not gate:
@@ -206,15 +256,18 @@ def deploy(issue, commit, patch_file):
         }
         save_state(state)
 
+        rebuild_started = False
         try:
             run(["git", "am", str(patch)], cwd=PROD)
             deployed = run(["git", "rev-parse", "HEAD"], cwd=PROD).stdout.strip()
-            rebuild()
+            rebuild_started = True
+            rebuild(services)
             evidence = smoke()
             result = {
                 "status": "succeeded", "issue": issue, "sourceCommit": commit,
                 "deployedCommit": deployed, "rollback": rollback,
                 "approvalInteractionId": gate, "evidence": evidence,
+                "rebuiltServices": list(services),
                 "finishedAt": int(time.time())
             }
             state["approvals"][gate] = result
@@ -224,14 +277,20 @@ def deploy(issue, commit, patch_file):
             run(["git", "am", "--abort"], cwd=PROD, check=False)
             run(["git", "reset", "--hard", rollback], cwd=PROD, check=False)
             try:
-                rebuild()
+                # If the failure happened before compose was touched, the
+                # running containers are still the rollback runtime. Rebuilding
+                # them is both unnecessary and slow.
+                if rebuild_started:
+                    rebuild(services)
                 rb_smoke = smoke()
             except Exception as rb_exc:
                 rb_smoke = {"rollbackSmokeError": str(rb_exc)}
             state["approvals"][gate] = {
                 "status": "failed", "issue": issue, "commit": commit,
                 "rollback": rollback, "error": str(exc),
-                "rollbackEvidence": rb_smoke, "finishedAt": int(time.time())
+                "rollbackEvidence": rb_smoke,
+                "rebuiltServices": list(services),
+                "finishedAt": int(time.time())
             }
             save_state(state)
             raise DeployError(f"deploy failed and rollback attempted: {exc}", 500)

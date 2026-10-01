@@ -74,5 +74,26 @@ class GateContractTest(unittest.TestCase):
         gate["payload"]["target"]["key"] = "other-capability"
         self.assertFalse(deploy.gate_matches(gate, ISSUE, COMMIT))
 
+    def test_frontend_only_patch_selects_frontend(self):
+        raw = b"diff --git a/apps/web/src/app/development/page.tsx b/apps/web/src/app/development/page.tsx\n"
+        self.assertEqual(deploy.affected_services(raw), ("frontend",))
+
+    def test_backend_only_patch_selects_web(self):
+        raw = b"diff --git a/services/web/app/main.py b/services/web/app/main.py\n"
+        self.assertEqual(deploy.affected_services(raw), ("web",))
+
+    def test_mixed_web_patch_selects_both(self):
+        raw = (
+            b"diff --git a/apps/web/src/app/page.tsx b/apps/web/src/app/page.tsx\n"
+            b"diff --git a/services/web/app/main.py b/services/web/app/main.py\n"
+        )
+        self.assertEqual(deploy.affected_services(raw), ("web", "frontend"))
+
+    def test_infra_or_unknown_patch_fails_conservative_to_both(self):
+        infra = b"diff --git a/infra/docker-compose.yml b/infra/docker-compose.yml\n"
+        docs = b"diff --git a/docs/README.md b/docs/README.md\n"
+        self.assertEqual(deploy.affected_services(infra), ("web", "frontend"))
+        self.assertEqual(deploy.affected_services(docs), ("web", "frontend"))
+
 if __name__ == "__main__":
     unittest.main()
