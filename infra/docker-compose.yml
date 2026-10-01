@@ -173,6 +173,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PAPERCLIP_DB_HOST: postgres
       PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_API_URL: http://paperclip-tool-worker:13101
     volumes:
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
@@ -184,6 +185,50 @@ services:
       - /srv/megabrain/deploy-candidates:/deploy-candidates
     expose:
       - "13100"
+    networks:
+      - megabrain-network
+
+
+  paperclip-tool-worker:
+    image: megabrain-paperclip-runtime:node26
+    container_name: megabrain-paperclip-tool-worker
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    group_add:
+      - "1002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
+    command:
+      - /opt/megabrain/start-paperclip-tool-worker.sh
+    env_file:
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/runtime.env
+    environment:
+      HOME: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/tool-worker/home
+      SSL_CERT_FILE: /run/host-ca/ca-certificates.crt
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAPERCLIP_DB_HOST: postgres
+      PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_API_URL: http://paperclip-tool-worker:13101
+      PORT: "13101"
+      SERVE_UI: "false"
+      HEARTBEAT_SCHEDULER_ENABLED: "false"
+      PAPERCLIP_DB_BACKUP_ENABLED: "false"
+      PAPERCLIP_ANNOUNCEMENTS_ENABLED: "false"
+      PAPERCLIP_UI_DEV_MIDDLEWARE: "false"
+      PAPERCLIP_TRUSTED_MCP_RUNTIME_HOST: paperclip-tool-worker
+      PAPERCLIP_ALLOWED_HOSTNAMES: paperclip-tool-worker,paperclip,paperclip.midelim.tech
+    volumes:
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:ro
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod:/home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod
+      - /etc/ssl/certs/ca-certificates.crt:/run/host-ca/ca-certificates.crt:ro
+      - ./start-paperclip-tool-worker.sh:/opt/megabrain/start-paperclip-tool-worker.sh:ro
+    expose:
+      - "13101"
     networks:
       - megabrain-network
 
