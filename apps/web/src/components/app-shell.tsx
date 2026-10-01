@@ -4,7 +4,7 @@ import type { OwnerSession } from "../lib/auth/session";
 import { AddReel } from "./add-reel";
 import { LogoutButton } from "./logout-button";
 
-type AppPath = "/inbox" | "/library" | "/categories" | "/settings";
+type AppPath = "/inbox" | "/library" | "/categories" | "/development" | "/settings";
 
 type AppShellProps = {
   children?: ReactNode;
@@ -16,6 +16,7 @@ const navigation: ReadonlyArray<{ href: AppPath; label: string }> = [
   { href: "/inbox", label: "Inbox" },
   { href: "/library", label: "Biblioteca" },
   { href: "/categories", label: "Categorias" },
+  { href: "/development", label: "Desenvolvimento" },
   { href: "/settings", label: "Configurações" },
 ];
 

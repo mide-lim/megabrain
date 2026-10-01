@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { AppShell } from "../src/components/app-shell";
 
-function render(pathname: "/inbox" | "/library" | "/categories" | "/settings" = "/inbox"): string {
+function render(pathname: "/inbox" | "/library" | "/categories" | "/development" | "/settings" = "/inbox"): string {
   return renderToStaticMarkup(
     createElement(AppShell, { owner: { email: "very-long-owner-address@example.megabrain.test" }, pathname }, createElement("p", null, "Conteúdo")),
   );
@@ -16,7 +16,7 @@ function render(pathname: "/inbox" | "/library" | "/categories" | "/settings" = 
 test("authenticated app shell provides navigation, safe owner presence, and a functional add Reel action", () => {
   const markup = render();
 
-  for (const label of ["Inbox", "Biblioteca", "Categorias", "Configurações"]) {
+  for (const label of ["Inbox", "Biblioteca", "Categorias", "Desenvolvimento", "Configurações"]) {
     assert.match(markup, new RegExp(`>${label}<`));
   }
   assert.match(markup, /very-long-owner-address@example\.megabrain\.test/);
@@ -27,7 +27,24 @@ test("authenticated app shell provides navigation, safe owner presence, and a fu
   assert.doesNotMatch(markup, /Em breve|add-reel-deferred/);
   assert.match(markup, />Sair</);
   assert.match(markup, /href="\/library"/);
+  assert.match(markup, /href="\/development"/);
   assert.doesNotMatch(markup, /href="#"/);
+});
+
+test("Paperclip launch bootstraps CSRF then submits the existing handoff endpoint as a browser form", async () => {
+  const source = await readFile(new URL("../src/components/open-paperclip-button.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /fetchCsrfToken\(\)/);
+  assert.match(source, /form\.action = "\/api\/platform\/paperclip\/launch"/);
+  assert.match(source, /form\.method = "POST"/);
+  assert.match(source, /csrfInput\.name = "csrf_token"/);
+  assert.match(source, /csrfInput\.value = csrfToken/);
+  assert.match(source, /document\.body\.append\(form\)/);
+  assert.match(source, /form\.submit\(\)/);
+  assert.match(source, /Abrir Paperclip/);
+  assert.match(source, /disabled=\{pending\}/);
+  assert.match(source, /role="alert"/);
+  assert.doesNotMatch(source, /document\.cookie|localStorage|sessionStorage|X-CSRF-Token/);
 });
 
 test("logout uses FastAPI's CSRF bootstrap and form redirect contract", async () => {
@@ -49,7 +66,7 @@ test("logout uses FastAPI's CSRF bootstrap and form redirect contract", async ()
 });
 
 test("all Next application entry pages require the server owner session", async () => {
-  const files = ["page.tsx", "inbox/page.tsx", "library/page.tsx", "categories/page.tsx", "settings/page.tsx"];
+  const files = ["page.tsx", "inbox/page.tsx", "library/page.tsx", "categories/page.tsx", "development/page.tsx", "settings/page.tsx"];
   const source = await Promise.all(files.map((file) => readFile(new URL(`../src/app/${file}`, import.meta.url), "utf8")));
 
   for (const pageSource of source) {

@@ -16,6 +16,7 @@ from app.auth.config import SESSION_COOKIE_NAME
 from app.auth.dependencies import require_owner_session
 from app.auth.routes import auth_router
 from app.csrf import require_api_csrf
+from app.platform_access import platform_router
 from app.internal_ingestion import (
     INTERNAL_INGESTION_SECURITY_SCHEME,
     router as internal_ingestion_router,
@@ -69,6 +70,7 @@ app = FastAPI(
     swagger_ui_oauth2_redirect_url=None,
 )
 app.include_router(auth_router)
+app.include_router(platform_router)
 app.include_router(internal_ingestion_router)
 
 
