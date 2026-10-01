@@ -187,6 +187,50 @@ services:
     networks:
       - megabrain-network
 
+  paperclip-mcp-runtime:
+    image: megabrain-paperclip-runtime:node26
+    container_name: megabrain-paperclip-mcp-runtime
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    group_add:
+      - "1002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source/server
+    command:
+      - /opt/megabrain/start-paperclip-mcp-runtime-worker.sh
+    env_file:
+      - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/mcp-worker.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PAPERCLIP_DB_HOST: postgres
+      PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_MCP_WORKER_BIND: 0.0.0.0
+      PAPERCLIP_MCP_WORKER_PORT: "13101"
+      PAPERCLIP_TRUSTED_MCP_RUNTIME_HOST: paperclip-mcp-runtime
+    volumes:
+      - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:ro
+      - ./start-paperclip-mcp-runtime-worker.sh:/opt/megabrain/start-paperclip-mcp-runtime-worker.sh:ro
+    expose:
+      - "13101"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:13101/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    networks:
+      - megabrain-network
+
   web:
     build:
       context: ../services/web
