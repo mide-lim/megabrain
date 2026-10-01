@@ -163,6 +163,7 @@ services:
     environment:
       HOME: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/home
       CODEX_HOME: /home/megabrain-hermes/.codex
+      SSL_CERT_FILE: /run/host-ca/ca-certificates.crt
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PAPERCLIP_DB_HOST: postgres
@@ -172,6 +173,7 @@ services:
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod:/home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod
       - /home/megabrain-hermes/.codex:/home/megabrain-hermes/.codex
+      - /etc/ssl/certs/ca-certificates.crt:/run/host-ca/ca-certificates.crt:ro
     expose:
       - "13100"
     networks:
