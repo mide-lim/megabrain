@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import {
@@ -37,9 +37,22 @@ function successMessage(result: ReelCreationSuccess): string {
   return "Este Reel já existe no MegaBrain.";
 }
 
-export function AddReel() {
+type AddReelProps = {
+  label?: string;
+  triggerClassName?: string;
+};
+
+export function AddReel({
+  label = "+ Adicionar Reel",
+  triggerClassName = "min-h-11 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-primary hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+}: AddReelProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const instanceId = useId();
+  const titleId = `add-reel-title-${instanceId}`;
+  const helpId = `add-reel-help-${instanceId}`;
+  const inputId = `add-reel-url-${instanceId}`;
+  const errorId = `add-reel-url-error-${instanceId}`;
   const [url, setUrl] = useState("");
   const [pending, setPending] = useState(false);
   const [success, setSuccess] = useState<ReelCreationSuccess | null>(null);
@@ -93,15 +106,15 @@ export function AddReel() {
   return (
     <>
       <button
-        className="min-h-11 rounded-lg border border-border bg-surface px-4 py-2 text-sm font-semibold text-primary hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        className={triggerClassName}
         onClick={openDialog}
         type="button"
       >
-        + Adicionar Reel
+        {label}
       </button>
 
       <dialog
-        aria-labelledby="add-reel-title"
+        aria-labelledby={titleId}
         className="m-auto max-h-[calc(100dvh-2rem)] w-[min(34rem,calc(100%-2rem))] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/30"
         onCancel={(event) => {
           if (pending) event.preventDefault();
@@ -112,8 +125,8 @@ export function AddReel() {
         <div className="p-6 sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-semibold tracking-tight" id="add-reel-title">Adicionar Reel</h2>
-              <p className="mt-2 text-sm leading-6 text-muted" id="add-reel-help">
+              <h2 className="text-2xl font-semibold tracking-tight" id={titleId}>Adicionar Reel</h2>
+              <p className="mt-2 text-sm leading-6 text-muted" id={helpId}>
                 Cole o link público de um Reel do Instagram.
               </p>
             </div>
@@ -152,14 +165,14 @@ export function AddReel() {
             </section>
           ) : (
             <form aria-busy={pending} className="mt-6" onSubmit={(event) => void submit(event)}>
-              <label className="block text-sm font-semibold" htmlFor="add-reel-url">URL do Reel</label>
+              <label className="block text-sm font-semibold" htmlFor={inputId}>URL do Reel</label>
               <input
-                aria-describedby={error ? "add-reel-help add-reel-url-error" : "add-reel-help"}
+                aria-describedby={error ? `${helpId} ${errorId}` : helpId}
                 aria-invalid={error ? true : undefined}
                 autoComplete="off"
                 className="mt-2 min-h-12 w-full rounded-xl border border-border bg-surface px-4 text-base placeholder:text-muted disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={pending}
-                id="add-reel-url"
+                id={inputId}
                 name="url"
                 onChange={(event) => setUrl(event.target.value)}
                 placeholder="https://www.instagram.com/reel/..."
@@ -176,7 +189,7 @@ export function AddReel() {
               ) : null}
 
               {error ? (
-                <p className="mt-3 text-sm font-semibold text-danger" id="add-reel-url-error" role="alert">
+                <p className="mt-3 text-sm font-semibold text-danger" id={errorId} role="alert">
                   {errorMessages[error]}
                 </p>
               ) : null}
