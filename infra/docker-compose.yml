@@ -173,6 +173,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PAPERCLIP_DB_HOST: postgres
       PAPERCLIP_DB_NAME: paperclip_prod
+      PAPERCLIP_MCP_GATEWAY_URL: http://paperclip-mcp-runtime:13101
     volumes:
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
