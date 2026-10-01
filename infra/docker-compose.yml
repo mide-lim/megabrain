@@ -162,6 +162,7 @@ services:
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/runtime.env
     environment:
       HOME: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/home
+      CODEX_HOME: /home/megabrain-hermes/.codex
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PAPERCLIP_DB_HOST: postgres
@@ -170,6 +171,7 @@ services:
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-c1c-auth-exchange/source
       - /home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:/home/megabrain-hermes/.local/share/megabrain-labs/paperclip/v2-o2-cockpit/tooling:ro
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod:/home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod
+      - /home/megabrain-hermes/.codex:/home/megabrain-hermes/.codex
     expose:
       - "13100"
     networks:
