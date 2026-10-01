@@ -155,6 +155,8 @@ services:
     restart: unless-stopped
     init: true
     user: "1001:1001"
+    group_add:
+      - "1002"
     depends_on:
       postgres:
         condition: service_healthy
@@ -179,6 +181,7 @@ services:
       - /etc/ssl/certs/ca-certificates.crt:/run/host-ca/ca-certificates.crt:ro
       - /home/megabrain-hermes/workspace/v2-o1b-paperclip-native-baseline:/workspace/megabrain
       - /home/megabrain-hermes/workspace/megabrain/.git:/home/megabrain-hermes/workspace/megabrain/.git
+      - /srv/megabrain/deploy-candidates:/deploy-candidates
     expose:
       - "13100"
     networks:
