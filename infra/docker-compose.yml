@@ -147,7 +147,10 @@ services:
 
 
   paperclip:
-    image: node:26-bookworm-slim
+    build:
+      context: .
+      dockerfile: Dockerfile.paperclip
+    image: megabrain-paperclip-runtime:node26
     container_name: megabrain-paperclip
     restart: unless-stopped
     init: true
@@ -174,6 +177,8 @@ services:
       - /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod:/home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod
       - /home/megabrain-hermes/.codex:/home/megabrain-hermes/.codex
       - /etc/ssl/certs/ca-certificates.crt:/run/host-ca/ca-certificates.crt:ro
+      - /home/megabrain-hermes/workspace/v2-o1b-paperclip-native-baseline:/workspace/megabrain
+      - /home/megabrain-hermes/workspace/megabrain/.git:/home/megabrain-hermes/workspace/megabrain/.git
     expose:
       - "13100"
     networks:
