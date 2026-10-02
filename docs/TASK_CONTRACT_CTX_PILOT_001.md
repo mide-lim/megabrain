@@ -21,7 +21,7 @@ processo antes de reformular a UI ou habilitar publicação automática por risc
 
 Usar uma alteração reversível no conteúdo de estado da página /development como
 piloto: somente após registrar o run real e fixar a base. Preservar layout,
-autenticação, links e contratos de API. Definir um texto de estado aceito e testar
+autenticação, links e contratos de API. Texto positivo proposto: “Paperclip online” → “Paperclip disponível”. Testar
 a apresentação com backend de teste, sem disparar jobs, STT ou integrações reais.
 
 Criar checkpoint após preparação; outra sessão deve carregar apenas pacote,
@@ -64,7 +64,8 @@ CSRF e fronteiras. Backend mock de teste não redefine autenticação de produç
 - [page](../apps/web/src/app/development/page.tsx)
 - [conteúdo](../apps/web/src/app/development/development-page-content.tsx)
 - [teste](../apps/web/tests/development.test.ts)
-- pacote/checkpoint/evidências da task; demais arquivos somente se registrados no escopo.
+- [QA visual](../apps/web/e2e/visual-preview.spec.ts): expectativas do mesmo texto.
+- [pacote detalhado](tasks/CTX-PILOT-001/PACKET.md), checkpoint/evidências da task; demais arquivos somente se registrados no escopo.
 
 ## Required Tests / Evidence
 
@@ -88,7 +89,11 @@ Antes de SPEC_READY:
 2. Confirmar lane e autoridade; provisionar AP0 se essa execução depender dele.
 3. Padronizar acesso ao preview e artefatos, com limites/lease pertinentes.
 4. Validar caminho de review/deploy e suas capabilities/gates.
-5. Fixar texto de estado e referência de UX do piloto.
+5. Conferir o texto proposto e a baseline visual do commit que contém a preparação.
+
+Lane proposta para este piloto: adapter Codex nativo do Paperclip, sem migração
+AP0. O pacote detalhado define Run A/Run B e review em sessão distinta; IDs,
+worktree real e base final seguem pendentes da autorização normal de acesso.
 
 Mudanças relevantes de arquitetura, privilégio ou produto exigem decisão humana
 aplicável. Execução de produção usa o gate atual; D022 não o suprime.

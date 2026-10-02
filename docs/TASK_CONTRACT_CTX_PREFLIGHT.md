@@ -47,6 +47,15 @@ Uma verificação Git positiva não aprova execução, produto ou publicação.
 - Testes stdlib passam na VPS; CI valida os testes no candidato publicado.
 - Diff limitado ao escopo e checkpoint atualizado com evidências reais.
 
+## Preparação do piloto — autorização de 2026-10-02
+
+O escopo desta manutenção passa a incluir o preview já preparado: scripts
+fixtures/run/serve, configuração Playwright, 12 casos E2E, scripts npm, lock
+com Playwright pinado, worker de build condicionado ao QA e workflow visual.
+Next/React e fontes do produto permanecem na baseline. Pacote do piloto e
+checkpoint de preparação registram a lane nativa e a autorização board pendente.
+Essa preparação não implementa o texto nem executa uma tarefa Paperclip sem IDs.
+
 ## Próximo passo e dependências
 
 Revisar este candidato e habilitar acesso autorizado à API da tarefa Paperclip.

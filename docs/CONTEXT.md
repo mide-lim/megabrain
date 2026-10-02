@@ -164,6 +164,11 @@ Artefatos visuais ficam referenciados por metadados; busca textual não substitu
 Embeddings locais podem evitar cobrança de API, mas consomem recursos; não assumir instalação ou economia comprovada.
 Não é requisito de disponibilidade do executor: falha do índice permite buscar/ler fontes diretamente.
 
+Preparação do primeiro ciclo: [pacote CTX-PILOT-001](tasks/CTX-PILOT-001/PACKET.md)
+e [preview/QA](VISUAL_PREVIEW_QA.md), com estado e limites no
+[checkpoint](../evidence/context-handoffs/pilot-preparation-20261002.md).
+O acesso board do CLI exige a autorização normal do proprietário.
+
 ## 9. Fontes e limites
 
 - [AP0 runtime ownership](platform/autonomy/AP0_RUNTIME_OWNERSHIP_CONTRACT.md)

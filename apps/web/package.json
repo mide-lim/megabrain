@@ -8,7 +8,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "preview:visual": "node ../../tools/visual-preview/serve.mjs",
+    "qa:visual": "node ../../tools/visual-preview/run.mjs"
   },
   "dependencies": {
     "next": "16.3.4",
@@ -26,6 +28,7 @@
     "jsdom": "26.1.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.13",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "@playwright/test": "1.63.0"
   }
 }
