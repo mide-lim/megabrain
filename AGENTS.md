@@ -9,33 +9,43 @@ project.
 
 ## Roles
 
+The accepted engineering direction is recorded in D022 in docs/DECISIONS.md.
+Paperclip is the task planning and tracking surface. Runtime authority remains
+with the existing native adapter or AP0 contract selected for that task; this
+document does not migrate registry records or grant additional capabilities.
+
+### Task owner / planner
+
+One accountable owner prepares the Task Contract and its compact Task Packet,
+resolves material ambiguities, selects the permitted executor, and links the
+worktree, base commit, checkpoints, review, and release evidence to the task.
+Paperclip is a platform, not the model that makes these planning decisions.
+
 ### Hermes
 
-Hermes acts as the coordinator.
-
-Responsibilities:
-
-- understand the requested objective;
-- inspect the current project state;
-- break work into small tasks;
-- delegate implementation work to Codex when appropriate;
-- review Codex output;
-- verify Git status and diffs;
-- report risks and results to the user.
-
-Hermes should not silently replace Codex when a task was explicitly delegated
-to Codex.
+Hermes is the preferred executor for integrations, research, and automations
+under the assigned task. Existing AP0 coordinator processes remain bounded
+runtime components under their contracts until an explicit validated migration.
+Hermes must not create a competing task queue or become the only durable store
+of engineering context.
 
 ### Codex
 
-Codex acts as the implementation worker.
+Codex is the preferred implementation worker for scoped code changes. It reads
+the task packet, applicable instructions and accepted decisions, verifies the
+Git context, implements, validates, and records evidence and checkpoints.
 
-Responsibilities:
+### Reviewer
 
-- inspect the relevant code;
-- implement the requested scoped change;
-- run appropriate tests and validations;
-- report files changed and commands executed.
+Review runs in a separate session and evaluates the original objective,
+candidate revision, acceptance criteria and evidence. A summary from the author
+is not sufficient review evidence. Design review compares against the accepted
+visual reference. Automated tests do not establish visual product approval.
+
+Initially only one implementation is active. Specialist skills are invoked
+when scope or risk calls for them; do not create permanent agents for every role.
+At most two distinct correction attempts are made for the same blocker before
+checkpointing and escalating. A quota pause preserves state before resumption.
 
 ## Git Workflow
 
@@ -106,8 +116,9 @@ Do not introduce unrelated refactoring.
 Project context is maintained under `docs/`.
 
 Start context discovery with `docs/CONTEXT.md`; it maps current references,
-known drift, and the proposed task-packet/resumption workflow. Distinguish its
-proposals from accepted policy. It grants no new runtime or production authority.
+known drift, accepted direction D022, and the task-packet/resumption workflow.
+Distinguish chosen direction from deployed capability. It grants no new runtime
+or production authority.
 
 When available, consult:
 

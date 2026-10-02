@@ -104,7 +104,7 @@ As restrições de produção e privilégios desta decisão permanecem válidas.
 
 ## D013 — Governança de engenharia orientada a risco e evidência
 
-**Status:** aceita
+**Status:** aceita; papel organizacional de Hermes parcialmente substituído por D022
 
 Hermes evolui para Engineering Orchestrator: coordena o estado, o planejamento,
 a implementação, a revisão independente e as evidências, sem concentrar
@@ -208,3 +208,79 @@ A sessão `__Host-mb_session` é local e opaca. CSRF continua obrigatório em to
 requisição cookie-autenticada que altere estado, incluindo mutações JSON de
 categoria e logout. D009 e D010 são preservadas como decisões históricas e são
 substituídas por esta decisão para a arquitetura atual.
+
+## D022 — Orquestração com contexto durável e entrega verificável
+
+**Status:** aceita como direção de arquitetura em 2026-10-01; adoção operacional pendente.
+**Origem:** escolhas 1–14 de Michel e instrução para prosseguir com a fundação.
+**Relação:** substitui o papel organizacional de coordenador exclusivo do Hermes em D013;
+preserva D014, D015, separação SDD/UX de D016 e fronteiras atuais D012/D017/D020/D021.
+
+### Contexto
+
+Tarefas e expectativas ficaram distribuídas entre conversa, IDE, Paperclip,
+docs históricas e runtime AP0. A MEG-4 mostrou que testes de agrupamento não
+preservavam suficientemente a intenção visual. Modelos configurados não
+comprovam retomada, revisão e publicação ponta a ponta.
+
+### Decisão
+
+| Escolha | Regra aceita |
+|---|---|
+| 1 A | Autonomia dentro do escopo/ADRs; propor mudanças materiais antes de adotá-las. |
+| 2 A | Paperclip acompanha; Codex concentra código; Hermes integrações, pesquisa e automações. |
+| 3 A | Uma implementação ativa inicialmente; review em outra sessão. |
+| 4 A | Responsável escreve o pacote a partir da intenção; esclarecer dúvidas que alteram aceite. |
+| 5 A+B | Contexto essencial + arc42 completo e C4 da arquitetura real, com detalhes proporcionais. |
+| 6 A | CocoIndex após organizar fontes e medir lacunas de recuperação. |
+| 7 A | Checkpoint em marcos, bloqueios/handoff e periodicamente no trabalho longo. |
+| 8 A+B | Proposta navegável e imagens anotadas antes da implementação completa de UI. |
+| 9 A | Preview separado na VPS, com capacidade/isolamento e URL verificados. |
+| 10 A | Dados/serviços de teste; teste controlado para integração real. |
+| 11 A | Automação e reviewer em outra sessão; referência visual integra o aceite. |
+| 12 A | Publicação de baixo risco automática após um ciclo completo e política/capability validadas. |
+| 13 A | Duas tentativas distintas por bloqueio; checkpoint e escalada; quota pausa a execução. |
+| 14 A | Tarefa/PR mostram responsável, etapa, progresso, bloqueio, preview, evidências e release. |
+
+GitHub preserva código, docs, decisões e evidências. Paperclip vincula essas
+fontes à tarefa. Task Packet projeta TASK_CONTRACT.md e o contrato do executor;
+não cria outro schema AP0. Cada checkpoint identifica escritor e fonte canônicos.
+AP0 continua dono dos registros AP0 até cutover explícito e validado.
+
+### Alternativas consideradas
+
+- Hermes como coordenador organizacional exclusivo: aproveita o histórico,
+  mas contraria o painel/fluxo escolhidos; seu componente AP0 fica preservado
+  no escopo de infraestrutura durante a transição.
+- Indexação e vários agentes permanentes desde o início: acrescentam dependências
+  e consumo antes de medir gargalos; adiados.
+- Vercel para preview inicial: reduz manutenção do frontend, mas acrescenta
+  outro ambiente e condições de plano; escolhida a VPS.
+- Apenas conversa, README ou testes do autor: insuficientes para retomada e
+  comparação independente com intenção visual.
+- Auto deploy imediato: rejeitado; validar primeiro identidade, review, capability,
+  healthcheck e reversão de um ciclo inteiro.
+
+### Consequências e transição
+
+Criar templates de pacote, checkpoint e recibo; ligar arquitetura e estado à
+entrada de contexto. Resolver integração/provisionamento com tasks próprias.
+Uma tarefa piloto demonstra retomada sem chat, preview, revisão e publicação.
+
+A escolha 12 não reclassifica toda publicação como Green nem concede merge,
+Docker, sudo, segredos ou acesso a produção aos executores. Preparação e operação
+de produção continuam distintas. Enquanto a capability/política substituta não
+for validada e ativada, D012/D017, RISK_POLICY.md e gates existentes continuam
+vigentes. A futura automação deve operar através de uma capability delimitada,
+com regras explícitas, revisão do candidato, recibo e recuperação.
+
+Nova direção visual, mudança material de arquitetura, permissões ou operação
+destrutiva permanece sujeita à decisão humana aplicável. Approval de um candidato
+não aprova outro SHA/artefato; executor ou reviewer não assume identidade humana.
+
+### Evidência e status de adoção
+
+- Escolhas registradas: concluído.
+- Fontes, vistas arc42/C4, templates e piloto: esta alteração documental.
+- Injeção automática no executor, preview padrão, review independente do piloto,
+  publication policy e recibo runtime: pendentes de implementação/validação.

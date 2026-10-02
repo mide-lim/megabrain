@@ -115,3 +115,16 @@ Nem toda tarefa usa todos os estados. Trabalho Green somente documental, por exe
 ```
 
 O `Final Evidence Summary` registra o que foi efetivamente validado, não o que se espera validar no futuro. O estado `PROMOTED` não implica execução em produção; para trabalho Red, a execução depende da autorização humana explícita.
+
+## Identidade, contexto e evidências da execução
+
+D022 adota uma projeção compacta: [Task Packet](templates/TASK_PACKET.md).
+O responsável identifica tarefa/run, origem canônica de estado, contrato/revisão,
+repo/branch/worktree, commit base, checkpoint e referência de UX. N/A exige motivo.
+Campos AP0 permanecem definidos pelos schemas AP0; o template não os substitui.
+
+Na retomada, comparar pacote, checkpoint e Git real. Divergência material bloqueia
+a continuação até reconciliação; preservar mudanças WIP e evidências anteriores.
+Review identifica sessão/revisor, commit/artefato e resultado. Publicação usa
+[Recibo de deploy](templates/DEPLOY_RECEIPT.md) com o candidato final validado.
+Uma evidência nunca ganha status de aprovação ou deploy por ter sido apenas planejada.

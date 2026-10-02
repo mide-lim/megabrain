@@ -1,7 +1,7 @@
 # Contexto de engenharia do MegaBrain
 
 Data: 2026-10-01, America/Sao_Paulo.
-Status: proposta de integração documental. O protocolo abaixo ainda não está automatizado no executor.
+Status: direção de arquitetura aceita em D022; protocolo e rollout ainda não automatizados/validados ponta a ponta.
 Esta página organiza referências; não substitui AGENTS.md, ADRs aceitos, schemas AP0 ou gates existentes.
 
 ## 1. Diagnóstico e objetivo
@@ -31,22 +31,28 @@ Atividade de serviço não prova integração entre todos esses caminhos nem exe
 | Contexto recuperado | Busca textual; CocoIndex em piloto posterior | Cache reconstruível. Sempre devolver caminho e revisão da fonte. |
 | Conteúdo da biblioteca | PostgreSQL/R2 e APIs do produto | Separado da memória de engenharia; nunca transferir todo o acervo ao executor. |
 
-Há uma decisão de integração pendente: a relação Paperclip/AP0/Hermes precisa de um único caminho documentado.
-Recomendação: Paperclip como entrada de planejamento e acompanhamento; AP0 como infraestrutura delimitada;
-um coordenador responsável por cada tarefa. Hermes pode ser um executor/adaptador conforme a decisão aceita.
+D022 registra a direção escolhida: Paperclip acompanha e distribui trabalho; um responsável prepara cada tarefa;
+Codex concentra código e Hermes integrações, pesquisa e automações. O caminho runtime de cada tarefa
+(native adapter ou AP0) precisa ser identificado no pacote, com um único escritor por registro.
 Não desligar serviços, migrar registros ou criar outra fila por causa deste documento.
-Reconciliar D013/D014/D016 e os contratos AP0 em uma decisão explícita antes de alterar o runtime.
+D022 reconcilia o papel organizacional D013 com D014/D016; os contratos AP0 e seus registros continuam
+vigentes nos seus escopos. Implementação da ponte/cutover exige tarefa e validação próprias.
 
 ## 3. Referências mínimas e manutenção
 
 | Referência | Conteúdo que deve manter |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Contexto e containers C4, responsabilidades, interfaces e implantação. arc42 apenas nas seções úteis. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | arc42 completo e C4 de contexto, containers e componentes relevantes, com fontes e lacunas explícitas. |
 | [CURRENT_STATE.md](CURRENT_STATE.md) | Snapshot datado, capacidades comprovadas, release e bloqueios; distinguir observado de proposto. |
 | [DECISIONS.md](DECISIONS.md) | Decisões com contexto, alternativas, consequências, status e vínculo de substituição. |
 | [ROADMAP.md](ROADMAP.md) | Visão e marcos com critérios de saída; separar desejos futuros de capacidades disponíveis. |
 | [TASK_CONTRACT.md](TASK_CONTRACT.md) | Contrato canônico de execução; o Task Packet é sua projeção compacta. |
 | [UI_SYSTEM.md](UI_SYSTEM.md) | Histórico Jinja. Uma referência da UI Next atual e um design alvo precisam de discovery próprio. |
+
+Templates: [Task Packet](templates/TASK_PACKET.md), [Checkpoint](templates/SESSION_CHECKPOINT.md),
+[Recibo de deploy](templates/DEPLOY_RECEIPT.md). Plano: [Rollout](ORCHESTRATION_ROLLOUT.md);
+piloto: [CTX-PILOT-001](TASK_CONTRACT_CTX_PILOT_001.md).
+Retomada desta fundação: [handoff](../evidence/context-handoffs/orchestration-foundation-20261002.md).
 
 Quem muda comportamento atualiza o registro afetado no mesmo PR. Quem revisa confere essa correspondência.
 Não editar todos os documentos em toda tarefa. Não usar ACTIVE_TASK.md como único checkpoint global de trabalhos paralelos.
@@ -94,12 +100,12 @@ Hipóteses reversíveis devem ser registradas com esse status, sem virarem requi
 
 Se branch, HEAD ou diff não corresponderem ao checkpoint, registrar a divergência e reconciliar.
 Não resetar, rebasear, adotar um checkout alheio ou presumir sucesso por memória.
-Uma tarefa deve ter um worktree identificado; um único checkout mutável exige serialização explícita.
+Uma tarefa deve ter um worktree identificado; um único checkout mutável exige serialização explícita. Inicialmente há uma implementação ativa por vez.
 
 ## 6. Checkpoint e encerramento
 
-Reutilizar o mecanismo AP0 existente para tarefas AP0. Para tarefas nativas do Paperclip, definir o escritor responsável
-e o vínculo/exportação antes de automatizar a retomada. Um resumo Markdown é uma projeção de leitura, não outro ledger.
+Reutilizar o mecanismo AP0 existente para tarefas AP0. Para tarefas nativas do Paperclip, o responsável salva o snapshot Git e registra seu link/revisão na tarefa;
+o checkpoint de leitura identifica a origem. Falta integrar esse vínculo/exportação ao executor para automatizar a retomada. Um resumo Markdown é uma projeção de leitura, não outro ledger.
 
 Campos essenciais de um checkpoint:
 - task_id, revisão do pacote e ID/revisão do checkpoint;
@@ -110,7 +116,9 @@ Campos essenciais de um checkpoint:
 - recursos/preview da tarefa, proprietário e validade, quando existirem;
 - PR, aprovação e release relacionados, quando aplicáveis.
 
-Gravar antes de troca de sessão, pausa por quota, handoff, bloqueio e conclusão de etapa.
+Gravar antes de troca de sessão, pausa por quota, handoff, bloqueio e conclusão de etapa,
+e em marcos periódicos do trabalho longo. Após duas tentativas distintas do mesmo bloqueio,
+registrar hipóteses, resultados e próximo passo ou escalar (D022).
 Não gravar credenciais, cookies, URLs assinadas ou prompts/logs completos.
 Evidência de um commit anterior fica histórica; avaliar o que precisa ser revalidado no novo candidato.
 Contexto durável requer retenção e backup dos registros; um diretório de scratch ou cache de índice é insuficiente.
@@ -121,7 +129,7 @@ A MEG-4 tinha critérios verificáveis de agrupamento de links. Eles foram atend
 mas não representaram suficientemente a experiência desejada pelo proprietário.
 Testes e screenshots comprovam comportamento/renderização; aprovação do design exige comparação com a intenção.
 
-Antes da próxima alteração:
+Antes da próxima alteração importante de UI, usar proposta navegável e imagens anotadas (D022, escolha 8 A+B):
 1. Definir os problemas da tela, o usuário e os fluxos que precisam melhorar.
 2. Preparar uma proposta visual concreta, desktop/mobile, com hierarquia e comportamento.
 3. Resolver com o proprietário escolhas visuais relevantes que não podem ser inferidas.

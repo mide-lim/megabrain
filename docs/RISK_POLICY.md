@@ -65,3 +65,12 @@ Da mesma forma, preparar um plano de rollback não autoriza sua execução em pr
 ## Como aplicar
 
 A classificação inicial é registrada no Task Contract e deve ser revisada quando o escopo mudar. Em caso de dúvida, usa-se o nível mais restritivo até que a ambiguidade seja resolvida. Um item Green que introduza mudança sensível de contrato, segurança, dados ou runtime deve ser reclassificado.
+
+## Direção de publicação por risco — D022
+
+O proprietário escolheu automatizar publicações previamente classificadas de
+baixo risco depois de demonstrar um ciclo completo e validar política/capability
+delimitadas. Essa direção ainda não está ativada. A classificação de implementação
+Green não reclassifica uma operação de produção; os gates desta política e D017
+continuam vigentes. O rollout deve registrar critérios concretos de elegibilidade,
+identidade do candidato, revisão, recuperação e a ativação antes de mudar o fluxo.
