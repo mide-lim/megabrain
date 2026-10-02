@@ -1,5 +1,61 @@
 # Estado atual do MegaBrain
 
+## Fundação de orquestração — escolhas de 2026-10-01
+
+- D022 registra as 14 escolhas do proprietário: Paperclip acompanha, Codex concentra
+  código e Hermes integrações/automação; uma implementação ativa e review em outra sessão.
+- A baseline documental passa a incluir arc42/C4, templates de pacote, checkpoint e
+  recibo e um rollout com piloto delimitado. Isso não demonstra implantação do fluxo.
+- GPT-6.1 Sol foi configurado no agente MEGABRAIN/codex_local e no perfil padrão do
+  Hermes/openai-codex. Testes dos executores usaram autenticação ChatGPT Plus;
+  nenhuma chave da API OpenAI foi adicionada. Teste completo de tarefa/deploy não foi disparado.
+- No snapshot dessa configuração, o AP0 coordinator apontava para executável Hermes
+  ausente e outro HERMES_HOME sem config encontrado. O perfil padrão funcionando
+  não resolve o provisionamento do perfil AP0.
+- Preview padrão na VPS, injeção automática de contexto/checkpoint, revisão e
+  publicação do piloto continuam pendentes. Não habilitar auto deploy antes das
+  evidências e da política/capability de produção correspondentes.
+- [ORCHESTRATION_ROLLOUT.md](ORCHESTRATION_ROLLOUT.md) define etapas, responsáveis
+  por registro e critérios de saída; [CTX-PILOT-001](TASK_CONTRACT_CTX_PILOT_001.md)
+  especifica a demonstração. ACTIVE_TASK.md permanece histórico, não fila global.
+
+Fonte do snapshot de configuração: relatório de manutenção autorizado de 2026-10-01,
+CLI Codex 0.160.0 e carregador efetivo do Hermes. Esta PR não repetiu os testes
+nem acessou configuração de produção.
+
+## Snapshot de engenharia — 2026-10-01
+
+Este snapshot complementa o estado de produto abaixo. Registra observações desta
+auditoria; não concede nova autoridade nem comprova integração completa.
+
+- Paperclip está em uso para tarefas de desenvolvimento, incluindo MEG-4.
+- Na verificação systemd, `megabrain-control-plane.service` e
+  `megabrain-hermes-coordinator.service` estavam `active/running`.
+  Isso não prova que ambos coordenam a mesma tarefa.
+- A MEG-4 foi entregue na conversa desta auditoria: source commit
+  `a863ae0564090d5abd6f43f7b72698cb68d72a0a`; production commit
+  `8c635f319564c16ba0e7e3c6a837d1fe44d6020e`. A árvore publicada foi
+  comparada ao candidato aprovado e era idêntica.
+- A integração GitHub `dev` observada está em
+  `b788e004744bf44ba2177f1416562af589c56bf0` (PR #89).
+  SHA de integração e SHA de release têm finalidades distintas; não presumir
+  paridade da pilha inteira a partir da equivalência da mudança frontend.
+- O status MEG-4 observado no Paperclip permaneceu `in_review`; faltou registrar
+  o recibo/conclusão pelo painel. O proprietário pediu novo discovery visual,
+  pois a experiência entregue não correspondeu ao que pretendia.
+- O caminho `local_stdio` da ação aprovada de deploy no Paperclip falhou antes
+  da capability. O deploy foi concluído por uma única chamada à capability
+  existente, que verificou o gate humano do SHA exato. O encaminhamento MCP
+  continua pendente.
+- `UI_SYSTEM.md` descreve a baseline Jinja histórica. A referência Next atual e
+  o design alvo precisam de discovery.
+- O QA visual foi exercitado em uma branch isolada nesta conversa; sua ativação
+  como fluxo padrão e a retomada IDE/Paperclip/AP0 permanecem pendentes.
+
+[CONTEXT.md](CONTEXT.md) organiza as lacunas, as referências e a proposta mínima
+de adoção. Os registros anteriores de Hermes/AP0 e decisões aceitas continuam
+vigentes nos seus escopos até reconciliação explícita.
+
 ## Estado operacional atual
 
 As capacidades C1–C6 abaixo foram implantadas em produção e validadas por

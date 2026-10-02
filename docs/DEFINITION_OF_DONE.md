@@ -72,3 +72,20 @@ A Definition of Done (DoD) estabelece a evidência mínima para considerar uma t
 As verificações documentadas só são exigíveis quando a capacidade correspondente existe no repositório e no ambiente de trabalho. Hoje, `git diff --check`, inspeção de diff, validações locais disponíveis e CI isolada são verificações atuais. Staging e Playwright/E2E automatizado ainda não existem; referências a elas nos perfis descrevem o alvo futuro e não devem ser declaradas como evidência atual.
 
 A ausência de uma capacidade futura não elimina requisitos que já podem ser verificados localmente nem os gates humanos definidos pela política de risco.
+
+
+## Continuidade e candidato — D022
+
+Quando aplicável, o fechamento também verifica:
+
+- Task Contract/Packet, base Git e referências de arquitetura/decisões identificados;
+- checkpoint suficiente para outra sessão, com escritor/origem e próximo passo;
+- review em outra sessão ligado ao candidato e aos critérios originais;
+- proposta navegável e imagens anotadas para mudança importante de UI;
+- preview e evidências identificando a revisão de código e o build;
+- candidato alterado depois do review revalidado conforme o impacto;
+- em publicação, recibo e leitura runtime do artefato implantado;
+- links de tarefa, PR, preview, review e release preservados.
+
+O piloto deve provar o processo antes de declararmos sua automação disponível.
+READY de código e publicação de produto permanecem estados distintos.

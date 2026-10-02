@@ -45,6 +45,9 @@ jobs:
           print(f"validated_workflows={len(paths)}")
           PY
 
+      - name: Verify session context guard
+        run: python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+
   enricher-tests:
     name: Enricher tests
     runs-on: ubuntu-latest
