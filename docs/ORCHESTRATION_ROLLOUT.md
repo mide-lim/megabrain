@@ -1,6 +1,7 @@
 # Adoção do modelo de orquestração — D022
 
-Status: direção aceita; fundação documental preparada; fluxo completo pendente.
+Status: direção aceita; fundação documental e helper de conferência Git preparados;
+integração ao executor e fluxo completo pendentes.
 O objetivo é comprovar um caminho de tarefa sem depender do histórico da IDE.
 [Arquitetura](ARCHITECTURE.md) e [D022](DECISIONS.md) descrevem responsabilidades.
 
@@ -78,6 +79,18 @@ todo o produto. Estado final de tarefa é registrado após esse fechamento.
 - Preview/QA prototipados precisam de integração ao fluxo padrão e identidade do candidato.
 - Injeção/recuperação de pacote e checkpoint precisam de implementação e validação.
 - Backup/restore, budgets e retenção reais devem ser conferidos, não presumidos.
+
+## Continuação verificada — 2026-10-02
+
+[Checkpoint do preflight](../evidence/context-handoffs/orchestration-preflight-20261002.md)
+reconstrói a pausa na VPS e distingue os bloqueios atuais dos logs históricos.
+[SESSION_CONTEXT.md](SESSION_CONTEXT.md) descreve o helper Git sem dependências
+que captura referências e bloqueia HEAD/branch/WIP divergentes. Seus testes
+com processos novos não equivalem ao piloto completo em outra sessão Codex.
+O helper ainda não está conectado ao adapter, às APIs ou ao preview.
+API Paperclip retornou 401 nesta execução sem credencial; registro real e integração
+seguem pendentes. Perfil AP0 incompleto só precisa ser provisionado se essa lane
+for selecionada. Não há mudança de gates nem escrita direta de banco.
 
 ## Métricas do piloto
 

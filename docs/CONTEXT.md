@@ -1,7 +1,7 @@
 # Contexto de engenharia do MegaBrain
 
 Data: 2026-10-01, America/Sao_Paulo.
-Status: direção de arquitetura aceita em D022; protocolo e rollout ainda não automatizados/validados ponta a ponta.
+Status: direção de arquitetura aceita em D022; helper de conferência Git preparado/testado; integração e rollout completos pendentes.
 Esta página organiza referências; não substitui AGENTS.md, ADRs aceitos, schemas AP0 ou gates existentes.
 
 ## 1. Diagnóstico e objetivo
@@ -53,6 +53,8 @@ Templates: [Task Packet](templates/TASK_PACKET.md), [Checkpoint](templates/SESSI
 [Recibo de deploy](templates/DEPLOY_RECEIPT.md). Plano: [Rollout](ORCHESTRATION_ROLLOUT.md);
 piloto: [CTX-PILOT-001](TASK_CONTRACT_CTX_PILOT_001.md).
 Retomada desta fundação: [handoff](../evidence/context-handoffs/orchestration-foundation-20261002.md).
+Continuação: [preflight](../evidence/context-handoffs/orchestration-preflight-20261002.md);
+[conferência de sessão](SESSION_CONTEXT.md) e [pacote da manutenção](TASK_CONTRACT_CTX_PREFLIGHT.md).
 
 Quem muda comportamento atualiza o registro afetado no mesmo PR. Quem revisa confere essa correspondência.
 Não editar todos os documentos em toda tarefa. Não usar ACTIVE_TASK.md como único checkpoint global de trabalhos paralelos.
@@ -173,4 +175,6 @@ Não é requisito de disponibilidade do executor: falha do índice permite busca
 
 Auditoria: arquivos do GitHub/dev e estado systemd observados em 2026-10-01/02.
 A integração de checkpoints entre IDE, Paperclip e AP0 não foi testada ponta a ponta.
-Este trabalho é documental: nenhum redesign, novo serviço, corte de autoridade ou deploy foi executado.
+A fundação documental agora inclui um helper Git e testes de continuidade, preparados
+no preflight de 2026-10-02. Nenhum redesign, novo serviço, corte de autoridade ou
+deploy foi executado; o adapter e o piloto completo continuam pendentes.
