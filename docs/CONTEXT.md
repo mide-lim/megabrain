@@ -1,7 +1,7 @@
 # Contexto de engenharia do MegaBrain
 
-Data: 2026-10-01, America/Sao_Paulo.
-Status: direção de arquitetura aceita em D022; helper de conferência Git preparado/testado; integração e rollout completos pendentes.
+Data: 2026-10-02, America/Sao_Paulo.
+Status: direção D022 aceita; helper e preview preparados/testados; piloto MEG-6 bloqueado no executor, integração e rollout completos pendentes.
 Esta página organiza referências; não substitui AGENTS.md, ADRs aceitos, schemas AP0 ou gates existentes.
 
 ## 1. Diagnóstico e objetivo
@@ -167,7 +167,15 @@ Não é requisito de disponibilidade do executor: falha do índice permite busca
 Preparação do primeiro ciclo: [pacote CTX-PILOT-001](tasks/CTX-PILOT-001/PACKET.md)
 e [preview/QA](VISUAL_PREVIEW_QA.md), com estado e limites no
 [checkpoint](../evidence/context-handoffs/pilot-preparation-20261002.md).
-O acesso board do CLI exige a autorização normal do proprietário.
+O acesso board do CLI foi aprovado. A issue real MEG-6 e o Run A foram criados.
+O executor falhou no sandbox e não conseguiu encerrar a tarefa com approval=never;
+cinco recuperações automáticas também não entregaram progresso. A tarefa está
+blocked e sem assignee para impedir novas repetições. Worktree físico e vínculo
+explícito foram preparados; a execução nesse vínculo ainda precisa de prova.
+Estado atual e próximo passo: [checkpoint do board](../evidence/context-handoffs/ctx-pilot-board-block-20261002.md).
+Os checks/12 casos visuais anteriores comprovam a preparação 892d8b2; não são
+aceite do piloto. Formatação/reinstalação, SSH e novas permissões são propostas,
+não operações executadas ou decisões aceitas.
 
 ## 9. Fontes e limites
 
@@ -182,4 +190,6 @@ Auditoria: arquivos do GitHub/dev e estado systemd observados em 2026-10-01/02.
 A integração de checkpoints entre IDE, Paperclip e AP0 não foi testada ponta a ponta.
 A fundação documental agora inclui um helper Git e testes de continuidade, preparados
 no preflight de 2026-10-02. Nenhum redesign, novo serviço, corte de autoridade ou
-deploy foi executado; o adapter e o piloto completo continuam pendentes.
+deploy foi executado. O primeiro Run A real encontrou bloqueios de execução;
+não produziu alteração, checkpoint do executor ou prova de retomada. O registro
+do board acima preserva essa falha, sem declarar o piloto concluído.

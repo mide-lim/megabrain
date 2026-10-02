@@ -2,13 +2,20 @@
 
 ## Identidade e autoridade
 
-- Status: DISCOVERY; preparação pronta, issue/run real aguardam acesso autenticado.
-- CTX-PILOT-001 é nome documental, não ID canônico fabricado.
+- Status: BLOCKED; acesso aprovado, registro real criado, Run A sem entregável.
+- CTX-PILOT-001 é o nome documental da issue canônica MEG-6.
+- Issue: b89613a1-90cf-437f-8481-fec4941e4d81; owner megabrain-owner.
+- Projeto: 6728591e-b875-4691-829e-6e68ae98210e (MegaBrain — Engenharia).
+- Run A: e0813783-5ef9-4fe5-bef2-b5a4336fa618, bloqueado em 2026-10-02.
+- Processo succeeded/exit0 não prova aceite: comandos e encerramento falharam.
 - Origem de estado escolhida: Paperclip nativo; executor Codex MEGABRAIN existente.
 - IDs existentes de referência: company 62eb0667-5669-408c-b8dc-74a1bc8b0757;
   executor c9487f45-02f6-4da4-9f85-dfe2c1154066. Conferir na API antes de admitir.
 - Registro preparatório: https://github.com/mide-lim/megabrain/pull/90.
-- Registrar issue_id/run_id reais antes de implementar e fixar revisão deste pacote.
+- Executor planejado permanece o existente; assignee atual null para suspender
+  recuperações automáticas enquanto o executor está bloqueado.
+- Fixar no issue o SHA exato que contém este pacote antes de novo wake.
+- Checkpoint atual: ../../../evidence/context-handoffs/ctx-pilot-board-block-20261002.md.
 - Um implementador ativo; reviewer em outra sessão. Nenhum novo agente permanente.
 - AP0 não é a lane escolhida deste piloto; seus serviços e autoridade permanecem intactos.
 - Instruções: AGENTS.md e apps/web/AGENTS.md; D022, D020/D021 e gates existentes.
@@ -24,10 +31,14 @@ botão, autenticação, API e significado do booleano permanecem iguais.
 ## Referências e Git
 
 - Repo: mide-lim/megabrain; branch da implementação agent/context-pilot-001-20261002.
-- Base preparatória: 4b7cec7ee3f9790b58716e5bd0129e26f052ee28.
-- Base de execução: fixar o commit que contém esta preparação e o QA aprovado.
-- Worktree nativo: identificar pela API e Git real depois do registro; não
-  reutilizar o checkout de outra tarefa. O cwd precisa ser visível ao executor.
+- Base de execução e QA preparatório: 892d8b27c58d7c02669103081b3918a533c0b457.
+- HEAD de entrada: obter o SHA documental fixado pelo board na issue, não
+  assumir que o HEAD atual ainda é a base. Conferir Git real antes de executar.
+- Worktree físico: /home/megabrain-hermes/.local/share/megabrain-runtime/paperclip-prod/home/.paperclip/instances/default/projects/62eb0667-5669-408c-b8dc-74a1bc8b0757/6728591e-b875-4691-829e-6e68ae98210e/worktrees/agent/context-pilot-001-20261002.
+- Project workspace: 82300bdd-d392-4da4-a80a-399e54c4ecf6, local_path;
+  vínculo na issue conferido pela API. Execução nativa nesse vínculo não testada.
+- O Run A anterior usou project_primary/shared e branch main/HEAD 2e80f59,
+  apesar da policy isolada. Preservar esse checkout e o registro histórico.
 - Contrato: ../../TASK_CONTRACT_CTX_PILOT_001.md.
 - Continuidade: ../../SESSION_CONTEXT.md; preview: ../../VISUAL_PREVIEW_QA.md.
 - ADRs/arquitetura: ../../DECISIONS.md e ../../ARCHITECTURE.md no commit fixado.
@@ -75,5 +86,9 @@ o mesmo candidato; estado não é declarado concluído apenas por resposta do au
 Fixtures; zero jobs/download/STT reais, zero API paga de inferência.
 Python/Git/CI/Playwright fazem verificações repetíveis; modelo executa o escopo.
 Registrar attempts e quota: duas hipóteses por blocker antes de checkpoint.
-Próximo passo: concluir a autorização normal do CLI Paperclip e registrar o
-piloto pela API. Não contornar auth com escrita de banco ou novo token por fora.
+Próximo passo: validar um executor compatível com workspace-write e um caminho
+normal autorizado para registrar a disposição da tarefa; conferir cwd/Git antes
+de repetir somente Run A em sessão nova. Corrigir a integração sem desativar
+sandbox ou contornar rejeições. Run B, review e deploy continuam pendentes.
+O sandbox direto no host passou; transporte Paperclip/host e permissões de
+encerramento ainda não passaram. Detalhes e proposta no checkpoint atual.
