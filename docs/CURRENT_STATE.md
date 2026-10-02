@@ -1,5 +1,38 @@
 # Estado atual do MegaBrain
 
+## Snapshot de engenharia — 2026-10-01
+
+Este snapshot complementa o estado de produto abaixo. Registra observações desta
+auditoria; não concede nova autoridade nem comprova integração completa.
+
+- Paperclip está em uso para tarefas de desenvolvimento, incluindo MEG-4.
+- Na verificação systemd, `megabrain-control-plane.service` e
+  `megabrain-hermes-coordinator.service` estavam `active/running`.
+  Isso não prova que ambos coordenam a mesma tarefa.
+- A MEG-4 foi entregue na conversa desta auditoria: source commit
+  `a863ae0564090d5abd6f43f7b72698cb68d72a0a`; production commit
+  `8c635f319564c16ba0e7e3c6a837d1fe44d6020e`. A árvore publicada foi
+  comparada ao candidato aprovado e era idêntica.
+- A integração GitHub `dev` observada está em
+  `b788e004744bf44ba2177f1416562af589c56bf0` (PR #89).
+  SHA de integração e SHA de release têm finalidades distintas; não presumir
+  paridade da pilha inteira a partir da equivalência da mudança frontend.
+- O status MEG-4 observado no Paperclip permaneceu `in_review`; faltou registrar
+  o recibo/conclusão pelo painel. O proprietário pediu novo discovery visual,
+  pois a experiência entregue não correspondeu ao que pretendia.
+- O caminho `local_stdio` da ação aprovada de deploy no Paperclip falhou antes
+  da capability. O deploy foi concluído por uma única chamada à capability
+  existente, que verificou o gate humano do SHA exato. O encaminhamento MCP
+  continua pendente.
+- `UI_SYSTEM.md` descreve a baseline Jinja histórica. A referência Next atual e
+  o design alvo precisam de discovery.
+- O QA visual foi exercitado em uma branch isolada nesta conversa; sua ativação
+  como fluxo padrão e a retomada IDE/Paperclip/AP0 permanecem pendentes.
+
+[CONTEXT.md](CONTEXT.md) organiza as lacunas, as referências e a proposta mínima
+de adoção. Os registros anteriores de Hermes/AP0 e decisões aceitas continuam
+vigentes nos seus escopos até reconciliação explícita.
+
 ## Estado operacional atual
 
 As capacidades C1–C6 abaixo foram implantadas em produção e validadas por

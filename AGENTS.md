@@ -105,6 +105,10 @@ Do not introduce unrelated refactoring.
 
 Project context is maintained under `docs/`.
 
+Start context discovery with `docs/CONTEXT.md`; it maps current references,
+known drift, and the proposed task-packet/resumption workflow. Distinguish its
+proposals from accepted policy. It grants no new runtime or production authority.
+
 When available, consult:
 
 - `docs/ARCHITECTURE.md`

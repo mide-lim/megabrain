@@ -106,3 +106,19 @@ autenticação do proprietário e depois de confirmar a existência do Reel.
 A arquitetura atual não inclui classificação automática, embeddings, OCR,
 visão computacional, resumos, busca semântica, multiusuário ou API pública da
 Web. Essas capacidades não devem ser inferidas da existência da transcrição.
+
+## Engenharia e contexto — observação complementar
+
+O runtime de produto acima e o ambiente de engenharia têm responsabilidades
+distintas. Paperclip está em uso para tarefas; a auditoria de 2026-10-01/02
+também observou `megabrain-control-plane.service` e
+`megabrain-hermes-coordinator.service` ativos via systemd.
+
+Os contratos em `docs/platform/autonomy/` já descrevem recursos, limites e
+checkpoints AP0. A existência desses serviços e do Paperclip exige documentar
+um único caminho de execução e a autoridade de cada registro. Atividade de
+processo não comprova integração ou duplicação de tarefas.
+
+[CONTEXT.md](CONTEXT.md) apresenta o mapa de referências e uma proposta de
+pacote/retomada e revisão visual. Essa proposta não altera fronteiras de
+autenticação do produto, decisões aceitas, permissões ou serviços ativos.
